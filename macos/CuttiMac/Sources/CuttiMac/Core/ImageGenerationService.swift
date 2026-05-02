@@ -79,11 +79,23 @@ actor ImageGenerationService {
         prompt: String,
         size: ImageGenerationSize = .square1024
     ) async throws -> Data {
+        switch CuttiSettings.aiProvider() {
+        case .cuttiCloud:
+            return try await generateViaCuttiRelay(prompt: prompt, size: size)
+        case .custom:
+            return try await generateViaCustomProvider(prompt: prompt, size: size)
+        }
+    }
+
+    // MARK: - Cutti Cloud path
+
+    private func generateViaCuttiRelay(
+        prompt: String,
+        size: ImageGenerationSize
+    ) async throws -> Data {
         // `configurationFromDefaults()` is now safe to call from any
         // actor — credentials live in a lock-protected snapshot — so we
-        // no longer need to bounce through `MainActor.run` here. The
-        // relay is the only configuration this code path ever produces,
-        // so a provider check would be dead weight.
+        // no longer need to bounce through `MainActor.run` here.
         let config = RelayClient.configurationFromDefaults()
         guard !config.relayBaseURL.isEmpty else {
             throw ImageGenerationError.relayNotConfigured
@@ -146,16 +158,87 @@ actor ImageGenerationService {
             throw ImageGenerationError.relayError(status: http.statusCode, body: text)
         }
 
-        struct RelayImageResponse: Decodable {
+        return try Self.decodeOpenAIShapeImageResponse(data)
+    }
+
+    // MARK: - Custom (BYOK) path
+
+    private func generateViaCustomProvider(
+        prompt: String,
+        size: ImageGenerationSize
+    ) async throws -> Data {
+        let custom = CuttiSettings.customAIConfiguration()
+        guard custom.hasUsableImageConfig else {
+            throw ImageGenerationError.relayNotConfigured
+        }
+
+        let baseRaw = custom.effectiveImageBaseURL
+        let base = baseRaw.hasSuffix("/") ? String(baseRaw.dropLast()) : baseRaw
+        // OpenAI shape: `<base>/images/generations` where `<base>`
+        // already contains `/v1` (e.g. `https://api.openai.com/v1`).
+        guard let url = URL(string: "\(base)/images/generations") else {
+            throw ImageGenerationError.relayNotConfigured
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(custom.effectiveImageApiKey)", forHTTPHeaderField: "Authorization")
+
+        // OpenAI image-gen wire format. We translate Cutti's abstract
+        // aspect into the closest size string that recent OpenAI image
+        // models accept across families (DALL-E 3, gpt-image-1).
+        let openAISize: String = {
+            switch size {
+            case .square:    return "1024x1024"
+            case .portrait:  return "1024x1792"
+            case .landscape: return "1792x1024"
+            }
+        }()
+        let body: [String: Any] = [
+            "model": custom.effectiveImageModel,
+            "prompt": prompt,
+            "size": openAISize,
+            "n": 1,
+            "response_format": "b64_json",
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 120
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw ImageGenerationError.fileIOFailed(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw ImageGenerationError.invalidResponse
+        }
+
+        guard http.statusCode == 200 else {
+            let text = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            throw ImageGenerationError.relayError(status: http.statusCode, body: text)
+        }
+
+        return try Self.decodeOpenAIShapeImageResponse(data)
+    }
+
+    /// Both the cutti relay and any OpenAI-compatible provider return
+    /// the same `{ "data": [{ "b64_json": "..." }] }` shape. Centralised
+    /// here so the two call paths can't drift on parsing.
+    private static func decodeOpenAIShapeImageResponse(_ data: Data) throws -> Data {
+        struct ImageResponse: Decodable {
             struct Entry: Decodable {
                 let b64_json: String
             }
             let data: [Entry]
         }
 
-        let decoded: RelayImageResponse
+        let decoded: ImageResponse
         do {
-            decoded = try JSONDecoder().decode(RelayImageResponse.self, from: data)
+            decoded = try JSONDecoder().decode(ImageResponse.self, from: data)
         } catch {
             throw ImageGenerationError.invalidResponse
         }

@@ -89,13 +89,21 @@ enum OpenAIClientError: Error, Sendable {
     }
 }
 
-/// Configuration for calls to the Cutti cloud relay. All AI traffic
-/// flows through `api.cutti.app` — there's no direct-to-Azure / direct-
-/// to-OpenAI path in shipping builds. `sessionToken` carries either a
-/// `"jwt:"`-prefixed user JWT (from `/v1/auth/signin` or
-/// `/v1/auth/apple`) or a `"dev:"`-prefixed dev token; an empty string
-/// means the user is signed out and requests will 401 deliberately.
+/// Configuration for AI calls. Two distinct shapes:
+///
+///   • Cutti Cloud (`provider == .cuttiCloud`): `relayBaseURL` is the
+///     cutti relay origin and `apiKey` is a `"jwt:"` / `"dev:"` prefixed
+///     session token interpreted by `OpenAIClient`'s auth switch. The
+///     wire request hits `/v1/chat/completions` on the relay, which
+///     proxies upstream to Azure / OpenAI.
+///
+///   • Custom / BYOK (`provider == .custom`): `relayBaseURL` is the
+///     user's OpenAI-compatible endpoint root (no `/v1` suffix), `apiKey`
+///     is a raw Bearer token, and `model` carries the actual model name
+///     (sent in the request body — Cutti Cloud omits `model` because the
+///     relay picks it server-side).
 struct OpenAIConfiguration: Sendable {
+    let provider: AIProviderPreference
     let apiKey: String
     let model: String
     let relayBaseURL: String
@@ -107,23 +115,58 @@ struct OpenAIConfiguration: Sendable {
         model: String = "gpt-5.4-mini"
     ) -> OpenAIConfiguration {
         OpenAIConfiguration(
+            provider: .cuttiCloud,
             apiKey: sessionToken,
             model: model,
             relayBaseURL: baseURL
         )
     }
 
-    /// Returns a relay-backed configuration. The relay is the only backend —
-    /// no direct-to-Azure or OpenAI path exists in shipping builds.
+    /// Custom OpenAI-compatible endpoint with a user-supplied Bearer key.
+    /// `baseURL` should be the API root (e.g. `https://api.openai.com/v1`
+    /// or `https://my-proxy.example/v1`); the trailing `/v1` is part of
+    /// the user's input. The exact request path appended is
+    /// `/chat/completions`.
+    static func custom(
+        baseURL: String,
+        apiKey: String,
+        model: String
+    ) -> OpenAIConfiguration {
+        OpenAIConfiguration(
+            provider: .custom,
+            apiKey: apiKey,
+            model: model,
+            relayBaseURL: baseURL
+        )
+    }
+
+    /// Returns the configured backend. For `.cuttiCloud`, reads the
+    /// session JWT / dev token from `RelayClient`. For `.custom`, reads
+    /// the user's stored URL/Key/Model from `CuttiSettings`. Returns
+    /// `nil` if `.custom` is selected but the configuration is incomplete
+    /// (e.g. user hasn't filled in the API key yet).
     ///
-    /// Nonisolated: the underlying `RelayClient.configurationFromDefaults()`
-    /// reads credentials from a lock-protected snapshot in `RelaySession`,
-    /// so this is safe to invoke from `MainActor`, background actors, and
-    /// `Task.detached` alike — no actor hop required.
+    /// Nonisolated: safe to invoke from any actor — both cutti-relay
+    /// credentials and BYOK settings are backed by lock-protected stores.
     static func fromEnvironment() -> OpenAIConfiguration? {
-        let config = RelayClient.configurationFromDefaults()
-        print("🔑 OpenAI config: provider=cutti_relay base=\(config.relayBaseURL)")
-        return config
+        switch CuttiSettings.aiProvider() {
+        case .cuttiCloud:
+            let config = RelayClient.configurationFromDefaults()
+            print("🔑 OpenAI config: provider=cutti_relay base=\(config.relayBaseURL)")
+            return config
+        case .custom:
+            let custom = CuttiSettings.customAIConfiguration()
+            guard custom.hasUsableLLMConfig else {
+                print("🔑 OpenAI config: provider=custom — not configured (Settings → AI Provider)")
+                return nil
+            }
+            print("🔑 OpenAI config: provider=custom base=\(custom.llmBaseURL) model=\(custom.llmModel)")
+            return .custom(
+                baseURL: custom.llmBaseURL,
+                apiKey: custom.llmApiKey,
+                model: custom.llmModel
+            )
+        }
     }
 }
 
@@ -275,14 +318,33 @@ struct OpenAIClient: Sendable {
         let base = configuration.relayBaseURL.hasSuffix("/")
             ? String(configuration.relayBaseURL.dropLast())
             : configuration.relayBaseURL
-        let url = URL(string: "\(base)/v1/chat/completions")!
+        // Cutti relay exposes `/v1/chat/completions` rooted at the relay
+        // origin (no `/v1` in the configured base). Custom OpenAI-shape
+        // providers expect the user to include `/v1` in the base URL
+        // (e.g. `https://api.openai.com/v1`) and we append `/chat/...`.
+        let url: URL = {
+            switch configuration.provider {
+            case .cuttiCloud:
+                return URL(string: "\(base)/v1/chat/completions")!
+            case .custom:
+                return URL(string: "\(base)/chat/completions")!
+            }
+        }()
 
         var body: [String: Any] = [
             "messages": try messages.map { try encodeToDictionary($0) },
             "temperature": temperature,
         ]
-        // The relay forwards payloads byte-identically to Azure, which
-        // picks the deployed model — `model` stays out of the body.
+        switch configuration.provider {
+        case .cuttiCloud:
+            // Relay forwards payloads byte-identically to Azure, which
+            // picks the deployed model — `model` stays out of the body.
+            break
+        case .custom:
+            // Custom OpenAI-compatible servers require `model` in the
+            // body; without it most providers 400.
+            body["model"] = configuration.model
+        }
 
         if let tools {
             body["tools"] = try tools.map { try encodeToDictionary($0) }
@@ -297,28 +359,35 @@ struct OpenAIClient: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // `apiKey` is prefixed by `RelayClient.configurationFromDefaults()`
-        // so we know whether to send the dev header or a Bearer JWT.
         let token = configuration.apiKey
         let authMode: String
-        if token.hasPrefix("jwt:") {
-            request.setValue(
-                "Bearer \(String(token.dropFirst(4)))",
-                forHTTPHeaderField: "Authorization"
-            )
-            authMode = "jwt(len=\(token.count - 4))"
-        } else if token.hasPrefix("dev:") {
-            request.setValue(
-                String(token.dropFirst(4)),
-                forHTTPHeaderField: "X-Cutti-Dev-Token"
-            )
-            authMode = "dev"
-        } else if !token.isEmpty {
-            // Legacy — raw token with no prefix; treat as dev.
-            request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
-            authMode = "legacy-dev"
-        } else {
-            authMode = "none"
+        switch configuration.provider {
+        case .cuttiCloud:
+            // `apiKey` is prefixed by `RelayClient.configurationFromDefaults()`
+            // so we know whether to send the dev header or a Bearer JWT.
+            if token.hasPrefix("jwt:") {
+                request.setValue(
+                    "Bearer \(String(token.dropFirst(4)))",
+                    forHTTPHeaderField: "Authorization"
+                )
+                authMode = "jwt(len=\(token.count - 4))"
+            } else if token.hasPrefix("dev:") {
+                request.setValue(
+                    String(token.dropFirst(4)),
+                    forHTTPHeaderField: "X-Cutti-Dev-Token"
+                )
+                authMode = "dev"
+            } else if !token.isEmpty {
+                // Legacy — raw token with no prefix; treat as dev.
+                request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
+                authMode = "legacy-dev"
+            } else {
+                authMode = "none"
+            }
+        case .custom:
+            // Standard OpenAI bearer auth.
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            authMode = "byok-bearer(len=\(token.count))"
         }
 
         request.httpBody = jsonData
@@ -336,27 +405,31 @@ struct OpenAIClient: Sendable {
             throw OpenAIClientError.networkError("Non-HTTP response")
         }
 
-        // Relay responses carry X-Cutti-Credits-* headers; forward
-        // them to any RelaySession observers so the UI progress bar
-        // updates live without an extra /v1/me round-trip.
-        RelayCreditsNotification.postIfPresent(from: httpResponse)
+        switch configuration.provider {
+        case .cuttiCloud:
+            // Relay responses carry X-Cutti-Credits-* headers; forward
+            // them to any RelaySession observers so the UI progress bar
+            // updates live without an extra /v1/me round-trip.
+            RelayCreditsNotification.postIfPresent(from: httpResponse)
+        case .custom:
+            // No credit metering on BYOK — user pays the upstream
+            // provider directly.
+            break
+        }
 
         guard httpResponse.statusCode == 200 else {
             let responseBody = String(data: data, encoding: .utf8) ?? "<binary>"
-            // Always log the raw failure so we can tell signed-out from
-            // expired-JWT from email-not-verified from quota — the
-            // user-facing message gets collapsed into a friendly hint
-            // and loses the diagnostic detail otherwise.
-            print("⚠️ relay chat failed: status=\(httpResponse.statusCode) auth=\(authMode) body=\(responseBody.prefix(300))")
-            // Relay emits structured JSON errors for auth/quota/email
-            // problems. Translate those to friendly typed errors so the
-            // chat panel can show a plain-language prompt ("sign in",
-            // "verify email", "quota exceeded") instead of a raw HTTP
-            // status + body dump.
-            if let structured = Self.parseRelayError(
-                statusCode: httpResponse.statusCode,
-                data: data
-            ) {
+            print("⚠️ chat failed: provider=\(configuration.provider.rawValue) status=\(httpResponse.statusCode) auth=\(authMode) body=\(responseBody.prefix(300))")
+            // Cutti relay emits structured JSON errors for auth/quota/email
+            // problems; the chat panel turns those into plain-language
+            // hints. Custom providers aren't expected to share the
+            // same shape, so we skip the parse and fall through to the
+            // generic error.
+            if configuration.provider == .cuttiCloud,
+               let structured = Self.parseRelayError(
+                   statusCode: httpResponse.statusCode,
+                   data: data
+               ) {
                 throw structured
             }
             throw OpenAIClientError.invalidResponse(

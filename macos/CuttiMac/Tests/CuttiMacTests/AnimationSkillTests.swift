@@ -7,9 +7,24 @@ import XCTest
 /// If `Bundle.module` plumbing breaks (e.g. someone changes
 /// Package.swift's `resources:` block and the `AnimationSkill`
 /// subtree gets dropped or flattened), these tests fail loudly.
+///
+/// In the open-source build the `Resources/AnimationSkill/` directory
+/// is intentionally empty (the proprietary skill pack ships only with
+/// the hosted product). Each test below first checks for the presence
+/// of a marker entry and skips when absent so the OSS build runs
+/// cleanly.
 final class AnimationSkillTests: XCTestCase {
 
-    func test_listEntries_includesCuttiSpecificRules() {
+    private func skipIfSkillPackMissing() throws {
+        let names = Set(AnimationSkill.allEntries.map { $0.name })
+        try XCTSkipUnless(
+            names.contains("rules/cutti-staging"),
+            "Skipping: proprietary AnimationSkill pack not present in this build (open-source build ships an empty AnimationSkill directory)."
+        )
+    }
+
+    func test_listEntries_includesCuttiSpecificRules() throws {
+        try skipIfSkillPackMissing()
         let names = Set(AnimationSkill.allEntries.map { $0.name })
         XCTAssertTrue(names.contains("rules/cutti-staging"),
                       "Expected bundled rules/cutti-staging.md")
@@ -38,7 +53,8 @@ final class AnimationSkillTests: XCTestCase {
         }
     }
 
-    func test_content_returnsRawMarkdown_andStripFrontMatterCleansIt() {
+    func test_content_returnsRawMarkdown_andStripFrontMatterCleansIt() throws {
+        try skipIfSkillPackMissing()
         guard let raw = AnimationSkill.content(for: "rules/cutti-staging") else {
             XCTFail("Could not load rules/cutti-staging from bundle")
             return
@@ -73,7 +89,8 @@ final class AnimationSkillTests: XCTestCase {
     /// whether it remembered to call `read_animation_rule` first.
     /// If this regresses (empty bake, missing files, broken Bundle
     /// access), the agent silently loses house-style guidance.
-    func test_bakedIntoOverlayPrompt_containsBothCriticalSections() {
+    func test_bakedIntoOverlayPrompt_containsBothCriticalSections() throws {
+        try skipIfSkillPackMissing()
         let baked = AnimationSkill.bakedIntoOverlayPrompt
         XCTAssertFalse(baked.isEmpty,
                        "Baked prompt must not be empty — Bundle resource lookup likely broken")
@@ -89,7 +106,8 @@ final class AnimationSkillTests: XCTestCase {
                        "YAML front matter should be stripped from baked prompt")
     }
 
-    func test_bakedIntoOverlayPrompt_isEmbeddedInGenerateOverlayDescription() {
+    func test_bakedIntoOverlayPrompt_isEmbeddedInGenerateOverlayDescription() throws {
+        try skipIfSkillPackMissing()
         let description = GenerateOverlayRequest.toolDefinition.function.description
         XCTAssertTrue(description.contains("Required reading: Cutti animation skill"),
                       "generate_overlay description must include the baked skill content")

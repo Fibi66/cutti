@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage(CuttiSettings.editorLanguageKey) private var editorLanguageRaw: String = EditorLanguagePreference.automatic.rawValue
     @AppStorage(CuttiSettings.showAgentTraceKey) private var showAgentTrace: Bool = false
     @AppStorage(CuttiSettings.uiLanguageKey) private var uiLanguage: String = CuttiSettings.uiLanguageSystem
+    @AppStorage(CuttiSettings.aiProviderKey) private var aiProviderRaw: String = AIProviderPreference.cuttiCloud.rawValue
 
     /// Snapshot of `uiLanguage` taken when this Settings window opens.
     /// The picker writes through to AppStorage immediately (so the value
@@ -13,6 +14,10 @@ struct SettingsView: View {
     /// diverges from this baseline.
     @State private var initialUILanguage: String = CuttiSettings.uiLanguageSystem
     @State private var showRestartPrompt: Bool = false
+
+    private var aiProvider: AIProviderPreference {
+        AIProviderPreference(rawValue: aiProviderRaw) ?? .cuttiCloud
+    }
 
     private var editorLanguageSelection: Binding<EditorLanguagePreference> {
         Binding(
@@ -23,10 +28,18 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                SubscriptionSettingsRow()
-            } header: {
-                T("Subscription")
+            AIProviderSettingsSection()
+
+            // Cutti subscription / credits only matter when AI calls
+            // are billed via the relay. Custom (BYOK) users pay their
+            // upstream provider directly, so the row is misleading
+            // there and gets hidden.
+            if aiProvider == .cuttiCloud {
+                Section {
+                    SubscriptionSettingsRow()
+                } header: {
+                    T("Subscription")
+                }
             }
 
             Section {

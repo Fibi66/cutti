@@ -90,6 +90,21 @@ enum CuttiSettings {
     static let uiLanguageEnglish = "en"
     static let uiLanguageChinese = "zh-Hans"
 
+    // MARK: - AI provider (BYOK)
+
+    /// `AIProviderPreference.rawValue`. Default: `cuttiCloud`.
+    static let aiProviderKey = "cutti.aiProvider"
+    /// Non-secret BYOK fields. Secrets live in the keychain.
+    static let customLLMBaseURLKey = "cutti.byok.llm.baseURL"
+    static let customLLMModelKey = "cutti.byok.llm.model"
+    static let customUseSeparateImageProviderKey = "cutti.byok.useSeparateImageProvider"
+    static let customImageBaseURLKey = "cutti.byok.image.baseURL"
+    static let customImageModelKey = "cutti.byok.image.model"
+
+    /// Keychain account names for BYOK API keys.
+    static let customLLMKeychainAccount = "cutti.byok.llm.key"
+    static let customImageKeychainAccount = "cutti.byok.image.key"
+
     static func ensureDefaults(defaults: UserDefaults = .standard) {
         if defaults.object(forKey: subtitlesVisibleByDefaultKey) == nil {
             defaults.set(true, forKey: subtitlesVisibleByDefaultKey)
@@ -102,6 +117,12 @@ enum CuttiSettings {
         }
         if defaults.object(forKey: uiLanguageKey) == nil {
             defaults.set(uiLanguageSystem, forKey: uiLanguageKey)
+        }
+        if defaults.object(forKey: aiProviderKey) == nil {
+            defaults.set(AIProviderPreference.cuttiCloud.rawValue, forKey: aiProviderKey)
+        }
+        if defaults.object(forKey: customUseSeparateImageProviderKey) == nil {
+            defaults.set(false, forKey: customUseSeparateImageProviderKey)
         }
     }
 
@@ -148,6 +169,35 @@ enum CuttiSettings {
             whisperLanguageCode: languagePreference.resolvedWhisperLanguageCode(fallback: fallbackLocale),
             primaryBackend: primaryBackend,
             fallbackBackend: fallbackBackend
+        )
+    }
+
+    // MARK: - AI provider helpers
+
+    /// Returns the user's persisted AI provider choice. Falls back to
+    /// `.cuttiCloud` if the stored value is missing or unrecognized
+    /// (e.g. settings file from a future build).
+    static func aiProvider(defaults: UserDefaults = .standard) -> AIProviderPreference {
+        guard let raw = defaults.string(forKey: aiProviderKey),
+              let provider = AIProviderPreference(rawValue: raw) else {
+            return .cuttiCloud
+        }
+        return provider
+    }
+
+    /// Snapshot of all custom-provider fields. Reads non-secret values
+    /// from `UserDefaults` and the API keys from the keychain in one
+    /// call so AI services don't have to thread that plumbing through
+    /// every call site.
+    static func customAIConfiguration(defaults: UserDefaults = .standard) -> CustomAIConfiguration {
+        CustomAIConfiguration(
+            llmBaseURL: defaults.string(forKey: customLLMBaseURLKey) ?? "",
+            llmApiKey: KeychainStore.string(for: customLLMKeychainAccount) ?? "",
+            llmModel: defaults.string(forKey: customLLMModelKey) ?? "",
+            useSeparateImageProvider: defaults.bool(forKey: customUseSeparateImageProviderKey),
+            imageBaseURL: defaults.string(forKey: customImageBaseURLKey) ?? "",
+            imageApiKey: KeychainStore.string(for: customImageKeychainAccount) ?? "",
+            imageModel: defaults.string(forKey: customImageModelKey) ?? ""
         )
     }
 }
