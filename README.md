@@ -4,25 +4,6 @@ AI-powered video editing app for macOS **and iOS** (iPhone + iPad universal).
 Import your footage, click Start — cutti's AI handles transcription, scene
 analysis, and edit suggestions.
 
-## Tech Stack
-
-- **Swift 6 / SwiftUI** — macOS 14+, iOS 17+
-- **Apple Speech + WhisperKit** — on-device transcription
-- **Apple Vision** — scene classification, face detection
-- **AVFoundation** — media analysis, proxy transcoding, playback, export
-- **sherpa-onnx** (vendored xcframework) — speaker diarization
-- **OpenAI-compatible LLM** — AI edit decisions
-
-## Project structure
-
-```
-cutti/
-├── shared/CuttiKit/    # Cross-platform Swift package (iOS + macOS core)
-├── macos/CuttiMac/     # macOS app (SwiftPM executable)
-├── ios/CuttiMobile/       # iOS app (XcodeGen → .xcodeproj, not committed)
-├── scripts/              # One-shot setup helpers
-└── docs/                 # Design specs & plans
-```
 
 ## Setup
 
