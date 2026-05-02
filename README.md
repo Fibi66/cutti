@@ -31,19 +31,7 @@ cutti/
 - macOS 14+ with **Xcode 16** (Swift 6 toolchain) installed
 - For iOS builds: `brew install xcodegen`
 
-### 1. Fetch vendored binaries (one-time, required)
-
-The macOS app links against `sherpa-onnx` + `onnxruntime` static
-xcframeworks (~80 MB total). They're downloaded from upstream GitHub
-releases and **not** checked in. Run this once after cloning:
-
-```bash
-bash scripts/setup-sherpa.sh
-```
-
-The script is idempotent — safe to re-run.
-
-### 2. Build & run macOS
+### 1. Build & run macOS
 
 ```bash
 cd macos/CuttiMac
@@ -51,10 +39,13 @@ swift build
 swift run
 ```
 
-WhisperKit model weights (~1.5 GB) are downloaded automatically on first
-launch into `macos/CuttiMac/Models/` (gitignored).
+On first build, SwiftPM auto-downloads the vendored `sherpa-onnx` and
+`onnxruntime` xcframeworks (~45 MB total) from this repo's GitHub
+release into the SwiftPM cache. WhisperKit model weights (~1.5 GB) are
+downloaded automatically on first **launch** into
+`macos/CuttiMac/Models/` (gitignored).
 
-### 3. Build & run iOS
+### 2. Build & run iOS
 
 ```bash
 cd ios/CuttiMobile

@@ -13,14 +13,25 @@ let package = Package(
         .package(path: "../../shared/CuttiKit"),
     ],
     targets: [
-        // Vendored sherpa-onnx static xcframework. Installed by
-        // scripts/setup-sherpa.sh (run once after clone; gitignored).
+        // Vendored sherpa-onnx static xcframework.
+        //
+        // ⚠️ Two modes — keep them in sync when switching:
+        //   • Private repo (now): use `path:` so local builds work. The
+        //     xcframework lives in Vendor/ (gitignored, ~45 MB total
+        //     after `gh release download vendor-sherpa-v1.12.39-ort-1.24.4
+        //     -R Fibi66/cutti -D /tmp/cutti-vendor && unzip ... -d Vendor/`).
+        //   • Public repo: switch to `url:` + `checksum:` so SwiftPM
+        //     auto-fetches from the GitHub release.
+        //     url: "https://github.com/Fibi66/cutti/releases/download/vendor-sherpa-v1.12.39-ort-1.24.4/sherpa-onnx.xcframework.zip"
+        //     checksum: "bbceeaf8b562017eedb5303460ae2615a217f415fea8306b026fe438feb4f57a"
         .binaryTarget(
             name: "SherpaOnnxC",
             path: "Vendor/sherpa-onnx.xcframework"
         ),
         // ONNX Runtime static lib that sherpa-onnx links against.
-        // Also gitignored; same setup script installs it.
+        // Same dual-mode setup as SherpaOnnxC above.
+        //   url: "https://github.com/Fibi66/cutti/releases/download/vendor-sherpa-v1.12.39-ort-1.24.4/onnxruntime.xcframework.zip"
+        //   checksum: "4ad2c3906fbaf9ed6454e796b1be80389780b9865d7ab2e379d5b37b1940555b"
         .binaryTarget(
             name: "OnnxRuntimeC",
             path: "Vendor/onnxruntime.xcframework"
