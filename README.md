@@ -1,0 +1,86 @@
+# cutti
+
+AI-powered video editing app for macOS **and iOS** (iPhone + iPad universal).
+Import your footage, click Start — cutti's AI handles transcription, scene
+analysis, and edit suggestions.
+
+## Tech Stack
+
+- **Swift 6 / SwiftUI** — macOS 14+, iOS 17+
+- **Apple Speech + WhisperKit** — on-device transcription
+- **Apple Vision** — scene classification, face detection
+- **AVFoundation** — media analysis, proxy transcoding, playback, export
+- **sherpa-onnx** (vendored xcframework) — speaker diarization
+- **OpenAI-compatible LLM** — AI edit decisions
+
+## Project structure
+
+```
+cutti/
+├── shared/CuttiKit/    # Cross-platform Swift package (iOS + macOS core)
+├── macos/CuttiMac/     # macOS app (SwiftPM executable)
+├── ios/CuttiMobile/       # iOS app (XcodeGen → .xcodeproj, not committed)
+├── scripts/              # One-shot setup helpers
+└── docs/                 # Design specs & plans
+```
+
+## Setup
+
+### Prerequisites
+
+- macOS 14+ with **Xcode 16** (Swift 6 toolchain) installed
+- For iOS builds: `brew install xcodegen`
+
+### 1. Fetch vendored binaries (one-time, required)
+
+The macOS app links against `sherpa-onnx` + `onnxruntime` static
+xcframeworks (~80 MB total). They're downloaded from upstream GitHub
+releases and **not** checked in. Run this once after cloning:
+
+```bash
+bash scripts/setup-sherpa.sh
+```
+
+The script is idempotent — safe to re-run.
+
+### 2. Build & run macOS
+
+```bash
+cd macos/CuttiMac
+swift build
+swift run
+```
+
+WhisperKit model weights (~1.5 GB) are downloaded automatically on first
+launch into `macos/CuttiMac/Models/` (gitignored).
+
+### 3. Build & run iOS
+
+```bash
+cd ios/CuttiMobile
+xcodegen generate           # MUST re-run after editing project.yml
+open CuttiMobile.xcodeproj
+```
+
+For **Simulator** builds: works out of the box.
+
+For **device / TestFlight / App Store** builds: open `project.yml`, set
+`DEVELOPMENT_TEAM` to your own Apple Developer Team ID and change
+`bundleIdPrefix` to your own reverse-DNS prefix, then re-run
+`xcodegen generate`.
+
+## Testing
+
+```bash
+# macOS app + cross-platform package (one combined run)
+cd macos/CuttiMac
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+
+# Shared package alone
+cd shared/CuttiKit
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+```
+
+## License
+
+[AGPL-3.0](LICENSE).

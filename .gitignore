@@ -1,0 +1,41 @@
+# Build
+.build/
+.build-device/
+.build-simulator/
+build/
+dist/
+DerivedData/
+
+# Xcode / SwiftPM
+*.xcodeproj
+*.xcworkspace/xcuserdata/
+*.pbxuser
+*.perspectivev3
+xcuserdata/
+*.moved-aside
+
+# Environment
+.env
+.env.local
+.dev.vars
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Misc
+*.log
+Thumbs.db
+local_storage/
+node_modules/
+
+# Whisper model weights (downloaded by user, ~1.5GB)
+macos/CuttiMac/Models/
+
+# sherpa-onnx vendored xcframework (~80MB, fetched by scripts/setup-sherpa.sh)
+macos/CuttiMac/Vendor/sherpa-onnx.xcframework/
+macos/CuttiMac/Vendor/onnxruntime.xcframework/

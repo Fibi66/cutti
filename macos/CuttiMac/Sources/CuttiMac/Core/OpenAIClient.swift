@@ -1,0 +1,447 @@
+import Foundation
+
+// MARK: - Configuration
+
+enum OpenAIClientError: Error, Sendable {
+    case invalidResponse(statusCode: Int, body: String)
+    case decodingFailed(String)
+    case noChoices
+    case networkError(String)
+    /// Relay rejected the request because the user isn't signed in
+    /// (missing/expired/invalid JWT). Surfaced as a friendly prompt
+    /// to sign in, not a raw HTTP error.
+    case relayAuthRequired
+    /// Relay rejected the request because the user's email isn't
+    /// verified yet. Their account exists but they haven't clicked
+    /// the verification link.
+    case relayEmailNotVerified
+    /// Relay rejected the request because the user has used up their
+    /// monthly credit allowance. `resetAt` is the server-provided
+    /// epoch when the counter rolls over (1st of next month).
+    case relayQuotaExceeded(used: Int?, quota: Int?, resetAt: Date?)
+
+    /// True for errors that a short retry might recover from (transient
+    /// network blips, 429 rate limits, 5xx server errors).
+    var isRetryable: Bool {
+        switch self {
+        case .networkError:
+            return true
+        case .invalidResponse(let status, _):
+            return status == 408 || status == 429 || (500...599).contains(status)
+        case .decodingFailed, .noChoices,
+             .relayAuthRequired, .relayEmailNotVerified, .relayQuotaExceeded:
+            return false
+        }
+    }
+
+    /// User-facing message used by the chat panel.
+    var displayMessage: String {
+        switch self {
+        case .invalidResponse(let status, let body):
+            let hint: String
+            switch status {
+            case 401: hint = L("Please sign in from Settings.")
+            case 403: hint = "Access denied (403)."
+            case 404: hint = "Endpoint not found (404)."
+            case 429: hint = "Rate-limited (429). Please try again in a moment."
+            case 500...599: hint = "Server error (\(status)). Try again in a moment."
+            default: hint = "HTTP \(status)."
+            }
+            return "\(hint) \(body.prefix(200))"
+        case .decodingFailed(let msg):
+            return "Failed to parse AI response: \(msg)"
+        case .noChoices:
+            return "AI returned an empty response."
+        case .networkError(let msg):
+            return "Network error: \(msg)"
+        case .relayAuthRequired:
+            return L("Please sign in from Settings.")
+        case .relayEmailNotVerified:
+            return L("Please verify your email address before using AI features. Check your inbox for the verification link from Cutti.")
+        case .relayQuotaExceeded(let used, let quota, let resetAt):
+            return Self.formatQuotaExceeded(used: used, quota: quota, resetAt: resetAt)
+        }
+    }
+
+    private static func formatQuotaExceeded(
+        used: Int?,
+        quota: Int?,
+        resetAt: Date?
+    ) -> String {
+        let quotaText: String
+        if let used, let quota {
+            quotaText = "\(used) / \(quota)"
+        } else if let quota {
+            quotaText = "\(quota)"
+        } else {
+            quotaText = "—"
+        }
+        // We intentionally don't show a concrete reset date. The
+        // server resets on the 1st of each calendar month in its
+        // own timezone, and rendering "Jan 1, 2025" in the user's
+        // locale risks being a day off. A generic sentence is both
+        // simpler and actually correct.
+        _ = resetAt
+        let template = L(
+            "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets."
+        )
+        return String(format: template, quotaText)
+    }
+}
+
+/// Configuration for calls to the Cutti cloud relay. All AI traffic
+/// flows through `api.cutti.app` — there's no direct-to-Azure / direct-
+/// to-OpenAI path in shipping builds. `sessionToken` carries either a
+/// `"jwt:"`-prefixed user JWT (from `/v1/auth/signin` or
+/// `/v1/auth/apple`) or a `"dev:"`-prefixed dev token; an empty string
+/// means the user is signed out and requests will 401 deliberately.
+struct OpenAIConfiguration: Sendable {
+    let apiKey: String
+    let model: String
+    let relayBaseURL: String
+
+    /// Cutti cloud relay configuration.
+    static func cuttiRelay(
+        baseURL: String,
+        sessionToken: String,
+        model: String = "gpt-5.4-mini"
+    ) -> OpenAIConfiguration {
+        OpenAIConfiguration(
+            apiKey: sessionToken,
+            model: model,
+            relayBaseURL: baseURL
+        )
+    }
+
+    /// Returns a relay-backed configuration. The relay is the only backend —
+    /// no direct-to-Azure or OpenAI path exists in shipping builds.
+    ///
+    /// Nonisolated: the underlying `RelayClient.configurationFromDefaults()`
+    /// reads credentials from a lock-protected snapshot in `RelaySession`,
+    /// so this is safe to invoke from `MainActor`, background actors, and
+    /// `Task.detached` alike — no actor hop required.
+    static func fromEnvironment() -> OpenAIConfiguration? {
+        let config = RelayClient.configurationFromDefaults()
+        print("🔑 OpenAI config: provider=cutti_relay base=\(config.relayBaseURL)")
+        return config
+    }
+}
+
+// MARK: - Request / Response models
+
+struct ChatMessage: Codable, Sendable {
+    let role: String
+    let content: String?
+    let toolCalls: [ToolCall]?
+    let toolCallId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case role, content
+        case toolCalls = "tool_calls"
+        case toolCallId = "tool_call_id"
+    }
+
+    static func system(_ content: String) -> ChatMessage {
+        ChatMessage(role: "system", content: content, toolCalls: nil, toolCallId: nil)
+    }
+
+    static func user(_ content: String) -> ChatMessage {
+        ChatMessage(role: "user", content: content, toolCalls: nil, toolCallId: nil)
+    }
+
+    static func assistant(_ content: String) -> ChatMessage {
+        ChatMessage(role: "assistant", content: content, toolCalls: nil, toolCallId: nil)
+    }
+
+    static func tool(callId: String, content: String) -> ChatMessage {
+        ChatMessage(role: "tool", content: content, toolCalls: nil, toolCallId: callId)
+    }
+}
+
+struct ToolCall: Codable, Sendable {
+    let id: String
+    let type: String
+    let function: FunctionCall
+
+    struct FunctionCall: Codable, Sendable {
+        let name: String
+        let arguments: String
+    }
+}
+
+struct ToolDefinition: Codable, Sendable {
+    let type: String
+    let function: FunctionDefinition
+
+    struct FunctionDefinition: Codable, Sendable {
+        let name: String
+        let description: String
+        let parameters: JSONSchema
+    }
+
+    struct JSONSchema: Codable, Sendable {
+        let type: String
+        let properties: [String: Property]?
+        let required: [String]?
+        let items: ItemSchema?
+
+        struct Property: Codable, Sendable {
+            let type: String
+            let description: String?
+            let items: ItemSchema?
+        }
+
+        struct ItemSchema: Codable, Sendable {
+            let type: String
+            let properties: [String: Property]?
+            let required: [String]?
+        }
+    }
+}
+
+struct ToolChoice: Codable, Sendable {
+    let type: String
+    let function: FunctionRef?
+
+    struct FunctionRef: Codable, Sendable {
+        let name: String
+    }
+
+    static func required(name: String) -> ToolChoice {
+        ToolChoice(type: "function", function: FunctionRef(name: name))
+    }
+}
+
+struct ChatCompletionResponse: Sendable {
+    let content: String?
+    let toolCalls: [ToolCall]
+    let finishReason: String?
+}
+
+// MARK: - Client
+
+struct OpenAIClient: Sendable {
+    let configuration: OpenAIConfiguration
+    /// Max retry attempts for transient errors (network blips, 429, 5xx).
+    /// Exposed so tests can override (default: 3 retries = 4 total attempts).
+    var maxRetries: Int = 3
+    /// Base delay in seconds for exponential backoff. Attempts wait
+    /// `baseRetryDelay * 2^attempt` with a small jitter. Default 0.6s →
+    /// retries at ~0.6s, ~1.2s, ~2.4s.
+    var baseRetryDelay: Double = 0.6
+
+    func chatCompletion(
+        messages: [ChatMessage],
+        tools: [ToolDefinition]? = nil,
+        toolChoice: ToolChoice? = nil,
+        temperature: Double = 0.7
+    ) async throws -> ChatCompletionResponse {
+        var lastError: OpenAIClientError?
+        for attempt in 0...maxRetries {
+            do {
+                return try await performChatCompletion(
+                    messages: messages,
+                    tools: tools,
+                    toolChoice: toolChoice,
+                    temperature: temperature
+                )
+            } catch let error as OpenAIClientError {
+                lastError = error
+                guard error.isRetryable, attempt < maxRetries else { throw error }
+                let delay = baseRetryDelay * pow(2.0, Double(attempt))
+                let jitter = Double.random(in: 0...(delay * 0.25))
+                let ns = UInt64((delay + jitter) * 1_000_000_000)
+                print("⚠️ OpenAI attempt \(attempt + 1) failed (\(error)); retrying in \(String(format: "%.2fs", delay + jitter))")
+                try? await Task.sleep(nanoseconds: ns)
+            } catch {
+                // Non-OpenAI errors (e.g. URL session bubbled up) — wrap
+                // as networkError so they become retryable.
+                let wrapped = OpenAIClientError.networkError(error.localizedDescription)
+                lastError = wrapped
+                guard attempt < maxRetries else { throw wrapped }
+                let delay = baseRetryDelay * pow(2.0, Double(attempt))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+        throw lastError ?? .networkError("Unknown failure")
+    }
+
+    private func performChatCompletion(
+        messages: [ChatMessage],
+        tools: [ToolDefinition]? = nil,
+        toolChoice: ToolChoice? = nil,
+        temperature: Double = 0.7
+    ) async throws -> ChatCompletionResponse {
+        let base = configuration.relayBaseURL.hasSuffix("/")
+            ? String(configuration.relayBaseURL.dropLast())
+            : configuration.relayBaseURL
+        let url = URL(string: "\(base)/v1/chat/completions")!
+
+        var body: [String: Any] = [
+            "messages": try messages.map { try encodeToDictionary($0) },
+            "temperature": temperature,
+        ]
+        // The relay forwards payloads byte-identically to Azure, which
+        // picks the deployed model — `model` stays out of the body.
+
+        if let tools {
+            body["tools"] = try tools.map { try encodeToDictionary($0) }
+        }
+        if let toolChoice {
+            body["tool_choice"] = try encodeToDictionary(toolChoice)
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: body)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // `apiKey` is prefixed by `RelayClient.configurationFromDefaults()`
+        // so we know whether to send the dev header or a Bearer JWT.
+        let token = configuration.apiKey
+        let authMode: String
+        if token.hasPrefix("jwt:") {
+            request.setValue(
+                "Bearer \(String(token.dropFirst(4)))",
+                forHTTPHeaderField: "Authorization"
+            )
+            authMode = "jwt(len=\(token.count - 4))"
+        } else if token.hasPrefix("dev:") {
+            request.setValue(
+                String(token.dropFirst(4)),
+                forHTTPHeaderField: "X-Cutti-Dev-Token"
+            )
+            authMode = "dev"
+        } else if !token.isEmpty {
+            // Legacy — raw token with no prefix; treat as dev.
+            request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
+            authMode = "legacy-dev"
+        } else {
+            authMode = "none"
+        }
+
+        request.httpBody = jsonData
+        request.timeoutInterval = 60
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw OpenAIClientError.networkError(error.localizedDescription)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIClientError.networkError("Non-HTTP response")
+        }
+
+        // Relay responses carry X-Cutti-Credits-* headers; forward
+        // them to any RelaySession observers so the UI progress bar
+        // updates live without an extra /v1/me round-trip.
+        RelayCreditsNotification.postIfPresent(from: httpResponse)
+
+        guard httpResponse.statusCode == 200 else {
+            let responseBody = String(data: data, encoding: .utf8) ?? "<binary>"
+            // Always log the raw failure so we can tell signed-out from
+            // expired-JWT from email-not-verified from quota — the
+            // user-facing message gets collapsed into a friendly hint
+            // and loses the diagnostic detail otherwise.
+            print("⚠️ relay chat failed: status=\(httpResponse.statusCode) auth=\(authMode) body=\(responseBody.prefix(300))")
+            // Relay emits structured JSON errors for auth/quota/email
+            // problems. Translate those to friendly typed errors so the
+            // chat panel can show a plain-language prompt ("sign in",
+            // "verify email", "quota exceeded") instead of a raw HTTP
+            // status + body dump.
+            if let structured = Self.parseRelayError(
+                statusCode: httpResponse.statusCode,
+                data: data
+            ) {
+                throw structured
+            }
+            throw OpenAIClientError.invalidResponse(
+                statusCode: httpResponse.statusCode,
+                body: String(responseBody.prefix(500))
+            )
+        }
+
+        return try parseResponse(data)
+    }
+
+    /// Maps a non-200 relay response body (`{"error": "...", ...}`) to
+    /// a typed `OpenAIClientError`. Returns nil if the body isn't a
+    /// recognised structured error — caller falls through to the
+    /// generic `.invalidResponse` path.
+    ///
+    /// Internal (not private) so tests can exercise the mapping
+    /// without going through a live URLSession.
+    static func parseRelayError(
+        statusCode: Int,
+        data: Data
+    ) -> OpenAIClientError? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let code = json["error"] as? String else {
+            // Bare 401 with no body (e.g. before requireAuth wraps its
+            // response) still deserves the friendly sign-in message.
+            if statusCode == 401 { return .relayAuthRequired }
+            return nil
+        }
+        switch code {
+        case "unauthorized":
+            return .relayAuthRequired
+        case "email_not_verified":
+            return .relayEmailNotVerified
+        case "quota_exceeded":
+            let used = json["credits_used"] as? Int
+            let quota = json["credits_quota"] as? Int
+            let resetAt = (json["period_reset_at"] as? TimeInterval)
+                .map { Date(timeIntervalSince1970: $0) }
+            return .relayQuotaExceeded(used: used, quota: quota, resetAt: resetAt)
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Private
+
+    private func parseResponse(_ data: Data) throws -> ChatCompletionResponse {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let choice = choices.first,
+              let message = choice["message"] as? [String: Any] else {
+            throw OpenAIClientError.noChoices
+        }
+
+        let content = message["content"] as? String
+        let finishReason = choice["finish_reason"] as? String
+
+        var toolCalls: [ToolCall] = []
+        if let rawCalls = message["tool_calls"] as? [[String: Any]] {
+            for rawCall in rawCalls {
+                guard let id = rawCall["id"] as? String,
+                      let type = rawCall["type"] as? String,
+                      let function = rawCall["function"] as? [String: Any],
+                      let name = function["name"] as? String,
+                      let arguments = function["arguments"] as? String else {
+                    continue
+                }
+                toolCalls.append(ToolCall(
+                    id: id,
+                    type: type,
+                    function: .init(name: name, arguments: arguments)
+                ))
+            }
+        }
+
+        return ChatCompletionResponse(
+            content: content,
+            toolCalls: toolCalls,
+            finishReason: finishReason
+        )
+    }
+
+    private func encodeToDictionary<T: Encodable>(_ value: T) throws -> Any {
+        let data = try JSONEncoder().encode(value)
+        return try JSONSerialization.jsonObject(with: data)
+    }
+}

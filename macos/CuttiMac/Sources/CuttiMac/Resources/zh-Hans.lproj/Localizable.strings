@@ -1,0 +1,821 @@
+/* Settings — General */
+"General" = "通用";
+"Show subtitles by default" = "默认显示字幕";
+"New editing sessions start with subtitle overlays visible in the viewer and timeline." = "新建编辑会话时，预览区和时间线上默认显示字幕。";
+
+/* Settings — Video Editor */
+"Video Editor" = "视频编辑";
+"Speech language" = "语音识别语言";
+"Choose the main spoken language in your clip. Cutti will handle speech recognition automatically in the background." = "选择素材中的主要口语。Cutti 会在后台自动选择匹配的语音识别引擎。";
+"Interface language" = "界面语言";
+"Choose the language used throughout Cutti's interface. Independent from the speech-recognition language above." = "选择 Cutti 界面使用的语言。与上方的语音识别语言相互独立。";
+"System" = "跟随系统";
+"English" = "English";
+"Chinese" = "中文";
+"Automatic" = "自动";
+
+/* Settings — AI */
+"AI" = "AI";
+"Provider" = "服务商";
+"Azure OpenAI" = "Azure OpenAI";
+"OpenAI" = "OpenAI";
+"Endpoint" = "Endpoint";
+"API Key" = "API 密钥";
+"Deployment" = "部署";
+"API Version" = "API 版本";
+"Model" = "模型";
+"Azure OpenAI is preconfigured for Cutti." = "已为 Cutti 预配置 Azure OpenAI。";
+
+/* Settings — Developer */
+"Developer" = "开发者";
+"Show agent trace" = "显示 Agent Trace";
+"Reveals the raw agent trace inspector in the AI Editor header, with per-turn step lists, Undo Entire Plan, and Copy Trace JSON. Off by default — everyday users only need the plain-language action bubbles in the chat." = "在 AI 编辑顶部显示原始的 Agent Trace 检查器，包含每轮步骤列表、撤销整个计划、复制 Trace JSON 等开发者功能。默认关闭——普通用户只需要看聊天里的自然语言摘要即可。";
+
+/* Restart prompt */
+"Restart Required" = "需要重启";
+"Apply & Restart" = "应用并重启";
+"Cancel" = "取消";
+"Changing the interface language requires restarting Cutti. Your project and unsaved edits will be preserved." = "切换界面语言需要重启 Cutti。当前项目和未保存的编辑不会丢失。";
+
+/* Common UI */
+"AI Editor" = "AI 编辑";
+"Media" = "素材";
+"Send" = "发送";
+"Save" = "保存";
+"Configure API key to enable AI editing…" = "配置 API 密钥后即可使用 AI 编辑…";
+
+/* Relay errors */
+"Please sign in from Settings." = "请从「设置」登录。";
+"Please verify your email address before using AI features. Check your inbox for the verification link from Cutti." = "使用 AI 功能前请先验证邮箱。查看收件箱，点击 Cutti 发送的验证链接。";
+"You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "本月 AI 额度已用完（%@）。升级到付费方案可获得更多额度，或等到下个月 1 号额度重置。";
+
+/* App menu — Edit / View */
+"Undo" = "撤销";
+"Redo" = "重做";
+"Delete Selection" = "删除选中内容";
+"View" = "视图";
+"Zoom In Timeline" = "时间线放大";
+"Zoom Out Timeline" = "时间线缩小";
+"Reset Timeline Zoom" = "重置时间线缩放";
+
+/* Editor command bar */
+"Import" = "导入";
+"Export" = "导出";
+"Exporting…" = "导出中…";
+
+/* Viewer transport bar tooltips */
+"Previous frame" = "上一帧";
+"Next frame" = "下一帧";
+"Play" = "播放";
+"Pause" = "暂停";
+"Playback speed" = "播放速度";
+"Loop" = "循环";
+"Loop on" = "循环已开启";
+"Toggle fullscreen (Esc to exit)" = "全屏切换（Esc 退出）";
+"Toggle focus mode (Esc to exit)" = "专注模式切换（Esc 退出）";
+
+/* Timeline dock — header, tools, tooltips */
+"TIMELINE" = "时间线";
+"%d selected" = "已选中 %d 个";
+"%d AI edits pending review" = "%d 处 AI 编辑待审阅";
+"Speed" = "速度";
+"Mixed" = "多种";
+"Split" = "分割";
+"Merge selected" = "合并所选";
+"Delete" = "删除";
+"Normalize loudness (-16 dB)" = "响度标准化 (-16 dB)";
+"Compress silences (>1s, 4×)" = "压缩静音 (>1 秒，4 倍)";
+"Auto-detect speakers" = "自动识别说话人";
+"Add BGM track…" = "添加背景音乐轨道…";
+"Audio" = "音频";
+"Import a clip first" = "请先导入素材";
+"B-roll" = "空镜";
+"Issues" = "问题";
+"Volume" = "音量";
+"Rotate 90°" = "旋转 90°";
+"Rotate 90° (now %d°)" = "旋转 90°（当前 %d°）";
+"Flip horizontally" = "水平翻转";
+"✓ Flip horizontally" = "✓ 水平翻转";
+"Flip vertically" = "垂直翻转";
+"✓ Flip vertically" = "✓ 垂直翻转";
+"Transform" = "变换";
+"Hide subtitles" = "隐藏字幕";
+"Subtitles" = "字幕";
+"Select All Segments" = "全选片段";
+"Clear Segment Selection" = "取消选择";
+
+/* AgentTraceView */
+"Agent Trace" = "Agent Trace";
+"No agent edits yet" = "暂无 Agent 编辑记录";
+"Ask the Agent to edit your timeline. Each plan appears here with a step-by-step trace and an undo option." = "向 Agent 发送指令来编辑时间线。每次计划都会在此显示逐步追踪记录，并可一键撤销。";
+"User prompt" = "用户指令";
+"%d step(s)" = "%d 步";
+"Undo Entire Plan" = "撤销整个计划";
+"Copy Trace JSON" = "复制 Trace JSON";
+
+/* ContentView — whisper setup + banners */
+"Looks like a presenter cam — apply Picture-in-Picture?" = "检测到演讲摄像头 — 应用画中画？";
+"Apply" = "应用";
+"Dismiss" = "忽略";
+"Done" = "完成";
+"Speech Recognition Setup" = "语音识别设置";
+"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "当前语音语言默认使用 Whisper 以获得更精准的时间轴。\n下载一次模型，或继续使用 Apple Speech 作为备选。";
+"Download Whisper" = "下载 Whisper";
+"Downloading Whisper model…" = "正在下载 Whisper 模型…";
+"Download failed" = "下载失败";
+"Retry" = "重试";
+"Skip for Now" = "暂时跳过";
+
+/* ContentView — media panel */
+"MEDIA" = "素材";
+"Collapse media" = "收起素材栏";
+"Expand media" = "展开素材栏";
+"Search" = "搜索";
+"Drop videos to import" = "拖入视频以导入";
+"Importing…" = "导入中…";
+
+/* EditorSessionContainer */
+"Projects" = "项目";
+"Project" = "项目";
+"Back to dashboard" = "返回仪表板";
+"Finish current task first" = "请先完成当前任务";
+
+/* ProjectDashboardView */
+"AI-Powered Video Editor" = "AI 视频编辑器";
+"New Project" = "新建项目";
+"No Projects Yet" = "暂无项目";
+"Create a new project to start editing your videos with AI." = "创建新项目，开始用 AI 编辑视频。";
+"Create Your First Project" = "创建第一个项目";
+"%d clips" = "%d 个素材";
+"Open" = "打开";
+"Rename…" = "重命名…";
+"Create New Project" = "新建项目";
+"Rename Project" = "重命名项目";
+"Enter a name for the new project." = "输入新项目的名称。";
+"Enter the new project name." = "输入新的项目名称。";
+"Create" = "创建";
+"Rename" = "重命名";
+"Project Name" = "项目名称";
+"Project name…" = "项目名称…";
+
+/* SettingsView — account */
+"Sign Out" = "退出登录";
+"Sign In" = "登录";
+"Create Account" = "创建账户";
+"Create your account on cutti.app, then come back here to sign in." = "在 cutti.app 创建账户后，回到此处登录。";
+"%@ monthly credits left" = "本月剩余 %@ 额度";
+"of %@" = "共 %@";
+"%@ pack credits left" = "包额度剩余 %@";
+"· never expire" = "· 永不过期";
+"Verify your email" = "验证邮箱";
+"Resend email" = "重新发送";
+"Email" = "邮箱";
+"Password" = "密码";
+"Don't have an account? Create one →" = "没有账户？立即注册 →";
+"Subscription products are not available on this build yet." = "此版本暂不支持订阅购买。";
+"Subscribe" = "订阅";
+"Restore Purchases" = "恢复购买";
+
+/* ChatPanel */
+"Show agent trace" = "显示智能体追踪";
+"Use agent mode (multi-step planning)" = "启用智能体模式（多步规划）";
+"Listening…" = "正在聆听…";
+"Transcribing…" = "正在转录…";
+"Ask Cutti anything…" = "向 Cutti 提问…";
+"Checkpoint saved" = "已保存检查点";
+"YOU" = "你";
+"SYSTEM" = "系统";
+"Reject" = "拒绝";
+"Apply" = "应用";
+"+%d more…" = "还有 %d 条…";
+
+/* ChatAttachmentStrip */
+"Scoped to %d segment(s)" = "限定 %d 个片段";
+"CLEAR" = "清除";
+"Remove all attachments" = "移除所有附件";
+"This segment no longer exists" = "该片段已不存在";
+"Remove attachment" = "移除附件";
+
+/* ChatImageAttachmentView */
+"Open in Preview" = "在预览中打开";
+"Save Image" = "保存图片";
+"Show in Finder" = "在 Finder 中显示";
+"Copy Image" = "拷贝图片";
+"Save to Photos" = "存储到照片";
+"Reveal in Finder" = "在 Finder 中显示";
+"Copy" = "拷贝";
+"Done" = "完成";
+
+/* AICopilotPromptField */
+"Type a message…" = "输入消息…";
+"Configure your API key in Settings to enable AI features." = "请在设置中配置 API 密钥以启用 AI 功能。";
+"Settings" = "设置";
+"Send message" = "发送消息";
+"Start voice input" = "开始语音输入";
+
+/* WorkflowPanel */
+"HISTORY" = "历史记录";
+"Collapse history" = "收起历史";
+"Expand history" = "展开历史";
+"No edits yet" = "尚无编辑";
+"Start editing by typing in the chat or choosing a workflow below." = "在对话框中输入或从下方选择工作流以开始编辑。";
+"CURRENT" = "当前";
+"Restore" = "恢复";
+
+/* WorkflowPresetButton */
+"AI workflows" = "AI 工作流";
+"No matching workflow" = "无匹配工作流";
+"Click to fill prompt" = "点击填充提示";
+"Search workflows…" = "搜索工作流…";
+"AI analysis required" = "需要 AI 分析";
+"Send now" = "立即发送";
+
+/* ExportSettingsSheet */
+"Export Video" = "导出视频";
+"Container" = "封装格式";
+"Resolution" = "分辨率";
+"Output:" = "输出：";
+"Subtitles" = "字幕";
+"Style" = "样式";
+"No subtitles in this project." = "此项目中没有字幕。";
+"Voice enhancer" = "语音增强";
+"Cancel" = "取消";
+"Export SRT" = "导出 SRT";
+"Choose Location…" = "选择位置…";
+"Overview" = "概览";
+"Segments" = "片段";
+"Duration" = "时长";
+"Frame Rate" = "帧率";
+"Format" = "格式";
+"Audio" = "音频";
+"Export Summary" = "导出摘要";
+"Est. File Size" = "预计文件大小";
+
+/* ExportProgressCard */
+"Exporting video" = "正在导出视频";
+"≈ %@ left" = "约剩 %@";
+"Cancelling…" = "正在取消…";
+
+/* ImageGenerationSheet */
+"Generate AI image" = "生成 AI 图片";
+"The image will be added to your Media Browser. Drag it onto the timeline from there." = "图片将添加到媒体浏览器，可从那里拖放到时间线。";
+"Describe the image…" = "描述图片内容…";
+"Size" = "尺寸";
+"Generate" = "生成";
+
+/* ChapterBarStylePanel */
+"Chapter bar style" = "章节栏样式";
+"Position" = "位置";
+"Bottom" = "底部";
+"Top" = "顶部";
+"Background" = "背景";
+"Background opacity" = "背景不透明度";
+"Font color" = "字体颜色";
+"Font size" = "字体大小";
+"Reset" = "重置";
+"Chapter title" = "章节标题";
+
+/* ChapterBarOverlay */
+"Move to top" = "移到顶部";
+"Move to bottom" = "移到底部";
+"Chapter style…" = "章节样式…";
+"Remove chapter bar" = "移除章节栏";
+"Chapter boundary" = "章节边界";
+"mm:ss.SSS" = "分:秒.毫秒";
+"Range: %@ – %@" = "范围：%@ – %@";
+
+/* MediaBrowserSidebar */
+"Delete" = "删除";
+
+/* InspectorSidebar */
+"AI LOG" = "AI 日志";
+"Collapse AI log" = "收起 AI 日志";
+"Expand AI log" = "展开 AI 日志";
+"Relink Source" = "重新链接素材";
+"Edit Decisions" = "编辑决策";
+
+/* InspectorAIAnalysisCard */
+"AI Analysis" = "AI 分析";
+"TRANSCRIPT PREVIEW" = "转录预览";
+"SUGGESTED TRIM" = "建议裁剪";
+"ISSUES" = "问题";
+"SUGGESTIONS" = "建议";
+
+/* SubtitleInspector */
+"Subtitle" = "字幕";
+"Font size" = "字体大小";
+"Font color" = "字体颜色";
+"Background" = "背景";
+
+/* SubtitleOverlay */
+"Drag to resize width" = "拖动以调整宽度";
+
+/* OverlayInspector */
+"Re-rendering…" = "重新渲染中…";
+"Title" = "标题";
+"Theme" = "主题";
+"Accent color" = "强调色";
+"No editable props for %@ yet." = "%@ 暂无可编辑属性。";
+
+/* FreeTransformInspector */
+"Transform" = "变换";
+"Position" = "位置";
+"Scale" = "缩放";
+"Rotation" = "旋转";
+"Opacity" = "不透明度";
+"Fit" = "适合";
+"Scale to fit the canvas" = "缩放以适合画布";
+"Fill" = "填充";
+"Scale to cover the canvas" = "缩放以覆盖画布";
+"Reset position / scale / rotation / opacity" = "重置位置 / 缩放 / 旋转 / 不透明度";
+
+/* PiPOverlayHandle */
+"Turn Off Picture-in-Picture" = "关闭画中画";
+
+/* BGMLaneBar */
+"BGM %d" = "背景音乐 %d";
+"Unmute" = "取消静音";
+"Mute" = "静音";
+"Remove track" = "移除轨道";
+
+/* BRollSuggestionStrip */
+"%@: %@" = "%@：%@";
+"Delete suggestion" = "删除建议";
+"Prompt" = "提示词";
+"Dismiss" = "忽略";
+"Generate from this suggestion. Edit the prompt above to steer the result." = "根据此建议生成。可修改上方提示词来调整结果。";
+"Generation is unavailable in this build." = "此版本暂不支持生成功能。";
+
+/* ViewerStage */
+"Exit" = "退出";
+"Program" = "预览";
+"Import or select media" = "导入或选择媒体";
+"Preview unavailable" = "预览不可用";
+"Choose a ready proxy clip to preview." = "选择已就绪的代理片段以预览。";
+
+/* AlternativeTakesPopover */
+"Multiple takes for this phrase — click to switch" = "同句多个 take — 点击切换";
+"Alternative Takes" = "等价 Take";
+"The AI found %d takes for this phrase. The active take is highlighted — tap any other to swap it in." = "AI 识别到这段话有 %d 个说法。当前使用的已高亮，点击任意其他条目可切换。";
+"(no text)" = "（无文本）";
+
+/* OverlayStartTimePopover */
+"Track start time" = "轨道起始时间";
+"seconds" = "秒";
+"Primary timeline duration: %.2fs" = "主时间线时长：%.2fs";
+"Set" = "设置";
+
+/* SegmentEffectsPopover */
+"Segment Effects" = "片段效果";
+"Color" = "颜色";
+"Brightness" = "亮度";
+"Contrast" = "对比度";
+"Saturation" = "饱和度";
+"Audio Fade" = "音频淡入淡出";
+"Fade In" = "淡入";
+"Fade Out" = "淡出";
+"Reset All Effects" = "重置所有效果";
+
+/* SegmentSpeedPopover */
+"Custom" = "自定义";
+"Allowed range: %@x–%@x" = "允许范围：%@x–%@x";
+
+/* TimelineDock+DetachedAudioLane */
+"Reattach to Video" = "重新关联到视频";
+"Delete Audio" = "删除音频";
+
+/* TimelineDock+NewTrackDropZone */
+"Drop to create new overlay track at 0:00" = "拖放到此处以在 0:00 创建新叠加轨";
+
+/* TimelineDock+OverlayLane */
+"✨ Auto Picture-in-Picture" = "✨ 自动画中画";
+"Set Start Time…" = "设置起始时间…";
+"✓ Off" = "✓ 关闭";
+"Off" = "关闭";
+"✓ Circle" = "✓ 圆形";
+"Circle" = "圆形";
+"✓ Rounded Square" = "✓ 圆角方形";
+"Rounded Square" = "圆角方形";
+"✓ Square" = "✓ 正方形";
+"Square" = "正方形";
+"Top Left" = "左上";
+"Top Right" = "右上";
+"Bottom Left" = "左下";
+"Bottom Right" = "右下";
+
+/* TimelineDock+SubtitleTrack */
+"Edit subtitle" = "编辑字幕";
+"Save" = "保存";
+"Add Subtitle Here" = "在此处添加字幕";
+"Edit Text…" = "编辑文本…";
+
+/* TimelineDock+VideoTrack */
+"Split at Playhead" = "在播放头处分割";
+"Delete Selected Segments" = "删除所选片段";
+"Delete Segment" = "删除片段";
+"Show Image" = "显示图片";
+"Show Video" = "显示视频";
+"Hide Image" = "隐藏图片";
+"Hide Video" = "隐藏视频";
+"Mute Audio" = "静音";
+"Unmute Audio" = "取消静音";
+"Detach Audio" = "分离音频";
+"Reattach Audio" = "重新关联音频";
+"Add Crossfade to Next (0.5s)" = "添加到下一段的交叉淡变（0.5s）";
+"Add Crossfade from Previous (0.5s)" = "添加来自上一段的交叉淡变（0.5s）";
+"Rotate 90°" = "旋转 90°";
+"✓ Flip Horizontal" = "✓ 水平翻转";
+"Flip Horizontal" = "水平翻转";
+"✓ Flip Vertical" = "✓ 垂直翻转";
+"Flip Vertical" = "垂直翻转";
+"Reset Effects" = "重置效果";
+
+/* TranscriptView */
+"Transcript" = "转录文本";
+"%d cues" = "%d 条字幕";
+"Find & Replace (⌘F)" = "查找与替换（⌘F）";
+"Find" = "查找";
+"Replace" = "替换";
+"Aa" = "Aa";
+"Case-sensitive match" = "区分大小写";
+"Replace All" = "全部替换";
+"Replaced in %d cue(s)" = "已在 %d 条字幕中替换";
+"No matches" = "无匹配结果";
+"No subtitles yet" = "暂无字幕";
+"Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace." = "在检查器面板中转录视频后，转录内容将显示在此处。您可以点击文本跳转、删除字幕条目来剪切视频，以及使用查找与替换功能。";
+"Edit" = "编辑";
+"Delete %d cues" = "删除 %d 条字幕";
+"Restore" = "恢复";
+
+/* Timeline — zoom slider, popovers, overlay context menu */
+"Zoom out (2×)" = "缩小 (2×)";
+"Zoom in (2×)" = "放大 (2×)";
+"Timeline zoom — drag to see between whole clip and ~1 s" = "时间线缩放 — 拖动以在整段和约 1 秒之间切换";
+"Effects" = "效果";
+"Picture in Picture" = "画中画";
+
+/* MediaCoreViewModel — banner messages */
+"Checkpoint saved" = "已保存检查点";
+"Not enough room in the clip for a new subtitle here." = "此处没有足够空间添加新字幕。";
+"Not enough room between subtitles to add here." = "字幕之间没有足够空间添加。";
+"New subtitle" = "新字幕";
+"Select 2 or more segments to merge." = "请选择 2 个或更多片段以合并。";
+"Merge requires a continuous selection on the timeline." = "合并需要在时间线上连续选择片段。";
+"Can't merge segments from different clips." = "无法合并来自不同素材的片段。";
+"Can't merge — there's a cut between the selected segments." = "无法合并——所选片段之间存在剪切点。";
+"Can't add clip — media not found." = "无法添加素材——找不到媒体文件。";
+"Can't add clip — analysis not ready." = "无法添加素材——分析尚未完成。";
+"B-roll source not found." = "找不到 B-roll 源文件。";
+"Couldn't insert B-roll: %@" = "无法插入 B-roll：%@";
+"Generating animation…" = "正在生成动画…";
+"Animation generation failed: %@" = "动画生成失败：%@";
+"Animation segment not found or not AI-generated." = "找不到动画片段或该片段非 AI 生成。";
+"Re-generating animation…" = "正在重新生成动画…";
+"Animation re-generation failed: %@" = "动画重新生成失败：%@";
+"Animation generation is not configured." = "动画生成未配置。";
+"MediaCore is not configured." = "MediaCore 未配置。";
+"Project root is not configured." = "项目根目录未配置。";
+"Animation media not found after import." = "导入后找不到动画媒体。";
+"Auto PiP: no overlays available to analyze." = "Auto PiP：没有可分析的覆盖层。";
+"Auto PiP: analyzing %d overlay…" = "Auto PiP：正在分析 %d 个覆盖层…";
+"Auto PiP: analyzing %d overlays…" = "Auto PiP：正在分析 %d 个覆盖层…";
+"Auto PiP: applied to %d overlay." = "Auto PiP：已应用到 %d 个覆盖层。";
+"Auto PiP: applied to %d overlays." = "Auto PiP：已应用到 %d 个覆盖层。";
+"Auto PiP: no overlays look like presenter cams." = "Auto PiP：没有覆盖层看起来像主持人摄像头。";
+"Nothing on the timeline to chapter." = "时间线上没有可生成章节的内容。";
+"Set up an OpenAI API key to generate chapters." = "请配置 OpenAI API 密钥以生成章节。";
+"Timeline is too short to chapter." = "时间线太短，无法生成章节。";
+"Chapter generation failed: %@" = "章节生成失败：%@";
+"AI returned no chapters." = "AI 未返回任何章节。";
+"Generated %d chapter." = "已生成 %d 个章节。";
+"Generated %d chapters." = "已生成 %d 个章节。";
+"Chapter persist failed: %@" = "章节保存失败：%@";
+"Nothing on the timeline to normalize." = "时间线上没有可规范化的内容。";
+"Analyzing audio loudness…" = "正在分析音频响度…";
+"Loudness already at or below %d dB — nothing to attenuate." = "响度已处于或低于 %d dB——无需衰减。";
+"Loudness normalization didn't change any segments." = "响度规范化未更改任何片段。";
+"Normalized loudness on %d segment." = "已在 %d 个片段上规范化响度。";
+"Normalized loudness on %d segments." = "已在 %d 个片段上规范化响度。";
+"Nothing on the timeline to compress." = "时间线上没有可压缩的内容。";
+"Scanning for silences…" = "正在扫描静音片段…";
+"No silences longer than %.1fs found." = "未找到超过 %.1f 秒的静音片段。";
+"Compressed %d silence." = "已压缩 %d 处静音。";
+"Compressed %d silences." = "已压缩 %d 处静音。";
+"Media core not configured." = "媒体核心未配置。";
+"Importing BGM %@…" = "正在导入 BGM %@…";
+"BGM file has no playable duration." = "BGM 文件没有可播放时长。";
+"Added %@ (%.1fs)" = "已添加 %@（%.1f 秒）";
+"Failed to import BGM: %@" = "BGM 导入失败：%@";
+"Run analysis first — there are no subtitles to diarize." = "请先运行分析——没有可进行说话人分离的字幕。";
+"Detected %d speaker." = "已检测到 %d 位说话人。";
+"Detected %d speakers." = "已检测到 %d 位说话人。";
+"Could not save speaker name: %@" = "无法保存说话人名称：%@";
+"Could not save speaker color: %@" = "无法保存说话人颜色：%@";
+"Couldn't encode animation props." = "无法编码动画属性。";
+"Project store not configured" = "项目存储未配置";
+"Failed to load manifest: %@" = "加载清单失败：%@";
+"MediaCore not configured" = "MediaCore 未配置";
+"Relink failed: %@" = "重新链接失败：%@";
+"MediaCore or store not configured" = "MediaCore 或存储未配置";
+"Import failed: %@" = "导入失败：%@";
+"Image import failed: %@" = "图片导入失败：%@";
+"Prompt is empty." = "提示词为空。";
+"Image generation failed: %@" = "图片生成失败：%@";
+"Could not create media directory: %@" = "无法创建媒体目录：%@";
+"Could not save generated image: %@" = "无法保存生成的图片：%@";
+"Store not configured" = "存储未配置";
+"Delete failed: %@" = "删除失败：%@";
+"Analysis pipeline not configured" = "分析管道未配置";
+"Analysis already in progress." = "分析正在进行中。";
+"Clip must be ready before analysis." = "素材必须就绪才能进行分析。";
+"Missing media metadata." = "缺少媒体元数据。";
+"Failed to update status: %@" = "更新状态失败：%@";
+"AI analysis complete but no edit suggestions were produced. The LLM call may have failed." = "AI 分析已完成，但未生成编辑建议。LLM 调用可能已失败。";
+"Analysis failed: %@" = "分析失败：%@";
+"AI analysis complete but no segments were kept." = "AI 分析已完成，但没有片段被保留。";
+"No segments to export. Run AI analysis or add segments manually." = "没有可导出的片段。请运行 AI 分析或手动添加片段。";
+"Source clip missing from project." = "项目中缺少源素材。";
+"Source file not found: %@. Please relink." = "找不到源文件：%@。请重新链接。";
+"Export destination must be a file, not a directory." = "导出目标必须是文件，而非文件夹。";
+"Export complete! Saved to %@" = "导出完成！已保存到 %@";
+"Export cancelled." = "导出已取消。";
+"Export failed: %@" = "导出失败：%@";
+
+/* AICopilotPresentation */
+"Untitled Project" = "未命名项目";
+"AI is preparing clips" = "AI 正在准备素材";
+"clip is" = "个素材正在";
+"clips are" = "个素材正在";
+"%d %@ still processing." = "%d %@处理中。";
+"AI suggestions are ready" = "AI 建议已就绪";
+"suggestion" = "条建议";
+"suggestions" = "条建议";
+"marker" = "个标记";
+"markers" = "个标记";
+"%d %@ and %d %@ available." = "共 %d %@和 %d %@";
+"AI copilot is idle" = "AI 副驾驶空闲中";
+"Import media or run analysis to unlock tags and suggestions." = "导入媒体或运行分析以解锁标签和建议。";
+"No clip selected" = "未选择素材";
+"Select a clip to review AI summary, transcript, and edit suggestions." = "选择素材以查看 AI 摘要、转录文本和编辑建议。";
+"AI analysis unavailable" = "AI 分析不可用";
+"Relink the original media to resume AI suggestions and markers." = "重新链接原始媒体以恢复 AI 建议和标记。";
+"AI analysis in progress" = "AI 分析进行中";
+"Cutti is still preparing this clip. Tags and markers will appear when processing finishes." = "Cutti 仍在准备此素材。处理完成后将显示标签和标记。";
+"No AI analysis yet" = "尚无 AI 分析";
+"Run clip analysis to unlock tags, suggestions, and scene markers." = "运行素材分析以解锁标签、建议和场景标记。";
+"AI analysis ready" = "AI 分析已就绪";
+"AI found clip-level insights for this selection." = "AI 已为该选区找到素材级洞察。";
+
+/* AgentMode */
+"Manual" = "手动";
+"Auto-apply" = "自动应用";
+"Review every Agent edit before it applies." = "在每次 Agent 编辑应用前进行审查。";
+"Agent edits apply immediately; undo via revisions." = "Agent 编辑立即应用，可通过历史版本撤销。";
+
+/* ChatVoiceInputController */
+"Microphone access denied. Enable it in System Settings ▸ Privacy & Security ▸ Microphone." = "麦克风访问被拒绝。请到「系统设置 ▸ 隐私与安全 ▸ 麦克风」开启。";
+"Could not start recording: %@" = "无法开始录音：%@";
+"Didn't catch anything — try speaking a bit louder." = "没有识别到内容——请尝试说大声一点。";
+"Transcription failed: %@" = "转录失败：%@";
+"Recording error: %@" = "录音错误：%@";
+
+/* MediaCore */
+"Primary transcoder failed and no fallback is configured" = "主转码器失败且未配置备用方案";
+"Original file is missing. Please relink it." = "原始文件丢失。请重新链接。";
+"Source changed on disk. Rebuild the proxy." = "磁盘上的源文件已更改。请重建代理文件。";
+
+/* ContentView — file panels and banner */
+"Select a video or image file to import" = "请选择要导入的视频或图片文件";
+"Select an audio or video file to add as BGM" = "请选择要添加为 BGM 的音频或视频文件";
+"Select the relocated video file" = "请选择已迁移的视频文件";
+"Choose where to save" = "请选择保存位置";
+"Export subtitles as SRT" = "将字幕导出为 SRT";
+"SRT exported to %@" = "SRT 已导出到 %@";
+
+/* ContentView — bottom pane tabs */
+"Timeline" = "时间线";
+
+/* ChatPanel — input placeholder */
+"Ask AI · ⌘⇧P for workflows" = "向 AI 提问 · ⌘⇧P 调出快捷流程";
+
+/* Audit pass — keys used by T()/L() that were missing entries */
+"AI prompt field" = "AI 提示词输入框";
+"AI workflows (⌘⇧P)" = "AI 快捷流程 (⌘⇧P)";
+"Agent trace — see & undo past edits (developer)" = "Agent 轨迹 — 查看并撤销历次编辑（开发者）";
+"All clips have already been analyzed" = "所有片段都已完成分析";
+"Analysis already running" = "分析正在进行中";
+"Ask AI or describe an edit…" = "向 AI 提问或描述一次编辑…";
+"Click to fill · ⌥+click to send" = "点击填入 · ⌥+点击直接发送";
+"Click to open full size · right-click for Save / Show in Finder" = "点击查看大图 · 右键可保存 / 在访达中显示";
+"Click to rename speaker" = "点击重命名说话人";
+"Close" = "关闭";
+"Configure AI settings" = "配置 AI 设置";
+"Copy image" = "拷贝图片";
+"Export SRT only…" = "仅导出 SRT 字幕…";
+"Finder" = "访达";
+"High-pass + compressor + limiter. Cleaner dialog at the cost of ~15s extra export time." = "高通滤波 + 压缩器 + 限幅器。对话更干净，导出多花约 15 秒。";
+"Listening… release Fn (or click mic) to transcribe" = "正在聆听… 松开 Fn（或点击麦克风）开始转写";
+"No subtitles available. Run AI analysis or add captions to enable." = "暂无字幕。运行 AI 分析或添加字幕后即可使用。";
+"Open full size" = "查看大图";
+"Open workflow menu" = "打开快捷流程菜单";
+"Output" = "输出";
+"Rename speaker" = "重命名说话人";
+"Run full analysis shortcut" = "运行完整分析（快捷键）";
+"Save as…" = "另存为…";
+"Save just the subtitle sidecar without rendering the video." = "只保存字幕文件，不渲染视频。";
+"Seed filler prompt shortcut" = "插入口癖示例提示词（快捷键）";
+"Speaker name" = "说话人名称";
+"Start editing or run AI analysis\nto create checkpoints" = "开始编辑或运行 AI 分析\n以创建检查点";
+"Subscription" = "订阅";
+"Switch between Manual (review every edit) and Auto-apply" = "在「手动审阅」和「自动应用」之间切换";
+"This segment no longer exists on the timeline" = "该片段已不在时间线上";
+"Transcribing with Whisper…" = "正在用 Whisper 转写…";
+"Unlabeled" = "未标注";
+"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "你当前的语音语言默认使用 Whisper 以获得更精准的时间轴。\n下载一次模型即可使用，或继续使用 Apple Speech 作为回退方案。";
+"Generate animation" = "生成动画";
+"Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline" = "描述一段动画（例如计数器、柱状图），生成后落到时间线上";
+"Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead." = "描述你想要的动画。系统会基于技能包生成一段全新的 Remotion 合成，并在当前播放头位置渲染为透明动画。";
+"e.g. bar chart counting from 30 to 90" = "例如：柱状图从 30 计数到 90";
+"__app_name__" = "小剪";
+"just now" = "刚刚";
+"%dm ago" = "%d 分钟前";
+"%dh ago" = "%d 小时前";
+"%dd ago" = "%d 天前";
+"Add subtitle" = "添加字幕";
+"Adjust aux track volume" = "调整辅助音轨音量";
+"Adjust color" = "调整调色";
+"Audio fade" = "音频淡入淡出";
+"Auto-detect speakers" = "自动识别说话人";
+"Change speed" = "调整速度";
+"Change volume" = "调整音量";
+"Delete audio clip" = "删除音频片段";
+"Delete overlay" = "删除叠层";
+"Delete segment" = "删除片段";
+"Delete segments" = "删除片段";
+"Delete subtitle" = "删除字幕";
+"Detach audio" = "分离音频";
+"Edit overlay props" = "编辑叠层属性";
+"Edit subtitle text" = "编辑字幕文本";
+"Edit chapter style" = "编辑章节样式";
+"Flip horizontal" = "水平翻转";
+"Flip vertical" = "垂直翻转";
+"Generate chapter bar" = "生成章节进度条";
+"Insert segment" = "插入片段";
+"Manual save" = "手动保存";
+"Merge segments" = "合并片段";
+"Move subtitle" = "移动字幕";
+"Reattach audio" = "重新连接音频";
+"Remove chapter bar" = "移除章节进度条";
+"Reorder segments" = "重新排序片段";
+"Reposition Picture-in-Picture" = "重新放置画中画";
+"Reset effects" = "重置特效";
+"Resize subtitle" = "调整字幕大小";
+"Restore subtitle cue" = "恢复字幕";
+"Rotate segment" = "旋转片段";
+"Split at playhead" = "在播放头处分割";
+"Swap alternate take" = "切换备选镜头";
+"Toggle lock" = "切换锁定";
+"Toggle mute" = "切换静音";
+"Toggle overlay mute" = "切换叠层静音";
+"Transform overlay" = "变换叠层";
+"Trim segment" = "修剪片段";
+"Speakers" = "说话人";
+"Speaker %d" = "说话人 %d";
+
+/* Analysis chat log (One-click first cut, Trim pauses, Transcript cleanup, Suggest B-roll) */
+"Starting AI analysis…" = "开始 AI 分析…";
+"Queued" = "排队中";
+"Transcribing speech" = "转写语音";
+"Analyzing scenes" = "分析画面";
+"Analyzing audio" = "分析音频";
+"Asking AI to plan cuts" = "AI 正在规划剪辑";
+"Local analysis complete" = "本地分析完成";
+"Analysis failed" = "分析失败";
+"One-click first cut" = "一键第一刀";
+"Trim pauses only" = "只去除停顿";
+"Transcript cleanup" = "转写清理";
+"Suggest B-roll & animations" = "推荐 B-roll 与动效";
+"Please sign in from Settings." = "请先在设置里登录。";
+"No clip ready for analysis." = "没有可分析的素材。";
+"No clip ready to trim." = "没有可处理的素材。";
+"No clip ready for cleanup." = "没有可清理的素材。";
+"No clip selected." = "还没选中素材。";
+"Clip not found." = "找不到这段素材。";
+"Clip not ready." = "这段素材还没就绪。";
+"Clip must be ready before analysis." = "素材需先就绪才能分析。";
+"Clip must be ready before trimming." = "素材需先就绪才能处理。";
+"Missing media metadata." = "缺少素材元数据。";
+"Project not configured." = "项目尚未初始化。";
+"Analysis pipeline not configured." = "分析流水线未配置。";
+"Analysis already in progress." = "已有分析在进行中。";
+"Another analysis is already in progress." = "已有另一个分析在进行中。";
+"Failed to update status: %@" = "更新状态失败：%@";
+"Analysis failed: %@" = "分析失败：%@";
+"Trim pauses failed: %@" = "去停顿失败：%@";
+"Transcript cleanup failed: %@" = "转写清理失败：%@";
+"Analysis complete — kept %d segments. You can now chat to refine the cut." = "分析完成 — 保留 %d 段。现在可以在对话里继续微调剪辑。";
+"Analysis complete — kept %d segments across %d clips. You can now chat to refine the cut." = "分析完成 — 跨 %2$d 个素材保留 %1$d 段。现在可以在对话里继续微调剪辑。";
+"Analysis finished but produced no edit suggestions. The LLM call may have failed." = "分析完成但没产出任何剪辑建议，可能 LLM 调用失败了。";
+"Analysis finished but no segments were kept." = "分析完成但没有片段被保留。";
+"Cleanup complete — kept %d segments. Run \"Suggest B-roll & animations\" next if you want visual aids." = "清理完成 — 保留 %d 段。想要视觉补充可以接着跑 \"推荐 B-roll 与动效\"。";
+"Cleanup finished but produced no edit suggestions." = "清理完成但没有产出剪辑建议。";
+"Transcript cleanup complete across %d clips." = "已完成 %d 个素材的转写清理。";
+"Trimmed pauses — kept %d segments. No AI credits used." = "去停顿完成 — 保留 %d 段，不消耗 AI 额度。";
+"Trimmed pauses on %d clips. No AI credits used." = "已对 %d 个素材去停顿，不消耗 AI 额度。";
+"Scanning the cut for visual-aid opportunities…" = "正在扫描剪辑中适合加视觉辅助的位置…";
+"Ready — %d visual-aid suggestions above the timeline." = "就绪 — 时间线上方有 %d 条视觉辅助建议。";
+"No visual aids suggested for this cut." = "这版剪辑没有需要加视觉辅助的位置。";
+"Run \"Trim pauses\" or \"Transcript cleanup\" first — there's no cut for me to analyze yet." = "先跑一下 \"只去除停顿\" 或 \"转写清理\"，现在还没有可分析的剪辑。";
+"Clip %d/%d: %@" = "素材 %1$d/%2$d：%3$@";
+"AI analyzing %d segments across %d clips…" = "AI 正在分析跨 %2$d 个素材的 %1$d 段…";
+"ℹ️ All clips were already analyzed. Rebuilt the timeline from existing cuts." = "ℹ️ 所有素材都已分析过。已基于已有剪辑重建时间线。";
+
+/* AI workflow preset menu (⚡ button in chat composer) */
+"Smart cut" = "智能剪辑";
+"Speaker" = "说话人";
+"Vision" = "画面";
+"Subtitles" = "字幕";
+"Generative" = "生成";
+"Workflow: trim pauses → transcript cleanup → suggest B-roll" = "流程：去停顿 → 转写清理 → 推荐 B-roll";
+"Remove silent gaps. Local — no AI credits, keeps every word." = "去掉静音间隔。本地处理 — 不消耗 AI 额度，保留每一句话。";
+"4-pass AI review: delete restarts, rewordings, half-finished sentences." = "四轮 AI 复核：删除重启、改口、半截话。";
+"AI marks moments where a visual, chart, or animation would help." = "AI 标出适合加图、加图表、加动画的时刻。";
+"Remove filler words" = "去除口癖";
+"Delete uh / um / you know / like / so etc." = "删除 uh / um / 嗯 / 啊 / 呢 等填充词。";
+"Detect speakers" = "识别说话人";
+"Split the transcript by who's talking" = "按说话人拆分转写";
+"Mute a speaker" = "静音某位说话人";
+"Silence every cue from one person" = "把某一个人的所有台词静音";
+"List what a speaker said" = "列出某人说过的话";
+"Show every line one person said" = "显示某一个人说过的每句话";
+"Find empty frames" = "找空镜头";
+"Spans with no face on screen" = "画面中没有人脸的时间段";
+"Find black frames" = "找黑屏";
+"Near-black or covered-lens regions" = "接近黑屏或镜头被遮住的区域";
+"Auto Picture-in-Picture" = "自动画中画";
+"Detect presenter-cam overlays and place them in a tidy corner" = "识别主讲摄像机并把它放到整齐的角落";
+"Suggest B-roll spots" = "推荐 B-roll 插入点";
+"AI marks places where a visual or overlay would help" = "AI 标出适合加画面或叠层的位置";
+"Suggest 3 titles" = "推荐 3 个标题";
+"Candidate titles from the transcript" = "基于转写的候选标题";
+"Generate chapter bar" = "生成章节进度条";
+"AI splits the cut into titled chapters and burns a YouTube-style progress bar" = "AI 把剪辑拆成带标题的章节并烧录 YouTube 风格的进度条";
+"Suggest animated title cards" = "推荐动画标题卡";
+"AI picks moments for Remotion ChapterTitle overlays and generates them on approval" = "AI 选出适合放章节标题动效的时刻，确认后再生成";
+"Generate AI image" = "生成 AI 图片";
+"Describe an image and drop it into the Media Browser" = "描述一张图并落到素材库里";
+"Summarize the video" = "总结视频";
+"Short paragraph describing what it's about" = "一段话概述视频内容";
+"Add bilingual subtitles (中 ↔ EN)" = "添加双语字幕（中 ↔ EN）";
+"Auto-translate between Chinese and English, show both lines" = "中英自动互译，两行一起显示";
+"Add English translation line" = "添加英文翻译行";
+"Translate subtitles to English and render below" = "把字幕翻译为英文并放在原文下方";
+"Add Chinese translation line" = "添加中文翻译行";
+"Translate subtitles to Chinese and render below" = "把字幕翻译为中文并放在原文下方";
+"Translate subtitles to…" = "翻译字幕到…";
+"Fill in the target language, then send" = "填入目标语言后发送";
+
+/* Built-in sound-effects library */
+"Sound effects" = "音效库";
+"Sound effect" = "音效";
+"Add sound effect…" = "添加音效…";
+"Inserted at the current playhead" = "插入到当前播放头位置";
+"Search (中文 / English)…" = "搜索（中文 / English）…";
+"All" = "全部";
+"No sound effects match your search." = "没有匹配的音效。";
+"All effects are synthesized locally — no network, no license fees." = "所有音效都在本地合成 — 不联网，无版权费用。";
+"Close" = "关闭";
+"Preview" = "试听";
+"Add" = "添加";
+"SFX %d" = "音效 %d";
+"Adding sound effect %@…" = "正在添加音效 %@…";
+"Added %@ at %.1fs" = "已在 %2$.1fs 处添加 %1$@";
+"Sound effect render produced no audio." = "音效合成未产生音频。";
+"Failed to add sound effect: %@" = "添加音效失败：%@";
+
+/* SFX categories (podcast / interview focused) */
+"SFX Cinematic" = "电影感";
+"SFX Transition" = "转场";
+"SFX Highlight" = "亮点";
+"SFX UI" = "界面";
+"SFX Atmosphere" = "氛围";
+
+/* SFX names */
+"SFX Braaam" = "低音铜管（Braaam）";
+"SFX Sub drop" = "低音下潜";
+"SFX Impact hit" = "电影级冲击";
+"SFX Riser" = "上升铺垫";
+"SFX Whoosh" = "嗖（转场）";
+"SFX Swish" = "轻扫";
+"SFX Glitch" = "数字故障";
+"SFX Tape stop" = "磁带停止";
+"SFX Soft chime" = "柔和钟声";
+"SFX Pluck" = "拨弦强调";
+"SFX Shimmer" = "星光闪烁";
+"SFX Pop" = "啵";
+"SFX Typewriter" = "打字机";
+"SFX Clock tick" = "秒针滴答";
+"SFX Notification" = "通知音";
+"SFX Censor beep" = "消音提示";
+"SFX Vinyl crackle" = "黑胶底噪";
+"SFX Heartbeat" = "心跳";
