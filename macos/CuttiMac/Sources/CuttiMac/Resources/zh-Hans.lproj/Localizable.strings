@@ -819,3 +819,38 @@
 "SFX Censor beep" = "消音提示";
 "SFX Vinyl crackle" = "黑胶底噪";
 "SFX Heartbeat" = "心跳";
+
+/* Settings — Account / AI Provider (BYOK) */
+"Account" = "账号";
+"Sign In" = "登录";
+"Sign Out" = "退出登录";
+"Create Account" = "注册账号";
+"Verify your email" = "请验证邮箱";
+"Resend email" = "重新发送邮件";
+"Cutti requires an account regardless of which AI provider you use. Create one on cutti.app, then come back here to sign in." = "无论使用 Cutti 云端还是自带 AI Key，都需要登录账号。请先到 cutti.app 注册，再回来登录。";
+"Sign in above to see your subscription and credits." = "请先在上方登录，登录后这里会显示订阅与额度。";
+
+"AI Provider" = "AI 服务";
+"Cutti Cloud" = "Cutti 云端";
+"Custom (BYOK)" = "自带 API Key";
+"Billed via your Cutti subscription. Includes overlay rendering and the proprietary animation skill pack." = "通过 Cutti 订阅计费。包含动画字幕渲染、章节卡片等私有动画能力。";
+"Bring your own OpenAI-compatible API key. No subscription needed; you pay your provider directly." = "使用你自己的 OpenAI 兼容接口和 API Key，不需要 Cutti 订阅，费用直接付给所选服务商。";
+
+"Chat / LLM" = "对话模型";
+"Image generation" = "图像生成";
+"Test connection" = "测试连接";
+"Use a different provider for image generation" = "图像生成使用另一个服务商";
+"Anything that speaks the OpenAI `/chat/completions` shape works. Examples:\n• DeepSeek — `https://api.deepseek.com/v1`, model `deepseek-chat`\n• Kimi (Moonshot) — `https://api.moonshot.cn/v1`, model `kimi-latest`\n• 智谱 GLM — `https://open.bigmodel.cn/api/paas/v4`, model `glm-4.6`\n• 通义千问 — `https://dashscope.aliyuncs.com/compatible-mode/v1`, model `qwen-max`\n• 豆包 — `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seed-1.6-thinking`\n• Ollama (local) — `http://localhost:11434/v1`, model `qwen2.5`\n• OpenAI / Azure / OpenRouter / LiteLLM proxy — same shape" = "任何兼容 OpenAI `/chat/completions` 的接口都可以。常见示例：\n• DeepSeek — `https://api.deepseek.com/v1`，模型 `deepseek-chat`\n• Kimi（月之暗面）— `https://api.moonshot.cn/v1`，模型 `kimi-latest`\n• 智谱 GLM — `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-4.6`\n• 通义千问 — `https://dashscope.aliyuncs.com/compatible-mode/v1`，模型 `qwen-max`\n• 豆包 — `https://ark.cn-beijing.volces.com/api/v3`，模型 `doubao-seed-1.6-thinking`\n• Ollama（本地）— `http://localhost:11434/v1`，模型 `qwen2.5`\n• OpenAI / Azure / OpenRouter / LiteLLM 代理 — 同样形状";
+"Image generation reuses the chat key and base URL above. Many providers don't expose an image API on the chat URL — if it fails, enable the toggle above and configure a separate image provider." = "图像生成默认沿用上面的对话 Key 和 Base URL。如果服务商在同一个地址不支持图像生成，请打开上方开关单独配置图像服务商。";
+"Only OpenAI-shape image APIs are supported. Most Chinese providers (Kimi/DeepSeek don't have one; GLM CogView returns URLs not base64; 阿里万相 is async). Recommended: 字节豆包 (compatible), or route through LiteLLM / OneAPI." = "仅支持 OpenAI 形状的图像接口。多数国内服务商不直接兼容（Kimi/DeepSeek 没有图像接口；智谱 CogView 返回 URL 而非 base64；阿里万相是异步轮询）。推荐使用字节豆包（兼容），或通过 LiteLLM / OneAPI 中转。";
+"⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud." = "⚠️ 动画字幕、章节卡片等动画渲染功能仅在 Cutti 云端模式下可用。";
+
+"Base URL" = "服务地址";
+"API Key" = "API Key";
+"Model" = "模型";
+"Not signed in" = "未登录";
+"Signed in" = "已登录";
+"Sign in to use AI features." = "登录后即可使用 AI 功能。";
+"Email verification pending." = "邮箱验证中。";
+"Free plan" = "免费版";
+"Sign in to view your plan." = "登录后查看订阅信息。";

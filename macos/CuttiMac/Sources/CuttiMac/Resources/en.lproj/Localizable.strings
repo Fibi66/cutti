@@ -820,3 +820,38 @@
 "SFX Censor beep" = "Censor beep";
 "SFX Vinyl crackle" = "Vinyl crackle";
 "SFX Heartbeat" = "Heartbeat";
+
+/* Settings — Account / AI Provider (BYOK) */
+"Account" = "Account";
+"Sign In" = "Sign In";
+"Sign Out" = "Sign Out";
+"Create Account" = "Create Account";
+"Verify your email" = "Verify your email";
+"Resend email" = "Resend email";
+"Cutti requires an account regardless of which AI provider you use. Create one on cutti.app, then come back here to sign in." = "Cutti requires an account regardless of which AI provider you use. Create one on cutti.app, then come back here to sign in.";
+"Sign in above to see your subscription and credits." = "Sign in above to see your subscription and credits.";
+
+"AI Provider" = "AI Provider";
+"Cutti Cloud" = "Cutti Cloud";
+"Custom (BYOK)" = "Custom (BYOK)";
+"Billed via your Cutti subscription. Includes overlay rendering and the proprietary animation skill pack." = "Billed via your Cutti subscription. Includes overlay rendering and the proprietary animation skill pack.";
+"Bring your own OpenAI-compatible API key. No subscription needed; you pay your provider directly." = "Bring your own OpenAI-compatible API key. No subscription needed; you pay your provider directly.";
+
+"Chat / LLM" = "Chat / LLM";
+"Image generation" = "Image generation";
+"Test connection" = "Test connection";
+"Use a different provider for image generation" = "Use a different provider for image generation";
+"Anything that speaks the OpenAI `/chat/completions` shape works. Examples:\n• DeepSeek — `https://api.deepseek.com/v1`, model `deepseek-chat`\n• Kimi (Moonshot) — `https://api.moonshot.cn/v1`, model `kimi-latest`\n• 智谱 GLM — `https://open.bigmodel.cn/api/paas/v4`, model `glm-4.6`\n• 通义千问 — `https://dashscope.aliyuncs.com/compatible-mode/v1`, model `qwen-max`\n• 豆包 — `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seed-1.6-thinking`\n• Ollama (local) — `http://localhost:11434/v1`, model `qwen2.5`\n• OpenAI / Azure / OpenRouter / LiteLLM proxy — same shape" = "Anything that speaks the OpenAI `/chat/completions` shape works. Examples:\n• DeepSeek — `https://api.deepseek.com/v1`, model `deepseek-chat`\n• Kimi (Moonshot) — `https://api.moonshot.cn/v1`, model `kimi-latest`\n• 智谱 GLM — `https://open.bigmodel.cn/api/paas/v4`, model `glm-4.6`\n• 通义千问 — `https://dashscope.aliyuncs.com/compatible-mode/v1`, model `qwen-max`\n• 豆包 — `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seed-1.6-thinking`\n• Ollama (local) — `http://localhost:11434/v1`, model `qwen2.5`\n• OpenAI / Azure / OpenRouter / LiteLLM proxy — same shape";
+"Image generation reuses the chat key and base URL above. Many providers don't expose an image API on the chat URL — if it fails, enable the toggle above and configure a separate image provider." = "Image generation reuses the chat key and base URL above. Many providers don't expose an image API on the chat URL — if it fails, enable the toggle above and configure a separate image provider.";
+"Only OpenAI-shape image APIs are supported. Most Chinese providers (Kimi/DeepSeek don't have one; GLM CogView returns URLs not base64; 阿里万相 is async). Recommended: 字节豆包 (compatible), or route through LiteLLM / OneAPI." = "Only OpenAI-shape image APIs are supported. Most Chinese providers (Kimi/DeepSeek don't have one; GLM CogView returns URLs not base64; 阿里万相 is async). Recommended: 字节豆包 (compatible), or route through LiteLLM / OneAPI.";
+"⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud." = "⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.";
+
+"Base URL" = "Base URL";
+"API Key" = "API Key";
+"Model" = "Model";
+"Not signed in" = "Not signed in";
+"Signed in" = "Signed in";
+"Sign in to use AI features." = "Sign in to use AI features.";
+"Email verification pending." = "Email verification pending.";
+"Free plan" = "Free plan";
+"Sign in to view your plan." = "Sign in to view your plan.";

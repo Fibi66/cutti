@@ -41,30 +41,28 @@ struct AIProviderSettingsSection: View {
     }
 
     var body: some View {
-        Section {
-            Picker(selection: providerSelection) {
-                ForEach(AIProviderPreference.allCases) { provider in
-                    T(LocalizedStringKey(provider.title)).tag(provider)
-                }
-            } label: {
-                T("Provider")
+        Picker(selection: providerSelection) {
+            ForEach(AIProviderPreference.allCases) { provider in
+                T(LocalizedStringKey(provider.title)).tag(provider)
             }
-            .pickerStyle(.segmented)
+        } label: {
+            T("Provider")
+        }
+        .pickerStyle(.segmented)
 
-            T(LocalizedStringKey(providerSelection.wrappedValue.subtitle))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        if providerSelection.wrappedValue == .custom {
+            customConfigurationFields
+        }
 
-            if providerSelection.wrappedValue == .custom {
-                customConfigurationFields
+        // The keychain reads happen lazily via `.onAppear` rather than
+        // on construction so SwiftUI can pick up an external change to
+        // the keychain (e.g. an Onboarding flow that wrote it before
+        // showing Settings).
+        EmptyView()
+            .onAppear {
+                llmAPIKey = KeychainStore.string(for: CuttiSettings.customLLMKeychainAccount) ?? ""
+                imageAPIKey = KeychainStore.string(for: CuttiSettings.customImageKeychainAccount) ?? ""
             }
-        } header: {
-            T("AI Provider")
-        }
-        .onAppear {
-            llmAPIKey = KeychainStore.string(for: CuttiSettings.customLLMKeychainAccount) ?? ""
-            imageAPIKey = KeychainStore.string(for: CuttiSettings.customImageKeychainAccount) ?? ""
-        }
     }
 
     @ViewBuilder
@@ -149,10 +147,6 @@ struct AIProviderSettingsSection: View {
 
                 statusLabel(for: imageTestStatus)
             }
-        } else {
-            T("Image generation reuses the chat key and base URL above. Many providers don't expose an image API on the chat URL — if it fails, enable the toggle above and configure a separate image provider.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
 
         T("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")

@@ -8,6 +8,11 @@ struct SettingsView: View {
     @AppStorage(CuttiSettings.uiLanguageKey) private var uiLanguage: String = CuttiSettings.uiLanguageSystem
     @AppStorage(CuttiSettings.aiProviderKey) private var aiProviderRaw: String = AIProviderPreference.cuttiCloud.rawValue
 
+    /// Observed so the AI Provider + Subscription sections appear /
+    /// disappear automatically as the user signs in or out without
+    /// closing and re-opening Settings.
+    @ObservedObject private var session = RelaySession.shared
+
     /// Snapshot of `uiLanguage` taken when this Settings window opens.
     /// The picker writes through to AppStorage immediately (so the value
     /// persists), but we only prompt for restart when the new value
@@ -28,17 +33,35 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            AIProviderSettingsSection()
+            // Account is required regardless of provider — both Cutti
+            // Cloud and BYOK users need a cutti account to use the app.
+            Section {
+                AccountSettingsRow()
+            } header: {
+                T("Account")
+            }
 
-            // Cutti subscription / credits only matter when AI calls
-            // are billed via the relay. Custom (BYOK) users pay their
-            // upstream provider directly, so the row is misleading
-            // there and gets hidden.
-            if aiProvider == .cuttiCloud {
+            // AI Provider + Subscription only make sense after sign-in.
+            // Showing them while signed-out is misleading: BYOK keys
+            // would be configurable but unusable, and Subscription
+            // shows nothing useful.
+            if session.isSignedIn {
                 Section {
-                    SubscriptionSettingsRow()
+                    AIProviderSettingsSection()
                 } header: {
-                    T("Subscription")
+                    T("AI Provider")
+                }
+
+                // Subscription / credits only matter when AI calls are
+                // billed through the relay. Custom (BYOK) users pay
+                // their upstream provider directly and the row is
+                // misleading there, so we hide it.
+                if aiProvider == .cuttiCloud {
+                    Section {
+                        SubscriptionSettingsRow()
+                    } header: {
+                        T("Subscription")
+                    }
                 }
             }
 
@@ -167,32 +190,28 @@ extension OpenAIConfiguration {
 /// single "Subscribe" button that either opens the web landing page
 /// (direct-download builds) or presents the native StoreKit subscription
 /// sheet (Mac App Store builds), plus the credits progress bar when
-/// signed in.
+/// Subscription / credit / upgrade row for the Settings window.
+///
+/// **Only shown when AI provider is `cuttiCloud`** — for BYOK users
+/// the upstream provider does the billing, so this row would be
+/// confusing. Account / sign-in is handled separately by
+/// `AccountSettingsRow`, which is shown for *both* modes.
 private struct SubscriptionSettingsRow: View {
     @ObservedObject private var session = RelaySession.shared
     @State private var showStoreKitSheet: Bool = false
-    @State private var showAuthSheet: Bool = false
-    @State private var isResendingVerification: Bool = false
-    @State private var verificationResendMessage: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(planTitle).font(.headline)
-                    Text(statusSubtitle).font(.caption).foregroundStyle(.secondary)
+                    planTitle.font(.headline)
+                    statusSubtitle.font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if session.isSignedIn {
-                    Button(role: .destructive) { session.signOut() } label: { T("Sign Out") }
-                        .buttonStyle(.bordered)
-                }
             }
 
             if session.isSignedIn {
                 signedInContent
-            } else {
-                signedOutContent
             }
 
             if let err = session.lastError {
@@ -203,45 +222,12 @@ private struct SubscriptionSettingsRow: View {
         .sheet(isPresented: $showStoreKitSheet) {
             StoreKitSubscriptionSheet(dismiss: { showStoreKitSheet = false })
         }
-        .sheet(isPresented: $showAuthSheet) {
-            AuthSheet(dismiss: { showAuthSheet = false })
-        }
-    }
-
-    // MARK: - Signed-out view (only two buttons; no subscription surface)
-
-    @ViewBuilder
-    private var signedOutContent: some View {
-        HStack(spacing: 8) {
-            Button {
-                showAuthSheet = true
-            } label: {
-                T("Sign In").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-
-            Button {
-                NSWorkspace.shared.open(CuttiDistribution.signupURL)
-            } label: {
-                T("Create Account").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-        }
-        T("Create your account on cutti.app, then come back here to sign in.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     // MARK: - Signed-in view
 
     @ViewBuilder
     private var signedInContent: some View {
-        if needsEmailVerification {
-            emailVerificationBanner
-        }
-
         if let credits = session.credits {
             VStack(alignment: .leading, spacing: 10) {
                 // Monthly subscription bucket
@@ -301,83 +287,6 @@ private struct SubscriptionSettingsRow: View {
         }
     }
 
-    // MARK: - Email verification banner
-
-    private var needsEmailVerification: Bool {
-        guard let user = session.user else { return false }
-        return user.source == "email" && user.emailVerified != true
-    }
-
-    @ViewBuilder
-    private var emailVerificationBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "envelope.badge.fill")
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    T("Verify your email")
-                        .font(.subheadline).bold()
-                    Text(verificationMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            HStack {
-                Button {
-                    Task { await resendVerification() }
-                } label: {
-                    if isResendingVerification {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        T("Resend email")
-                    }
-                }
-                .disabled(isResendingVerification)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                if let msg = verificationResendMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(msg.hasPrefix("✅") ? .green : .red)
-                }
-                Spacer()
-            }
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.35), lineWidth: 1))
-    }
-
-    private var verificationMessage: String {
-        if let email = session.user?.email, !email.isEmpty {
-            return "We sent a link to \(email). Click it to unlock AI features. Check spam if you can't find it."
-        }
-        return "Click the link we sent to your inbox to unlock AI features."
-    }
-
-    @MainActor
-    private func resendVerification() async {
-        isResendingVerification = true
-        defer { isResendingVerification = false }
-        verificationResendMessage = nil
-        do {
-            try await session.resendVerification()
-            verificationResendMessage = "✅ Sent. Check your inbox."
-        } catch {
-            let raw = (error as NSError).localizedDescription
-            if raw.contains("rate_limited") {
-                verificationResendMessage = "Please wait a minute before trying again."
-            } else if raw.contains("already_verified") {
-                verificationResendMessage = "✅ Already verified — refreshing."
-                await session.refreshMe()
-            } else {
-                verificationResendMessage = "❌ \(raw)"
-            }
-        }
-    }
-
     private func creditsTint(percent: Double) -> Color {
         switch percent {
         case ..<0.75: return .accentColor
@@ -386,32 +295,36 @@ private struct SubscriptionSettingsRow: View {
         }
     }
 
-    private var planTitle: String {
-        guard session.isSignedIn else { return "Not signed in" }
-        if let plan = session.subscription?.plan, !plan.isEmpty {
-            return plan.capitalized + " plan"
+    private var planTitle: Text {
+        if !session.isSignedIn {
+            return T("Not signed in")
         }
-        return session.user?.email ?? "Signed in"
+        if let plan = session.subscription?.plan, !plan.isEmpty {
+            // Plan name from server — not localized.
+            return Text(plan.capitalized + " plan")
+        }
+        return T("Free plan")
     }
 
-    private var statusSubtitle: String {
+    private var statusSubtitle: Text {
         if !session.isSignedIn {
-            return "Sign in to access AI features."
+            return T("Sign in to view your plan.")
         }
         if let sub = session.subscription {
+            // Status comes from the relay — server-controlled string.
             var parts: [String] = [sub.status.capitalized]
             if let r = sub.renewalAt {
                 parts.append("renews \(Date(timeIntervalSince1970: TimeInterval(r)).formatted(date: .abbreviated, time: .omitted))")
             }
-            return parts.joined(separator: " · ")
+            return Text(parts.joined(separator: " · "))
         }
-        return session.user?.email ?? session.user?.id ?? "—"
+        return Text("—")
     }
 }
 
 /// In-app sign-in sheet. Sign-up happens on the website
 /// (`CuttiDistribution.signupURL`); only returning users see this form.
-private struct AuthSheet: View {
+struct AuthSheet: View {
     let dismiss: () -> Void
 
     @ObservedObject private var session = RelaySession.shared
