@@ -112,19 +112,6 @@ struct AIProviderSettingsSection: View {
             T("Image generation")
                 .font(.callout.weight(.semibold))
 
-            // Image generation is the rough edge of BYOK because there's
-            // no industry-wide standard the way `/chat/completions` is.
-            // We only speak the OpenAI shape here. List the handful of
-            // providers that match it and gently steer everyone else
-            // towards a proxy.
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                T("Only OpenAI-shape image APIs are supported. Most Chinese providers (Kimi/DeepSeek don't have one; GLM CogView returns URLs not base64; 阿里万相 is async). Recommended: 字节豆包 (compatible), or route through LiteLLM / OneAPI.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             TextField("Base URL", text: $imageBaseURL, prompt: Text("https://ark.cn-beijing.volces.com/api/v3"))
                 .textFieldStyle(.roundedBorder)
             SecureField("API Key", text: $imageAPIKey, prompt: Text("sk-…"))
