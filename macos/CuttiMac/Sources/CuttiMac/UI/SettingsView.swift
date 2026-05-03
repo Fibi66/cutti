@@ -19,6 +19,7 @@ struct SettingsView: View {
     /// diverges from this baseline.
     @State private var initialUILanguage: String = CuttiSettings.uiLanguageSystem
     @State private var showRestartPrompt: Bool = false
+    @State private var showsBugReportSheet: Bool = false
 
     private var aiProvider: AIProviderPreference {
         AIProviderPreference(rawValue: aiProviderRaw) ?? .cuttiCloud
@@ -73,6 +74,12 @@ struct SettingsView: View {
                     } header: {
                         T("Subscription")
                     }
+
+                    Section {
+                        UsageBreakdownRow()
+                    } header: {
+                        T("Credit usage by feature")
+                    }
                 }
             }
 
@@ -120,6 +127,23 @@ struct SettingsView: View {
             }
 
             Section {
+                Button {
+                    showsBugReportSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "ladybug")
+                        T("Report a Bug…")
+                    }
+                }
+
+                T("Send us a description of what went wrong. Optionally attaches app and OS version, hardware, and locale so we can reproduce the issue. Goes straight to GitHub.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                T("Support")
+            }
+
+            Section {
                 Toggle(isOn: $showAgentTrace) { T("Show agent trace") }
 
                 T("Reveals the raw agent trace inspector in the AI Editor header, with per-turn step lists, Undo Entire Plan, and Copy Trace JSON. Off by default — everyday users only need the plain-language action bubbles in the chat.")
@@ -132,6 +156,9 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 560, height: 540)
         .onAppear { initialUILanguage = uiLanguage }
+        .sheet(isPresented: $showsBugReportSheet) {
+            BugReportSheet()
+        }
         .alert(L("Restart Required"), isPresented: $showRestartPrompt) {
             Button(role: .cancel) {
                 // Revert the picker so the visible state matches what's

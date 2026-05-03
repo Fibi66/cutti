@@ -854,3 +854,25 @@
 "Email verification pending." = "邮箱验证中。";
 "Free plan" = "免费版";
 "Sign in to view your plan." = "登录后查看订阅信息。";
+
+/* Settings — Support / Bug report */
+"Support" = "支持";
+"Report a Bug…" = "报告 Bug…";
+"Send us a description of what went wrong. Optionally attaches app and OS version, hardware, and locale so we can reproduce the issue. Goes straight to GitHub." = "把遇到的问题描述给我们。可选附带 App 和系统版本、硬件信息和地区设置，方便我们复现。会直接转成 GitHub Issue。";
+"Report a Bug" = "报告 Bug";
+"Tell us what went wrong. The more detail you can give, the faster we can fix it." = "告诉我们出了什么问题。描述越详细，我们修得越快。";
+"What happened?" = "发生了什么？";
+"e.g. The app froze when I dragged a 4K clip onto an empty timeline." = "例如：把一个 4K 片段拖到空白时间线时 App 卡住了。";
+"Steps to reproduce (optional)" = "复现步骤（可选）";
+"Reply email (optional)" = "回复邮箱（可选）";
+"name@example.com" = "name@example.com";
+"Only used to follow up on this report. Leave blank to submit anonymously." = "仅用于回复此次反馈。留空则匿名提交。";
+"Privacy" = "隐私";
+"Include diagnostics" = "包含诊断信息";
+"Helps us reproduce the bug. Includes app and OS version, hardware, locale, and your account ID. Does not include your email or project files." = "帮助我们复现问题。包含 App 和系统版本、硬件、地区，以及你的账号 ID。不会包含你的邮箱或项目文件。";
+"Show what will be sent" = "查看将要发送的内容";
+"Send" = "发送";
+"Close" = "关闭";
+"Thanks — your report is in." = "感谢——反馈已收到。";
+"We'll triage it and follow up if we need more info." = "我们会处理，需要更多信息时会联系你。";
+"View on GitHub" = "在 GitHub 上查看";

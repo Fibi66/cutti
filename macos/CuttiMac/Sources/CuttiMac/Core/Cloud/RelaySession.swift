@@ -406,6 +406,43 @@ final class RelaySession: ObservableObject {
         lastError = nil
     }
 
+    // MARK: - Per-feature usage breakdown
+
+    public struct FeatureUsage: Codable, Equatable, Identifiable {
+        public let feature: String
+        public let calls: Int
+        public let credits: Int
+        public let lastAt: Int
+
+        public var id: String { feature }
+        enum CodingKeys: String, CodingKey {
+            case feature, calls, credits
+            case lastAt = "last_at"
+        }
+    }
+
+    private struct UsageByFeatureResponse: Codable {
+        let days: Int
+        let features: [FeatureUsage]
+    }
+
+    /// Fetch the per-feature credit breakdown for the last `days`
+    /// days from the relay. Backend aggregates `usage_events` grouped
+    /// by the `task` tag we send on every chat call.
+    func fetchUsageByFeature(days: Int = 30) async throws -> [FeatureUsage] {
+        guard let token = accessToken else { return [] }
+        let base = relayBaseURL
+        let url = URL(string:
+            "\(base.trimmingTrailingSlash)/v1/me/usage/by-feature?days=\(days)"
+        )!
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try Self.throwIfNotOK(resp: resp, data: data)
+        let payload = try JSONDecoder().decode(UsageByFeatureResponse.self, from: data)
+        return payload.features
+    }
+
     // MARK: - Private
 
     private func ingestAuthResponse(data: Data) throws {
