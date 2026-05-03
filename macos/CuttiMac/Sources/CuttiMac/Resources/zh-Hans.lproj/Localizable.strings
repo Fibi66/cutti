@@ -869,7 +869,7 @@
 "Only used to follow up on this report. Leave blank to submit anonymously." = "仅用于回复此次反馈。留空则匿名提交。";
 "Privacy" = "隐私";
 "Include diagnostics" = "包含诊断信息";
-"Helps us reproduce the bug. Includes app and OS version, hardware, locale, and your account ID. Does not include your email or project files." = "帮助我们复现问题。包含 App 和系统版本、硬件、地区，以及你的账号 ID。不会包含你的邮箱或项目文件。";
+"Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files." = "帮助我们复现问题。包含 App 和系统版本、硬件、地区与时区。不会包含你的邮箱、账号或项目文件。";
 "Show what will be sent" = "查看将要发送的内容";
 "Send" = "发送";
 "Close" = "关闭";

@@ -23,6 +23,14 @@ struct BugReportSheet: View {
     @State private var submissionError: String?
     @State private var submissionResponse: BugReportSubmissionResponse?
 
+    /// Diagnostics snapshot taken once when the sheet appears (and
+    /// refreshed when the user toggles `Include diagnostics`). Caching
+    /// here keeps `submittedAt` stable while the user is typing — the
+    /// JSON preview below shouldn't tick every keystroke — and avoids
+    /// re-running `sysctlbyname` and `Bundle.main` reads per render.
+    @State private var diagnosticsSnapshot: BugReportDiagnostics =
+        BugReportDiagnostics.current()
+
     private var canSubmit: Bool {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.count >= 10 && !isSubmitting
@@ -33,7 +41,7 @@ struct BugReportSheet: View {
             description: description,
             reproSteps: reproSteps,
             contactEmail: contactEmail,
-            diagnostics: includeDiagnostics ? BugReportDiagnostics.current() : nil
+            diagnostics: includeDiagnostics ? diagnosticsSnapshot : nil
         )
     }
 
@@ -76,6 +84,16 @@ struct BugReportSheet: View {
         .onAppear {
             if contactEmail.isEmpty, let email = session.user?.email {
                 contactEmail = email
+            }
+            // Refresh once on open so a stale snapshot from when the
+            // sheet was first instantiated doesn't ship out.
+            diagnosticsSnapshot = BugReportDiagnostics.current()
+        }
+        .onChange(of: includeDiagnostics) { _, newValue in
+            // Re-snapshot when the user opts back in so `submittedAt`
+            // reflects when they made that choice, not sheet-open.
+            if newValue {
+                diagnosticsSnapshot = BugReportDiagnostics.current()
             }
         }
     }
@@ -127,7 +145,7 @@ struct BugReportSheet: View {
                 Toggle(isOn: $includeDiagnostics) {
                     T("Include diagnostics")
                 }
-                T("Helps us reproduce the bug. Includes app and OS version, hardware, locale, and your account ID. Does not include your email or project files.")
+                T("Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -184,7 +202,7 @@ struct BugReportSheet: View {
                 .multilineTextAlignment(.center)
 
             if let issueURLString = response.issueURL,
-               let issueURL = URL(string: issueURLString) {
+               let issueURL = Self.safeIssueURL(issueURLString) {
                 Button {
                     NSWorkspace.shared.open(issueURL)
                 } label: {
@@ -224,5 +242,20 @@ struct BugReportSheet: View {
         } catch {
             submissionError = error.localizedDescription
         }
+    }
+
+    /// Only open `issueURL` values that are https GitHub URLs. The
+    /// relay is trusted, but a stricter guard protects users if a
+    /// future relay misconfiguration (or a man-in-the-middle on a
+    /// hostile network) ever returns a non-GitHub or custom-scheme
+    /// URL. We don't want to launch arbitrary apps from a success
+    /// view.
+    private static func safeIssueURL(_ raw: String) -> URL? {
+        guard let url = URL(string: raw),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              host == "github.com" || host.hasSuffix(".github.com")
+        else { return nil }
+        return url
     }
 }

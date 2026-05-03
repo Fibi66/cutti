@@ -22,10 +22,13 @@ Authorization: Bearer <session-jwt>     # optional
 User-Agent: cutti/<app-version>
 ```
 
-`Authorization` is omitted when the user is signed out. The relay
-should still accept anonymous reports but apply a stricter rate
-limit (e.g. 1 per IP per hour) compared to authenticated submitters
-(e.g. 5 per account per hour).
+`Authorization` is omitted when the user is signed out. See **Anonymous
+submissions** below — they MUST NOT auto-create public GitHub issues.
+
+When the JWT is present, the relay derives the cutti.app account ID
+from the token. The client deliberately does **not** include it in
+the body so a careless server-side projection can't accidentally
+publish it into the public GitHub issue.
 
 ### Body
 
@@ -38,10 +41,12 @@ limit (e.g. 1 per IP per hour) compared to authenticated submitters
   "reproSteps": "1. Open a fresh project\n2. Drop a 4K H.265 clip\n3. Wait",
 
   // Optional. Empty string when the user opts out of follow-up.
+  // Treat as PRIVATE — never include verbatim in the public GitHub
+  // issue body. Store it only in the relay DB for follow-up.
   "contactEmail": "user@example.com",
 
   // Optional. Present iff the user kept the "Include diagnostics"
-  // toggle on. When omitted (or `null`), the user explicitly opted
+  // toggle on. When the field is omitted, the user explicitly opted
   // out — record that intent.
   "diagnostics": {
     "appName": "cutti",
@@ -52,8 +57,6 @@ limit (e.g. 1 per IP per hour) compared to authenticated submitters
     "physicalMemoryGB": 32,
     "locale": "en_US",
     "timezone": "America/Los_Angeles",
-    // Cutti.app account ID when signed in; null otherwise.
-    "signedInUserID": "user_abc123",
     // ISO-8601 UTC.
     "submittedAt": "2026-05-02T19:30:00Z"
   }
@@ -67,6 +70,8 @@ The client guarantees:
   `reproSteps` have already been replaced with `/Users/<user>/`.
   The relay should NOT have to scrub paths.
 - `description` is non-empty (already validated client-side).
+- The body contains no account email or account ID — the relay
+  derives those from the JWT itself.
 
 ## Response
 
@@ -79,7 +84,8 @@ The client guarantees:
   // GitHub issue URL when the relay successfully opened one.
   // null when GitHub creation failed but the report was stored —
   // the client still treats this as success and shows the
-  // generic confirmation.
+  // generic confirmation. The client only opens https://github.com
+  // URLs from this field; other schemes/hosts are silently dropped.
   "issueURL": "https://github.com/Fibi66/cutti/issues/123",
 
   // Server-side ticket id; surfaced read-only in the success view
@@ -100,15 +106,36 @@ falls back to a generic "thanks, we got it" message.
 - `5xx` — generic server error; client surfaces the status + first
   500 chars of the body.
 
+## Anonymous submissions and abuse
+
+This client is part of an **open-source AGPL** repository. Anyone can
+fork it and call `/feedback` from a modified binary. The relay is the
+only line of defence against spam, and it MUST treat unauthenticated
+traffic as untrusted:
+
+- **Do not auto-open public GitHub issues for anonymous reports.**
+  Store them in a private moderation queue instead. A human or a
+  trust-scored heuristic promotes them to GitHub.
+- Apply per-account, per-IP, and global rate limits server-side.
+  Suggested defaults: 5/hour/account, 1/hour/IP for anonymous,
+  with sharper bursts blocked outright.
+- Detect and dedupe near-identical descriptions before creating issues.
+- Require a verified, non-trivial-age cutti.app account before any
+  authenticated submission auto-creates a public issue. New / spammy
+  accounts also go to the private queue.
+
+These are server-side responsibilities; the client cannot enforce them.
+
 ## GitHub issue layout (server-side recommendation)
 
-When the relay opens the issue, suggested format:
+When the relay opens a public issue, suggested format:
 
 - **Title**: first 80 chars of `description`, prefixed with
   `[in-app]`. e.g. `[in-app] The app froze when I dragged…`
 - **Labels**: `auto-reported`, plus `os:macos` and a version
   label like `v:1.0.40`.
-- **Body**:
+- **Body**: a **redacted projection** of the request — never the
+  raw request body. Include only fields safe for public visibility:
   ```markdown
   > Reported via the in-app **Report a Bug** flow.
   > Ticket: `fb_2026_05_02_abcd1234`
@@ -124,25 +151,28 @@ When the relay opens the issue, suggested format:
   - macOS Version 14.5 (Build 23F79)
   - MacBookPro18,3, 32 GB
   - locale `en_US`, timezone `America/Los_Angeles`
-
-  <details>
-    <summary>Raw report</summary>
-
-    ```json
-    <full body, pretty-printed>
-    ```
-  </details>
   ```
-- **Account email** (`contactEmail` from request, or the address
-  on the cutti.app account when signed in) is **never** posted
-  publicly. Store it in the relay DB only and use for follow-up.
+
+  Specifically, the public body MUST NOT contain:
+  - `contactEmail`
+  - the account ID derived from the JWT
+  - the account email associated with the JWT
+  - the raw request JSON
+
+  Anything that needs to round-trip to the user (email reply, account
+  correlation, etc.) belongs in the relay DB only.
 
 ## Privacy notes
 
 - The client deliberately does NOT send the user's cutti.app
-  account email — only the user ID. If the user wants a reply,
-  they re-type their address into the contact field. This avoids
-  accidentally publishing an email when the GitHub issue body is
-  generated from the request.
+  account email or account ID — only the JWT, which the relay can
+  use server-side without exposing it to the public issue body.
+- `contactEmail` is opt-in and treated as private (relay-only).
+  If the user wants a reply, they re-type their address into the
+  contact field. This avoids accidentally publishing an email when
+  the GitHub issue body is generated from the request.
 - The client does NOT upload OS unified logs or media files in
   this iteration.
+- The client only opens `issueURL` values that are `https://` URLs
+  on `github.com` (or its subdomains). A relay misconfiguration
+  cannot launch arbitrary apps on the user's machine.

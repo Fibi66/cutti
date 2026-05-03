@@ -293,4 +293,10 @@ actor BugReportService {
         copy.reproSteps = BugReportDiagnostics.sanitize(report.reproSteps)
         return copy
     }
+
+    /// Read once at startup and reused for the `User-Agent` header so
+    /// `submit()` doesn't have to spin up the full `current()` snapshot
+    /// when the user opted out of diagnostics.
+    private static let cachedAppVersion: String =
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
 }

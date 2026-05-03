@@ -89,7 +89,6 @@ final class BugReportServiceTests: XCTestCase {
             physicalMemoryGB: 32,
             locale: "en_US",
             timezone: "America/Los_Angeles",
-            signedInUserID: "user_123",
             submittedAt: "2026-05-02T12:00:00Z"
         )
         let report = BugReport(
@@ -105,6 +104,9 @@ final class BugReportServiceTests: XCTestCase {
         let diagJSON = json?["diagnostics"] as? [String: Any]
         XCTAssertEqual(diagJSON?["appVersion"] as? String, "1.0.40")
         XCTAssertEqual(diagJSON?["physicalMemoryGB"] as? Int, 32)
+        // Account ID is intentionally not in the body — relay derives
+        // it from the JWT to keep public GitHub issues clean.
+        XCTAssertNil(diagJSON?["signedInUserID"])
     }
 
     func test_encode_sanitizesPathInDescription() throws {
@@ -162,7 +164,6 @@ final class BugReportServiceTests: XCTestCase {
             physicalMemoryGB: 32,
             locale: "en_US",
             timezone: "UTC",
-            signedInUserID: nil,
             submittedAt: "2026-05-02T12:00:00Z"
         )
         let report = BugReport(
