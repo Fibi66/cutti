@@ -8,10 +8,20 @@ import CuttiKit
 // MARK: - Protocol for MediaCore importing
 
 protocol MediaCoreImporting: Sendable {
-    func importLocalVideo(url: URL) async throws -> UUID
+    func importLocalVideo(
+        url: URL,
+        progress: @Sendable @escaping (ImportPhase, Double) -> Void
+    ) async throws -> UUID
     func importLocalImage(url: URL) async throws -> UUID
     func relinkOriginal(mediaId: UUID, newURL: URL) throws
     func validateSources() throws
+}
+
+extension MediaCoreImporting {
+    /// No-progress convenience for callers that don't surface phase/percent.
+    func importLocalVideo(url: URL) async throws -> UUID {
+        try await importLocalVideo(url: url, progress: { _, _ in })
+    }
 }
 
 extension MediaCore: MediaCoreImporting {}
@@ -62,10 +72,38 @@ final class MediaCoreViewModel: ObservableObject {
     /// Files currently being imported. Rendered as placeholder rows at the
     /// top of the media list so users see exactly which drops are in flight.
     @Published var importingFiles: [ImportingFile] = []
+    /// Per-ticket Task handle so `cancelImport(id:)` can interrupt one
+    /// specific import — including imports still queued behind the
+    /// concurrency gate. Owned by the view model so external callers
+    /// (drag-drop / open panel) don't have to manage the Task themselves.
+    private var importTasks: [UUID: Task<Void, Never>] = [:]
 
     struct ImportingFile: Identifiable, Equatable {
         let id: UUID
         let name: String
+        var phase: Phase
+        /// Current transcode progress in `0.0...1.0`. Only meaningful
+        /// when `phase == .transcoding`; reset on phase changes.
+        var progress: Double
+
+        enum Phase: Sendable, Equatable {
+            case preparing
+            case analyzing
+            case waiting
+            case transcoding
+        }
+
+        init(
+            id: UUID = UUID(),
+            name: String,
+            phase: Phase = .preparing,
+            progress: Double = 0
+        ) {
+            self.id = id
+            self.name = name
+            self.phase = phase
+            self.progress = progress
+        }
     }
 
     // MARK: - Whisper Model Setup
@@ -5895,29 +5933,113 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
-    func importLocalVideo(url: URL) async {
+    /// Public entry point for any user-initiated file import (drag-drop,
+    /// open panel). Spawns a child `Task` that the view model owns so a
+    /// later `cancelImport(id:)` can reliably interrupt it — including
+    /// imports still queued behind the concurrency gate. Returns the
+    /// ticket id so the caller can identify which row corresponds to
+    /// which dropped URL.
+    @discardableResult
+    func startImport(url: URL) -> UUID {
+        let isImage = mediaDropImageExtensions.contains(url.pathExtension.lowercased())
+        let ticket = ImportingFile(name: url.lastPathComponent)
+        importingFiles.append(ticket)
+        isImporting = true
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performImport(ticketID: ticket.id, url: url, isImage: isImage)
+        }
+        importTasks[ticket.id] = task
+        return ticket.id
+    }
+
+    /// Cancels the in-flight import for the given ticket id. The actual
+    /// transcoder cleanup (delete partial proxy, drop optimistic
+    /// manifest record) happens inside `MediaCore` when it observes
+    /// cancellation; this method just sends the signal.
+    func cancelImport(id: UUID) {
+        importTasks[id]?.cancel()
+    }
+
+    private func performImport(ticketID: UUID, url: URL, isImage: Bool) async {
+        defer {
+            importingFiles.removeAll { $0.id == ticketID }
+            importTasks[ticketID] = nil
+            isImporting = !importingFiles.isEmpty
+        }
+
         guard let mediaCore else {
             bannerMessage = L("MediaCore or store not configured")
             return
         }
 
-        let ticket = ImportingFile(id: UUID(), name: url.lastPathComponent)
-        importingFiles.append(ticket)
-        isImporting = true
-
-        defer {
-            importingFiles.removeAll { $0.id == ticket.id }
-            isImporting = !importingFiles.isEmpty
-        }
-
         do {
-            let mediaId = try await mediaCore.importLocalVideo(url: url)
+            let mediaId: UUID
+            if isImage {
+                mediaId = try await mediaCore.importLocalImage(url: url)
+            } else {
+                // Forward progress samples back to MainActor and patch
+                // the matching ticket so the placeholder row can show a
+                // determinate bar + phase label. We capture `ticketID`
+                // (a value type) instead of the row itself to avoid
+                // staleness issues if `importingFiles` gets re-ordered.
+                mediaId = try await mediaCore.importLocalVideo(
+                    url: url,
+                    progress: { [weak self] phase, progress in
+                        Task { @MainActor [weak self] in
+                            self?.updateImportProgress(
+                                ticketID: ticketID,
+                                phase: phase,
+                                progress: progress
+                            )
+                        }
+                    }
+                )
+            }
             selectedRecordID = mediaId
             await loadRecords()
-            // loadRecords() sets bannerMessage (nil on success, error on failure)
+        } catch is CancellationError {
+            // User-initiated cancel; MediaCore already cleaned up the
+            // partial proxy + optimistic record. No banner needed.
+            return
+        } catch let error as ImportError {
+            bannerMessage = error.errorDescription ?? L("Import failed.")
         } catch {
             bannerMessage = L("Import failed: %@", error.localizedDescription)
         }
+    }
+
+    private func updateImportProgress(
+        ticketID: UUID,
+        phase: ImportPhase,
+        progress: Double
+    ) {
+        guard let index = importingFiles.firstIndex(where: { $0.id == ticketID }) else {
+            return
+        }
+        importingFiles[index].phase = Self.uiPhase(for: phase)
+        importingFiles[index].progress = progress
+    }
+
+    private static func uiPhase(for phase: ImportPhase) -> ImportingFile.Phase {
+        switch phase {
+        case .preparing: return .preparing
+        case .analyzing: return .analyzing
+        case .waiting: return .waiting
+        case .transcoding: return .transcoding
+        }
+    }
+
+    func importLocalVideo(url: URL) async {
+        // Synchronous-ish entry point used by tests and any internal
+        // caller that wants to await completion. The UI path goes
+        // through `startImport(url:)` instead so the Task handle is
+        // owned by the view model and `cancelImport` is wired up.
+        let ticket = ImportingFile(name: url.lastPathComponent)
+        importingFiles.append(ticket)
+        isImporting = true
+        await performImport(ticketID: ticket.id, url: url, isImage: false)
     }
 
     /// Import a still image (PNG/JPEG). Unlike video imports, stills
@@ -5927,27 +6049,10 @@ final class MediaCoreViewModel: ObservableObject {
     /// original path (no project-copy), matching the video import's
     /// external-source convention.
     func importLocalImage(url: URL) async {
-        guard let mediaCore else {
-            bannerMessage = L("MediaCore or store not configured")
-            return
-        }
-
-        let ticket = ImportingFile(id: UUID(), name: url.lastPathComponent)
+        let ticket = ImportingFile(name: url.lastPathComponent)
         importingFiles.append(ticket)
         isImporting = true
-
-        defer {
-            importingFiles.removeAll { $0.id == ticket.id }
-            isImporting = !importingFiles.isEmpty
-        }
-
-        do {
-            let mediaId = try await mediaCore.importLocalImage(url: url)
-            selectedRecordID = mediaId
-            await loadRecords()
-        } catch {
-            bannerMessage = L("Image import failed: %@", error.localizedDescription)
-        }
+        await performImport(ticketID: ticket.id, url: url, isImage: true)
     }
 
     /// Generate an AI image via the Cutti relay (FLUX.2-pro) and

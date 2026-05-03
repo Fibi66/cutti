@@ -340,14 +340,11 @@ struct ContentView: View {
             },
             onImportURLs: { urls in
                 for url in urls {
-                    Task { @MainActor in
-                        if mediaDropImageExtensions.contains(url.pathExtension.lowercased()) {
-                            await viewModel.importLocalImage(url: url)
-                        } else {
-                            await viewModel.importLocalVideo(url: url)
-                        }
-                    }
+                    viewModel.startImport(url: url)
                 }
+            },
+            onCancelImport: { id in
+                viewModel.cancelImport(id: id)
             }
         )
 
@@ -1258,11 +1255,7 @@ struct ContentView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
-                if mediaDropImageExtensions.contains(url.pathExtension.lowercased()) {
-                    await viewModel.importLocalImage(url: url)
-                } else {
-                    await viewModel.importLocalVideo(url: url)
-                }
+                viewModel.startImport(url: url)
             }
         }
     }
@@ -1493,6 +1486,7 @@ private struct MediaBrowserSection: View {
     let onSelect: (UUID) -> Void
     let onDelete: (UUID) -> Void
     let onImportURLs: ([URL]) -> Void
+    let onCancelImport: (UUID) -> Void
 
     @State private var isSearchRevealed: Bool = false
     @State private var isDropTargeted: Bool = false
@@ -1579,7 +1573,10 @@ private struct MediaBrowserSection: View {
                 if !importingFiles.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(importingFiles) { file in
-                            ImportingPlaceholderRow(name: file.name)
+                            ImportingPlaceholderRow(
+                                file: file,
+                                onCancel: { onCancelImport(file.id) }
+                            )
                         }
                     }
                     .padding(.horizontal, 8)
@@ -1662,10 +1659,12 @@ private struct MediaBrowserSection: View {
 }
 
 /// Placeholder row shown in the Media list for each file currently being
-/// imported. No thumbnail yet — just a film icon, the filename, and a
-/// spinner — so the user can see exactly which drops are in flight.
+/// imported. Shows the filename, current import phase (analyzing /
+/// queued / encoding %) and a Cancel button so users can interrupt a
+/// runaway transcode without restarting the app.
 private struct ImportingPlaceholderRow: View {
-    let name: String
+    let file: MediaCoreViewModel.ImportingFile
+    let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1678,23 +1677,57 @@ private struct ImportingPlaceholderRow: View {
                         .foregroundStyle(.secondary)
                 }
             VStack(alignment: .leading, spacing: 3) {
-                Text(name)
+                Text(file.name)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                T("Importing…")
+                Text(phaseLabel)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if showsDeterminateBar {
+                    ProgressView(value: file.progress)
+                        .progressViewStyle(.linear)
+                        .controlSize(.mini)
+                }
             }
             Spacer(minLength: 4)
-            ProgressView()
-                .controlSize(.small)
+            if !showsDeterminateBar {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L("Cancel import"))
         }
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.secondary.opacity(0.08))
         )
+    }
+
+    private var showsDeterminateBar: Bool {
+        file.phase == .transcoding && file.progress > 0
+    }
+
+    private var phaseLabel: String {
+        switch file.phase {
+        case .preparing:
+            return L("Preparing…")
+        case .analyzing:
+            return L("Analyzing…")
+        case .waiting:
+            return L("Queued…")
+        case .transcoding:
+            if file.progress > 0 {
+                return L("Encoding %d%%", Int((file.progress * 100).rounded()))
+            }
+            return L("Encoding…")
+        }
     }
 }
 

@@ -47,11 +47,20 @@ struct AppleSiliconPhaseOneStack {
         let proxyProfile = ProxyProfile.appleSiliconEditingProxy
         let store = ProjectStore(projectRoot: projectRoot)
         try store.bootstrapProject()
+        // Production wiring includes the gates so concurrent imports
+        // don't race on manifest writes and don't saturate Media Engine.
+        // Limit=2 covers Apple Silicon's 1–2 Media Engine SoCs while
+        // still letting one I/O-heavy import overlap with one
+        // encode-heavy one.
+        let manifestGate = ManifestMutationGate(store: store)
+        let concurrencyGate = ImportConcurrencyGate(limit: 2)
         let mediaCore = MediaCore(
             store: store,
             analyzer: AVAssetAnalyzer(),
             primaryTranscoder: AVProxyTranscoder(),
-            fallbackTranscoder: FFmpegProxyFallback()
+            fallbackTranscoder: FFmpegProxyFallback(),
+            manifestGate: manifestGate,
+            concurrencyGate: concurrencyGate
         )
         let playbackCore = AVPlaybackCore()
         let analysisPipeline = FullAnalysisPipeline()

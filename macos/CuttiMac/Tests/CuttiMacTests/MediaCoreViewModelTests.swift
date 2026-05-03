@@ -29,7 +29,10 @@ final class StubMediaCore: MediaCoreImporting, @unchecked Sendable {
     var relinkHandler: ((UUID, URL) throws -> Void)?
     var validateSourcesHandler: (() throws -> Void)?
     
-    func importLocalVideo(url: URL) async throws -> UUID {
+    func importLocalVideo(
+        url: URL,
+        progress: @Sendable @escaping (ImportPhase, Double) -> Void
+    ) async throws -> UUID {
         importedURLs.append(url)
         guard let result = importResult else {
             fatalError("StubMediaCore.importResult not configured")
@@ -61,7 +64,13 @@ private struct StubAnalyzer: AssetAnalyzing {
 
 private struct StubTranscoder: ProxyTranscoding {
     let result: TranscodeResult
-    func transcode(sourceURL: URL, destinationURL: URL) async -> TranscodeResult { result }
+    func transcode(
+        sourceURL: URL,
+        destinationURL: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async -> TranscodeResult {
+        result
+    }
 }
 
 // MARK: - Tests

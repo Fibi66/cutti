@@ -43,7 +43,11 @@ struct FFmpegProxyFallback: ProxyTranscoding {
         ]
     }
     
-    func transcode(sourceURL: URL, destinationURL: URL) async -> TranscodeResult {
+    func transcode(
+        sourceURL: URL,
+        destinationURL: URL,
+        progress: @Sendable @escaping (Double) -> Void
+    ) async -> TranscodeResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = FFmpegProxyFallback.makeArguments(
@@ -59,25 +63,37 @@ struct FFmpegProxyFallback: ProxyTranscoding {
         // Use terminationHandler + withCheckedContinuation so the cooperative
         // thread is not blocked. The OS calls terminationHandler on a private
         // background thread once the process exits.
-        return await withCheckedContinuation { continuation in
-            process.terminationHandler = { finishedProcess in
-                if finishedProcess.terminationStatus == 0 {
-                    continuation.resume(returning: .success)
-                } else {
-                    let errorData = (try? errorPipe.fileHandleForReading.readToEnd()) ?? Data()
-                    let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+        // Cancellation: hook withTaskCancellationHandler so an abort signal
+        // tears down the ffmpeg subprocess instead of waiting for it.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                process.terminationHandler = { finishedProcess in
+                    if finishedProcess.terminationStatus == 0 {
+                        // Synthesise a final 1.0 sample so progress UIs
+                        // wrap up cleanly. ffmpeg stderr parsing for live
+                        // progress is out of scope for this fallback.
+                        progress(1.0)
+                        continuation.resume(returning: .success)
+                    } else {
+                        let errorData = (try? errorPipe.fileHandleForReading.readToEnd()) ?? Data()
+                        let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                        continuation.resume(returning: .failure(
+                            "FFmpeg failed with status \(finishedProcess.terminationStatus): \(errorOutput)"
+                        ))
+                    }
+                }
+
+                do {
+                    try process.run()
+                } catch {
                     continuation.resume(returning: .failure(
-                        "FFmpeg failed with status \(finishedProcess.terminationStatus): \(errorOutput)"
+                        "FFmpeg execution failed: \(error.localizedDescription)"
                     ))
                 }
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: .failure(
-                    "FFmpeg execution failed: \(error.localizedDescription)"
-                ))
+        } onCancel: {
+            if process.isRunning {
+                process.terminate()
             }
         }
     }
