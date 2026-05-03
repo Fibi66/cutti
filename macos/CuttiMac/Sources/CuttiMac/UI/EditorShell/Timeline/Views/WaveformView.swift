@@ -54,7 +54,16 @@ struct WaveformView: View {
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 3))
-        .task(id: "\(videoURL.path)_\(Int(width))") {
+        // Bucket width to 32pt steps and debounce 140ms (same reasoning
+        // as SegmentFilmstrip): trim/zoom gestures change `width` by one
+        // point per mouse-pixel, and without these two guards each
+        // pixel-tick would cancel and restart `AVAssetReader` —
+        // dozens of overlapping decode tasks per second saturate the
+        // cooperative pool and starve the SwiftUI render loop, which
+        // shows up as 15–20 fps lag while dragging segment edges.
+        .task(id: "\(videoURL.path)_\(Int(width / 32))") {
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            if Task.isCancelled { return }
             await generateWaveform()
         }
     }
@@ -171,7 +180,20 @@ struct SegmentWaveform: View {
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 3))
-        .task(id: "\(videoURL.path)_\(String(format: "%.1f", startSeconds))_\(String(format: "%.1f", endSeconds))_\(Int(width))") {
+        // Bucket width to 32pt steps and debounce 140ms — same reasoning
+        // as SegmentFilmstrip. Without these guards, every pixel of
+        // mouse movement during a trim or overlay-resize gesture would
+        // cancel-and-restart AVAssetReader. The `Task.isCancelled`
+        // checks inside the read loop only fire between buffers, so
+        // mid-decode cancels still let chunks of work run; dozens of
+        // overlapping decoders per second saturate the cooperative
+        // thread pool and the timeline drops to ~15–20 fps. Sleeping
+        // 140ms first means transient task ids cancel before any
+        // generator work fires; only the user pausing for ≥140ms
+        // commits to a real decode.
+        .task(id: "\(videoURL.path)_\(String(format: "%.1f", startSeconds))_\(String(format: "%.1f", endSeconds))_\(Int(width / 32))") {
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            if Task.isCancelled { return }
             await generateWaveform()
         }
     }
