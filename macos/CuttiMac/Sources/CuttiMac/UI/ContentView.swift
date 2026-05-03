@@ -626,14 +626,13 @@ struct ContentView: View {
         _aiLogHeight = State(initialValue: initialAILog)
     }
 
-    /// Prefer the relay-backed `CloudRemotionRenderer` when we have credentials;
-    /// otherwise use the local dev renderer that shells out to `npx remotion
-    /// render`. Single switch between "runs locally" and "runs on
-    /// Azure Container Apps" paths. Delegates to
-    /// `AppleSiliconPhaseOneStack.makeDefaultOverlayRenderer` so the
+    /// Prefer the relay-backed `CloudRemotionRenderer` when we have
+    /// credentials; otherwise use the local dev renderer. Returns `nil`
+    /// for BYOK users (they opted out of all backend usage). Delegates
+    /// to `AppleSiliconPhaseOneStack.makeDefaultOverlayRenderer` so the
     /// dashboard-launched project path and this standalone initializer
-    /// share the exact same renderer-selection logic.
-    private static func makeDefaultOverlayRenderer() -> any RemotionOverlayRendering {
+    /// share the exact same provider-aware selection logic.
+    private static func makeDefaultOverlayRenderer() -> (any RemotionOverlayRendering)? {
         AppleSiliconPhaseOneStack.makeDefaultOverlayRenderer()
     }
 

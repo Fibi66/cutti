@@ -95,20 +95,43 @@ struct AppleSiliconPhaseOneStack {
 
     /// Prefer the relay-backed `CloudRemotionRenderer` when we have
     /// credentials; otherwise fall back to the local dev renderer that
-    /// shells out to `npx remotion render`. Single switch between
-    /// "runs locally" and "runs on Azure Container Apps" paths.
+    /// shells out to `npx remotion render`. Returns `nil` for BYOK
+    /// users — they opted out of the Cutti subscription stack, which
+    /// includes the cloud Remotion renderer (the proprietary skill +
+    /// Azure Container Apps render farm). When the result is `nil`,
+    /// `MediaCoreViewModel.makeOverlayCache()` surfaces the BYOK
+    /// limitation banner instead of generating an animation.
     ///
     /// Shared by both the dashboard project entry path
     /// (`AppleSiliconPhaseOneStack.makeViewModel`) and the standalone
-    /// `ContentView` initializer so any project-opening route gets a
-    /// configured overlay renderer — without this the
-    /// "Overlay rendering is not configured." banner fires when the
-    /// user tries Generate Animation / Generate Overlay.
+    /// `ContentView` initializer so any project-opening route gets the
+    /// same provider-aware behaviour.
+    ///
+    /// The closures default to live readers but exist so unit tests can
+    /// pin all three inputs without mutating `UserDefaults.standard` /
+    /// the keychain.
     @MainActor
-    static func makeDefaultOverlayRenderer() -> any RemotionOverlayRendering {
+    static func makeDefaultOverlayRenderer(
+        aiProvider: () -> AIProviderPreference = { CuttiSettings.aiProvider() },
+        bearerToken: () -> String? = { RelaySession.currentBearerToken() },
+        devToken: () -> String? = {
+            UserDefaults.standard.string(forKey: "cutti_relay_dev_token")
+        }
+    ) -> (any RemotionOverlayRendering)? {
+        // BYOK opted out of every backend dependency, including the
+        // cloud overlay renderer. A stale JWT from a previous
+        // subscription must NOT silently keep routing renders through
+        // `api.cutti.app`. The local dev renderer is also unreachable
+        // from a packaged `.app` (it walks `#filePath` to the repo's
+        // `remotion/` directory), so returning `nil` is the correct
+        // honest answer for BYOK — the caller will show the
+        // "Cutti Cloud only" banner.
+        if aiProvider() == .custom {
+            return nil
+        }
         let url = URL(string: RelayClient.relayBaseURL)!
-        let jwt = RelaySession.currentBearerToken() ?? ""
-        let dev = UserDefaults.standard.string(forKey: "cutti_relay_dev_token") ?? ""
+        let jwt = bearerToken() ?? ""
+        let dev = devToken() ?? ""
         let token: String
         if !jwt.isEmpty {
             token = "jwt:\(jwt)"

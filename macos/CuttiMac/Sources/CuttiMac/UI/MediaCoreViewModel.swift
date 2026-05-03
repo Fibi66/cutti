@@ -3206,6 +3206,23 @@ final class MediaCoreViewModel: ObservableObject {
     /// banner if any collaborator is missing so callers can simply
     /// `guard let cache = makeOverlayCache() else { return }`.
     private func makeOverlayCache() -> OverlayRenderCache? {
+        // BYOK users opted out of the Cutti subscription stack,
+        // including the cloud Remotion renderer (the local renderer
+        // is dev-only — see `LocalRemotionRenderer.defaultProjectDirectory`).
+        // We MUST gate here, not just at factory time:
+        //   - a stale `overlayRenderer` may have been wired at VM
+        //     construction when the user was still on `.cuttiCloud`;
+        //   - `_overlayRenderCache` may already be memoized from a
+        //     previous Generate Animation in that same session.
+        // Both would otherwise let BYOK keep hitting `api.cutti.app`
+        // after the user switched providers in Settings. Reusing the
+        // existing AI-provider Settings copy keeps the warning
+        // consistent across the UI.
+        if CuttiSettings.aiProvider() == .custom {
+            _overlayRenderCache = nil
+            bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
+            return nil
+        }
         if let existing = _overlayRenderCache { return existing }
         guard let overlayRenderer else {
             bannerMessage = L("Animation generation is not configured.")
