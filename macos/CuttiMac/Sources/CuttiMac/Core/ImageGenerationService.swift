@@ -79,12 +79,18 @@ actor ImageGenerationService {
         prompt: String,
         size: ImageGenerationSize = .square1024
     ) async throws -> Data {
+        #if os(macOS)
         switch CuttiSettings.aiProvider() {
         case .cuttiCloud:
             return try await generateViaCuttiRelay(prompt: prompt, size: size)
         case .custom:
             return try await generateViaCustomProvider(prompt: prompt, size: size)
         }
+        #else
+        // iOS is subscription-only: image generation always goes through
+        // the cutti relay. The BYOK code path is compiled out.
+        return try await generateViaCuttiRelay(prompt: prompt, size: size)
+        #endif
     }
 
     // MARK: - Cutti Cloud path
@@ -163,6 +169,12 @@ actor ImageGenerationService {
 
     // MARK: - Custom (BYOK) path
 
+    #if os(macOS)
+    /// macOS-only: iOS is subscription-only and cannot reach this path
+    /// (the dispatch in `generate()` doesn't compile the BYOK arm on
+    /// iOS), so the entire custom-provider implementation — which
+    /// reads `CuttiSettings.customAIConfiguration()` from
+    /// macOS-only AppStorage + keychain — is compiled out on iOS.
     private func generateViaCustomProvider(
         prompt: String,
         size: ImageGenerationSize
@@ -224,6 +236,7 @@ actor ImageGenerationService {
 
         return try Self.decodeOpenAIShapeImageResponse(data)
     }
+    #endif
 
     /// Both the cutti relay and any OpenAI-compatible provider return
     /// the same `{ "data": [{ "b64_json": "..." }] }` shape. Centralised

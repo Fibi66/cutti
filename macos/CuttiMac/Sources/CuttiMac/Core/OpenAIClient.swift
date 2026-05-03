@@ -122,11 +122,16 @@ struct OpenAIConfiguration: Sendable {
         )
     }
 
+    #if os(macOS)
     /// Custom OpenAI-compatible endpoint with a user-supplied Bearer key.
     /// `baseURL` should be the API root (e.g. `https://api.openai.com/v1`
     /// or `https://my-proxy.example/v1`); the trailing `/v1` is part of
     /// the user's input. The exact request path appended is
     /// `/chat/completions`.
+    ///
+    /// macOS-only: iOS is subscription-only, so the BYOK constructor is
+    /// compiled out entirely on iOS as a defense-in-depth guard against
+    /// any future call site accidentally building a `.custom` config.
     static func custom(
         baseURL: String,
         apiKey: String,
@@ -139,6 +144,7 @@ struct OpenAIConfiguration: Sendable {
             relayBaseURL: baseURL
         )
     }
+    #endif
 
     /// Returns the configured backend. For `.cuttiCloud`, reads the
     /// session JWT / dev token from `RelayClient`. For `.custom`, reads
@@ -148,7 +154,13 @@ struct OpenAIConfiguration: Sendable {
     ///
     /// Nonisolated: safe to invoke from any actor — both cutti-relay
     /// credentials and BYOK settings are backed by lock-protected stores.
+    ///
+    /// On iOS this always returns the cuttiCloud configuration: the iOS
+    /// app is subscription-only (no BYOK UI, no `CuttiSettings`
+    /// AppStorage for the BYOK fields), and the `.custom` path is
+    /// compiled out entirely.
     static func fromEnvironment() -> OpenAIConfiguration? {
+        #if os(macOS)
         switch CuttiSettings.aiProvider() {
         case .cuttiCloud:
             let config = RelayClient.configurationFromDefaults()
@@ -167,6 +179,11 @@ struct OpenAIConfiguration: Sendable {
                 model: custom.llmModel
             )
         }
+        #else
+        let config = RelayClient.configurationFromDefaults()
+        print("🔑 OpenAI config: provider=cutti_relay base=\(config.relayBaseURL)")
+        return config
+        #endif
     }
 }
 

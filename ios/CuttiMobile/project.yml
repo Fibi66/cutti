@@ -35,6 +35,15 @@ targets:
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/Cloud/KeychainStore.swift
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/Cloud/SubscriptionManager.swift
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/Cloud/RelayCreditsNotification.swift
+      # AIProviderPreference / CustomAIConfiguration data types. iOS is
+      # subscription-only (no BYOK UI, no .custom code paths), but
+      # `OpenAIConfiguration.provider: AIProviderPreference` is part of
+      # the shared chat-completion config struct, so the enum has to be
+      # available on both platforms. The actual BYOK call paths in
+      # OpenAIClient / ImageGenerationService are gated behind
+      # `#if os(macOS)` so iOS can never construct or dispatch a
+      # `.custom` configuration at runtime.
+      - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/Cloud/AIProvider.swift
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/OpenAIClient.swift
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/LLMEditorService.swift
       - path: ../../macos/CuttiMac/Sources/CuttiMac/Core/ImageGenerationService.swift
