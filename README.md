@@ -4,6 +4,18 @@ AI-powered video editing app for macOS **and iOS** (iPhone + iPad universal).
 Import your footage, click Start — cutti's AI handles transcription, scene
 analysis, and edit suggestions.
 
+## Minimum requirements (macOS)
+
+To run the local AI features (Whisper transcription, speaker diarization,
+on-device scene analysis):
+
+- **Apple Silicon Mac** (M1 or later) — Intel / Rosetta is not supported
+- **macOS 14** Sonoma or later
+- **8 GB RAM** (16 GB recommended)
+- **~2 GB free disk** for downloaded model weights (Whisper ~1.5 GB,
+  sherpa-onnx ~47 MB)
+- Internet connection on first launch to download model weights; offline
+  afterwards
 
 ## Setup
 
