@@ -273,11 +273,29 @@ struct OpenAIClient: Sendable {
     /// retries at ~0.6s, ~1.2s, ~2.4s.
     var baseRetryDelay: Double = 0.6
 
+    /// Quality / cost tier hint sent to the relay. The backend has full
+    /// authority — it reads the user's persisted `quality_mode` and
+    /// combines it with this hint to pick a deployment. Values are
+    /// validated server-side; unknown strings are silently ignored.
+    enum TaskHint: String, Sendable {
+        /// Structural cut work (transcript-driven first cut, dedup,
+        /// silence trim). Cheap; fine on mini.
+        case firstCut = "first_cut"
+        /// B-roll / overlay / image generation prompts. Benefits from
+        /// the larger model on smart mode.
+        case creative
+        /// Free-form chat assistant / tool-using agent. Pro on smart.
+        case agent
+        /// Mechanical translation of subtitles. Cheap.
+        case translate
+    }
+
     func chatCompletion(
         messages: [ChatMessage],
         tools: [ToolDefinition]? = nil,
         toolChoice: ToolChoice? = nil,
-        temperature: Double = 0.7
+        temperature: Double = 0.7,
+        task: TaskHint? = nil
     ) async throws -> ChatCompletionResponse {
         var lastError: OpenAIClientError?
         for attempt in 0...maxRetries {
@@ -286,7 +304,8 @@ struct OpenAIClient: Sendable {
                     messages: messages,
                     tools: tools,
                     toolChoice: toolChoice,
-                    temperature: temperature
+                    temperature: temperature,
+                    task: task
                 )
             } catch let error as OpenAIClientError {
                 lastError = error
@@ -297,8 +316,6 @@ struct OpenAIClient: Sendable {
                 print("⚠️ OpenAI attempt \(attempt + 1) failed (\(error)); retrying in \(String(format: "%.2fs", delay + jitter))")
                 try? await Task.sleep(nanoseconds: ns)
             } catch {
-                // Non-OpenAI errors (e.g. URL session bubbled up) — wrap
-                // as networkError so they become retryable.
                 let wrapped = OpenAIClientError.networkError(error.localizedDescription)
                 lastError = wrapped
                 guard attempt < maxRetries else { throw wrapped }
@@ -313,7 +330,8 @@ struct OpenAIClient: Sendable {
         messages: [ChatMessage],
         tools: [ToolDefinition]? = nil,
         toolChoice: ToolChoice? = nil,
-        temperature: Double = 0.7
+        temperature: Double = 0.7,
+        task: TaskHint? = nil
     ) async throws -> ChatCompletionResponse {
         let base = configuration.relayBaseURL.hasSuffix("/")
             ? String(configuration.relayBaseURL.dropLast())
@@ -339,6 +357,11 @@ struct OpenAIClient: Sendable {
         case .cuttiCloud:
             // Relay forwards payloads byte-identically to Azure, which
             // picks the deployed model — `model` stays out of the body.
+            // The `task` hint is server-only; relay strips it before
+            // forwarding upstream. Only ever sent to cuttiCloud.
+            if let task {
+                body["task"] = task.rawValue
+            }
             break
         case .custom:
             // Custom OpenAI-compatible servers require `model` in the

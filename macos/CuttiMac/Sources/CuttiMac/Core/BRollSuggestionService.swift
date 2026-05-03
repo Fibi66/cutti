@@ -134,7 +134,8 @@ struct BRollSuggestionService: Sendable {
                 messages: messages,
                 tools: [Self.structureTool],
                 toolChoice: .required(name: "analyze_structure"),
-                temperature: 0.2
+                temperature: 0.2,
+                task: .creative
             )
         } catch {
             print("⚠️ BRollSuggestionService phase-1 failed — \(error)")
@@ -225,7 +226,8 @@ struct BRollSuggestionService: Sendable {
                 messages: messages,
                 tools: [Self.visualsTool],
                 toolChoice: .required(name: "propose_visuals"),
-                temperature: 0.3
+                temperature: 0.3,
+                task: .creative
             )
         } catch {
             print("⚠️ BRollSuggestionService phase-2 section \(sectionIndex) failed — \(error)")

@@ -7890,7 +7890,8 @@ final class MediaCoreViewModel: ObservableObject {
             let response = try await client.chatCompletion(
                 messages: messages,
                 tools: tools,
-                temperature: 0.3
+                temperature: 0.3,
+                task: .agent
             )
             heartbeatCancel()
 

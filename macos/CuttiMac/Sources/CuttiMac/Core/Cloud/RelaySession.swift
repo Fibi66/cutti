@@ -33,6 +33,11 @@ final class RelaySession: ObservableObject {
     }
     @Published private(set) var subscription: Subscription? = nil
     @Published private(set) var credits: Credits? = nil
+    /// Quality / cost tier the user has selected. Mirrors
+    /// `users.quality_mode` on the server. Default `"smart"` so a
+    /// signed-out / freshly-signed-in user shows the right radio
+    /// before the first /v1/me round-trip lands.
+    @Published private(set) var qualityMode: String = "smart"
     @Published private(set) var lastError: String? = nil
     @Published private(set) var isRefreshing: Bool = false
 
@@ -44,11 +49,15 @@ final class RelaySession: ObservableObject {
         let source: String  // "apple" | "stripe" | "email" | "dev"
         let createdAt: Int?
         let emailVerified: Bool?
+        /// Server-authoritative quality_mode. Optional for backward
+        /// compatibility with older /v1/me responses.
+        let qualityMode: String?
 
         enum CodingKeys: String, CodingKey {
             case id, email, source
             case createdAt = "created_at"
             case emailVerified = "email_verified"
+            case qualityMode = "quality_mode"
         }
     }
 
@@ -339,6 +348,7 @@ final class RelaySession: ObservableObject {
             self.user = payload.user
             self.subscription = payload.subscription
             self.credits = payload.credits
+            if let mode = payload.user.qualityMode { self.qualityMode = mode }
             self.lastError = nil
         } catch {
             self.lastError = (error as NSError).localizedDescription
@@ -362,6 +372,35 @@ final class RelaySession: ObservableObject {
         return true
     }
 
+    /// Update the user's quality_mode preference on the server. The
+    /// new value is persisted there (so a fresh device picks it up
+    /// immediately) AND mirrored locally so the picker doesn't snap
+    /// back while the network round-trip is in flight.
+    ///
+    /// On error the local value is reverted to the prior server value.
+    func setQualityMode(_ mode: String) async {
+        guard let token = accessToken else { return }
+        guard ["smart", "high_quality", "economy"].contains(mode) else { return }
+        let previous = qualityMode
+        qualityMode = mode
+        let base = relayBaseURL
+        do {
+            let url = URL(string: "\(base.trimmingTrailingSlash)/v1/me/preferences")!
+            var req = URLRequest(url: url)
+            req.httpMethod = "PUT"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(
+                withJSONObject: ["quality_mode": mode]
+            )
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            try Self.throwIfNotOK(resp: resp, data: data)
+        } catch {
+            qualityMode = previous
+            lastError = (error as NSError).localizedDescription
+        }
+    }
+
     func signOut() {
         accessToken = nil
         lastError = nil
@@ -377,6 +416,7 @@ final class RelaySession: ObservableObject {
         if let credits = payload.credits {
             self.credits = credits
         }
+        if let mode = payload.user.qualityMode { self.qualityMode = mode }
         self.lastError = nil
     }
 

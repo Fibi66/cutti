@@ -52,6 +52,17 @@ struct SettingsView: View {
                     T("AI Provider")
                 }
 
+                // Quality / cost picker. Server-authoritative — the open
+                // source client only PUTs the choice up; routing happens
+                // entirely on the relay.
+                if aiProvider == .cuttiCloud {
+                    Section {
+                        QualityModePickerRow()
+                    } header: {
+                        T("Quality")
+                    }
+                }
+
                 // Subscription / credits only matter when AI calls are
                 // billed through the relay. Custom (BYOK) users pay
                 // their upstream provider directly and the row is

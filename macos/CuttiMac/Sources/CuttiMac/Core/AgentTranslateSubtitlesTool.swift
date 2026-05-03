@@ -299,7 +299,8 @@ actor SubtitleTranslationEngine {
                     messages: messages,
                     tools: nil,
                     toolChoice: nil,
-                    temperature: temperature
+                    temperature: temperature,
+                    task: .translate
                 )
                 guard let content = response.content?
                         .trimmingCharacters(in: .whitespacesAndNewlines),

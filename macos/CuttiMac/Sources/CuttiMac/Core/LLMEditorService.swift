@@ -178,7 +178,8 @@ struct LLMEditorService: Sendable {
             messages: messages,
             tools: [Self.selectSegmentsTool],
             toolChoice: .required(name: "select_segments"),
-            temperature: 0.1
+            temperature: 0.1,
+            task: .firstCut
         )
 
         guard let toolCall = response.toolCalls.first,
@@ -252,7 +253,8 @@ struct LLMEditorService: Sendable {
                 messages: reviewMessages,
                 tools: [Self.selectSegmentsTool],
                 toolChoice: .required(name: "select_segments"),
-                temperature: 0.1
+                temperature: 0.1,
+                task: .firstCut
             )
 
             guard let toolCall = reviewResponse.toolCalls.first,
@@ -454,7 +456,8 @@ struct LLMEditorService: Sendable {
             messages: messages,
             tools: [Self.generateChaptersTool],
             toolChoice: .required(name: "generate_chapters"),
-            temperature: 0.2
+            temperature: 0.2,
+            task: .firstCut
         )
 
         guard let toolCall = response.toolCalls.first,
