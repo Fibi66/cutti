@@ -163,7 +163,7 @@ actor BugReportService {
     ) {
         self.baseURL = URL(string: baseURLString) ?? URL(string: "https://api.cutti.app")!
         self.session = session
-        self.pathPrefix = "/feedback"
+        self.pathPrefix = "/v1/feedback"
     }
 
     /// Submit a report. Throws `BugReportError` on validation failure,

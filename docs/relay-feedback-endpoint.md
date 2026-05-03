@@ -1,7 +1,7 @@
-# Relay `/feedback` endpoint contract
+# Relay `/v1/feedback` endpoint contract
 
 The in-app **Report a Bug** flow (Settings → Support) posts a JSON
-report to the cutti relay (`https://api.cutti.app/feedback`). The
+report to the cutti relay (`https://api.cutti.app/v1/feedback`). The
 relay is responsible for turning that report into a GitHub issue
 in [`Fibi66/cutti`](https://github.com/Fibi66/cutti) and storing
 a copy in its own database for triage.
@@ -16,7 +16,7 @@ This document describes the wire format the relay must accept.
 ## Request
 
 ```
-POST https://api.cutti.app/feedback
+POST https://api.cutti.app/v1/feedback
 Content-Type: application/json
 Authorization: Bearer <session-jwt>     # optional
 User-Agent: cutti/<app-version>
@@ -109,7 +109,7 @@ falls back to a generic "thanks, we got it" message.
 ## Anonymous submissions and abuse
 
 This client is part of an **open-source AGPL** repository. Anyone can
-fork it and call `/feedback` from a modified binary. The relay is the
+fork it and call `/v1/feedback` from a modified binary. The relay is the
 only line of defence against spam, and it MUST treat unauthenticated
 traffic as untrusted:
 
