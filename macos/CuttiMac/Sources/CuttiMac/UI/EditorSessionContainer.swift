@@ -86,6 +86,8 @@ private struct EditorWithBackButton: View {
                     .foregroundStyle(EditorShellStyle.textPrimary)
                     .lineLimit(1)
 
+                AIProviderChip()
+
                 Spacer()
 
                 Button {
