@@ -126,6 +126,47 @@ traffic as untrusted:
 
 These are server-side responsibilities; the client cannot enforce them.
 
+## Authoring identity (GitHub App — required)
+
+The relay needs credentials to call `POST /repos/Fibi66/cutti/issues`.
+Whatever account those credentials belong to becomes the **author of
+the GitHub issue**, regardless of who submitted the bug report. End
+users do **not** need a GitHub account.
+
+**Required approach: a dedicated GitHub App.** Do not use a personal
+access token tied to a maintainer account, and do not use a regular
+"bot" user account with a PAT — both leak unrelated permissions and
+make the maintainer look like the author of every issue.
+
+Setup:
+
+1. On github.com → Settings → Developer settings → **GitHub Apps** →
+   New GitHub App. Name it something clear, e.g. `cutti-feedback`.
+2. Permissions — repository:
+   - **Issues: Read & Write** (required)
+   - everything else: No access
+3. Subscribe to events: none required.
+4. Install the app on **`Fibi66/cutti` only** (not on the whole
+   account / org).
+5. Generate and store a private key in the relay's secret store.
+
+At submission time the relay:
+
+1. Mints a short-lived (≤10 min) JWT signed with the App's private key.
+2. Exchanges it for an installation access token via
+   `POST /app/installations/{installation_id}/access_tokens`.
+3. Calls `POST /repos/Fibi66/cutti/issues` with that token.
+
+Resulting issue author is `cutti-feedback[bot]` — the `[bot]` tag is
+applied automatically by GitHub and makes the source obvious in the
+issue list. Triagers correlate back to the submitter via the
+`Ticket: fb_…` value in the body, looking it up in the relay's
+private DB.
+
+**Do not** put the original submitter's GitHub username, cutti.app
+account ID, or email anywhere in the issue body. The submitter is
+deliberately anonymous to the public issue.
+
 ## GitHub issue layout (server-side recommendation)
 
 When the relay opens a public issue, suggested format:
