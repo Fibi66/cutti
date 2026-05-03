@@ -24,6 +24,12 @@ struct BRollSuggestionStrip: View {
     /// Nil ⇒ the Generate button stays disabled (fallback UX when no
     /// overlay renderer is wired, e.g. unit tests).
     var onGenerate: ((TimelineCreativeActions.BRollSuggestionHint, String) -> Void)? = nil
+    /// When false, animation-kind suggestions (`.animation` / `.other`,
+    /// which route through the cloud Remotion renderer) are dropped
+    /// from the rendered strip entirely. BYOK users see only `.image`-
+    /// family hints they can actually fulfill via their own image API.
+    /// Defaults to true so existing call sites and tests keep behavior.
+    var animationGenerationAvailable: Bool = true
 
     /// Track which bubble is currently showing its popover. Only one at
     /// a time so the strip doesn't turn into a popover storm if the
@@ -47,12 +53,39 @@ struct BRollSuggestionStrip: View {
             Color.clear.frame(width: width, height: BRollSuggestionStrip.stripHeight)
 
             if totalDuration > 0 {
-                ForEach(suggestions) { hint in
+                ForEach(visibleSuggestions) { hint in
                     bubble(for: hint)
                 }
             }
         }
         .frame(width: width, height: BRollSuggestionStrip.stripHeight, alignment: .topLeading)
+    }
+
+    /// Filters out animation-kind hints when the cloud animation
+    /// pipeline is unavailable (BYOK). Image-family hints still show
+    /// because BYOK users CAN run image generation through their own
+    /// API. Exposed `internal` so tests can pin the behavior without
+    /// SwiftUI rendering.
+    var visibleSuggestions: [TimelineCreativeActions.BRollSuggestionHint] {
+        Self.filterSuggestions(
+            suggestions,
+            animationGenerationAvailable: animationGenerationAvailable
+        )
+    }
+
+    static func filterSuggestions(
+        _ suggestions: [TimelineCreativeActions.BRollSuggestionHint],
+        animationGenerationAvailable: Bool
+    ) -> [TimelineCreativeActions.BRollSuggestionHint] {
+        guard !animationGenerationAvailable else { return suggestions }
+        return suggestions.filter { hint in
+            switch hint.kind {
+            case .image, .chart, .mapGraphic, .dataTable, .screenRecording:
+                return true
+            case .animation, .other:
+                return false
+            }
+        }
     }
 
     static let stripHeight: CGFloat = 18

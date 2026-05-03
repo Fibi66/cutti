@@ -3018,6 +3018,15 @@ final class MediaCoreViewModel: ObservableObject {
         durationSeconds: Double,
         at composedTime: Double
     ) async -> Error? {
+        // Belt-and-suspenders BYOK gate. `makeOverlayCache()` already
+        // catches this, but failing fast at the entry point avoids any
+        // chance of partial work (banner flashing twice, half-built
+        // OverlayRenderSpec, etc.) and keeps every animation entry
+        // point obviously gated when grepping for "BYOK".
+        if CuttiSettings.aiProvider() == .custom {
+            bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
+            return NSError(domain: "Cutti.Overlay", code: -2, userInfo: [NSLocalizedDescriptionKey: "Animation rendering is unavailable in BYOK mode."])
+        }
         guard let cache = makeOverlayCache() else {
             return NSError(domain: "Cutti.Overlay", code: -1, userInfo: [NSLocalizedDescriptionKey: "Overlay cache unavailable."])
         }
@@ -3068,6 +3077,11 @@ final class MediaCoreViewModel: ObservableObject {
         segmentID: UUID,
         propsPatch: [String: Any]
     ) async {
+        // Belt-and-suspenders BYOK gate (see generateOverlay).
+        if CuttiSettings.aiProvider() == .custom {
+            bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
+            return
+        }
         guard let cache = makeOverlayCache() else { return }
         guard let (trackIdx, segIdx) = findOverlaySegmentLocation(segmentID: segmentID),
               let currentSpec = project.tracks[trackIdx].segments[segIdx].overlaySpec else {
@@ -5133,6 +5147,24 @@ final class MediaCoreViewModel: ObservableObject {
         _ hint: TimelineCreativeActions.BRollSuggestionHint,
         editedPrompt: String? = nil
     ) {
+        // BYOK gate. Without this, an animation hint that somehow
+        // survives the strip-level filter (older serialized hint, race
+        // between settings change and UI refresh, hand-typed tool call,
+        // etc.) would still scaffold a long agent prompt and burn a
+        // chat turn before the runtime gate rejects the resulting
+        // generate_overlay tool call.
+        if CuttiSettings.aiProvider() == .custom {
+            switch hint.kind {
+            case .image, .chart, .mapGraphic, .dataTable, .screenRecording:
+                // Image generation still works in BYOK (uses the user's
+                // own image API). Fall through to the normal path.
+                break
+            case .animation, .other:
+                bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
+                return
+            }
+        }
+
         let rawPrompt = (editedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
             ?? hint.prompt
 
@@ -7546,6 +7578,34 @@ final class MediaCoreViewModel: ObservableObject {
         let restoreCheckpoints = availableRestoreCheckpoints(limit: 12)
         let restoreCheckpointSummary = restoreCheckpointContext(limit: 12)
 
+        // BYOK users opted out of the Cutti Cloud subscription stack,
+        // including the cloud Remotion renderer and the proprietary
+        // animation skill pack. Strip the animation-related tool
+        // descriptions so the LLM doesn't suggest, plan, or even know
+        // about features the user can't invoke. The hard runtime gates
+        // (`makeOverlayCache`, `executeAgentToolCall` provider check)
+        // catch malicious / fabricated calls; this prompt edit just
+        // keeps the well-behaved path quiet.
+        let animationToolBullets: String
+        if CuttiSettings.aiProvider() == .custom {
+            animationToolBullets = ""
+        } else {
+            animationToolBullets = """
+
+        - generate_overlay: 渲染 Remotion 模板（章节标题卡等动画 overlay）并落到 overlay 轨。用于做"章节标题/小节卡片"这类动效，不是用来插已导入的视频素材。\(RemotionOverlayCatalog.systemPromptDescription)
+        - update_overlay_props: 修改已存在 AI overlay 的 props（比如改标题文字、换主题色）。只改动 props，segment 的 id / 位置 / 时长都保持不变。需要 segment_id（overlay segment 的 UUID）和 props_patch（JSON 对象，与现有 props 合并）。
+        """
+        }
+        let animationSkillBullet: String
+        if CuttiSettings.aiProvider() == .custom {
+            animationSkillBullet = ""
+        } else {
+            animationSkillBullet = """
+
+        - list_animation_rules / read_animation_rule: 内部 Remotion 动画 skill。先 list 拿目录（rules / style-guide / templates / plugins / workflow），再 read 你需要的那一篇。常用入口：`rules/cutti-staging`（入场/hold/出场节奏、stagger、parallax）、`rules/cutti-templates`（house style + 模板路由表）、`rules/cutti-constraints`（Remotion 硬约束、calculateMetadata clamp）、`rules/cutti-fonts`（字体目录）、`rules/cutti-checklist`（合并前自检），通用条目：`rules/animations`、`rules/measuring-text`、`rules/transparent-videos` 等。**用户直接问"show me the animation guide / 动画方法论 / 你是怎么做动画的 / 哪种模板合适 / 怎么安排节奏"等**：先 list_animation_rules，再 read 对应条目把内容拿回来再回答。**自己做决策时**（选模板、算 item atSeconds、拿不准 house style）：read 相关条目作为参考，再产出 generate_overlay。不需要用户确认。
+        """
+        }
+
         let systemPrompt = """
         你是一个AI视频剪辑助手。你必须把用户的自然语言编辑指令翻译成结构化 timeline 动作，或者在需要时恢复之前的 checkpoint。你可以多步调用工具——先用查询工具收集信息，再用 edit_timeline 提交修改。
 
@@ -7565,10 +7625,8 @@ final class MediaCoreViewModel: ObservableObject {
         ## 可用工具
         - edit_timeline: 改时间轴或字幕（详见 schema）
         - restore_checkpoint: 恢复历史快照
-        - insert_broll: 在主轨上叠加 B-roll / 空镜（需要已导入素材的 media_id）
-        - generate_overlay: 渲染 Remotion 模板（章节标题卡等动画 overlay）并落到 overlay 轨。用于做"章节标题/小节卡片"这类动效，不是用来插已导入的视频素材。\(RemotionOverlayCatalog.systemPromptDescription)
+        - insert_broll: 在主轨上叠加 B-roll / 空镜（需要已导入素材的 media_id）\(animationToolBullets)
         - generate_image: 用 FLUX 文生图生成一张静态图（JPG/PNG）。用户描述想要"一张 XX 图 / 一张照片 / 一张插画 / 背景图"时用这个工具；不要用来做动态标题卡（那是 generate_overlay）。如果用户只说"生成一张图"但没告诉你画什么，应该先用普通回复问清楚再调；prompt 参数传英文详细描述。可选参数 composed_time：给了就把图当 4 秒 overlay 插到那个位置，不给就只放进 Media Browser 让用户自己拖。
-        - update_overlay_props: 修改已存在 AI overlay 的 props（比如改标题文字、换主题色）。只改动 props，segment 的 id / 位置 / 时长都保持不变。需要 segment_id（overlay segment 的 UUID）和 props_patch（JSON 对象，与现有 props 合并）。
         - insert_crossfade: 给两段相邻 segment 加交叉淡入淡出（from_segment_id, to_segment_id, duration）
         - find_filler_words: 找填充词（uh / 嗯 / 啊 等），返回每条 cue 的 composed-time
         - find_by_transcript: 按字幕文本子串搜索
@@ -7586,8 +7644,7 @@ final class MediaCoreViewModel: ObservableObject {
         - mute_speaker: 把某个 speaker 主导的 segment 静音（或走确认后删除）
         - suggest_title: 产出 3 个候选标题（不会修改项目）
         - suggest_chapters: 产出 N 个章节点（不会修改项目）
-        - run_first_cut: 跑完整 AI 第一刀流水线（转写 → 镜头/音频分析 → 4 趟 LLM 清理），自动删静音/重复/半截话。慢（转写为主）。会推一个 checkpoint，所以可以 restore 回来。
-        - list_animation_rules / read_animation_rule: 内部 Remotion 动画 skill。先 list 拿目录（rules / style-guide / templates / plugins / workflow），再 read 你需要的那一篇。常用入口：`rules/cutti-staging`（入场/hold/出场节奏、stagger、parallax）、`rules/cutti-templates`（house style + 模板路由表）、`rules/cutti-constraints`（Remotion 硬约束、calculateMetadata clamp）、`rules/cutti-fonts`（字体目录）、`rules/cutti-checklist`（合并前自检），通用条目：`rules/animations`、`rules/measuring-text`、`rules/transparent-videos` 等。**用户直接问"show me the animation guide / 动画方法论 / 你是怎么做动画的 / 哪种模板合适 / 怎么安排节奏"等**：先 list_animation_rules，再 read 对应条目把内容拿回来再回答。**自己做决策时**（选模板、算 item atSeconds、拿不准 house style）：read 相关条目作为参考，再产出 generate_overlay。不需要用户确认。
+        - run_first_cut: 跑完整 AI 第一刀流水线（转写 → 镜头/音频分析 → 4 趟 LLM 清理），自动删静音/重复/半截话。慢（转写为主）。会推一个 checkpoint，所以可以 restore 回来。\(animationSkillBullet)
 
         ## 规则
         - 默认所有时间都指"最终成片时间线"，不是源视频时间。
@@ -7738,38 +7795,7 @@ final class MediaCoreViewModel: ObservableObject {
             var messages: [ChatMessage] = [.system(narratedSystemPrompt)]
             messages.append(contentsOf: recentHistory)
 
-            let tools = [
-                AIAction.editTimelineToolDefinition,
-                RestoreCheckpointRequest.toolDefinition,
-                InsertBRollRequest.toolDefinition,
-                GenerateOverlayRequest.toolDefinition,
-                AnimationSkill.listToolDefinition,
-                AnimationSkill.readToolDefinition,
-                UpdateOverlayPropsRequest.toolDefinition,
-                GenerateImageRequest.toolDefinition,
-                CreativeAction.insertCrossfadeToolDefinition,
-                AgentQuery.findFillerWordsTool,
-                AgentQuery.findByTranscriptTool,
-                AgentQuery.getTimelineSummaryTool,
-                AgentQuery.getSegmentDetailTool,
-                VisualAgentQuery.findBlackFramesTool,
-                VisualAgentQuery.findEmptyFramesTool,
-                VisualAgentQuery.findSceneChangesTool,
-                VisualAgentQuery.autoPiPTool,
-                SetSegmentVolumeRequest.toolDefinition,
-                AudioDuckingRequest.toolDefinition,
-                NormalizeLoudnessRequest.toolDefinition,
-                GetFrameAtRequest.toolDefinition,
-                DetectSpeakersRequest.toolDefinition,
-                FindBySpeakerRequest.toolDefinition,
-                MuteSpeakerRequest.toolDefinition,
-                TranslateSubtitlesRequest.toolDefinition,
-                EmphasizeWordsRequest.toolDefinition,
-                SuggestTitleRequest.toolDefinition,
-                SuggestChaptersRequest.toolDefinition,
-                SuggestBRollRequest.toolDefinition,
-                RunFirstCutRequest.toolDefinition
-            ]
+            let tools = Self.agentToolDefinitions(for: CuttiSettings.aiProvider())
 
             try await runAgentLoop(
                 client: client,
@@ -8627,6 +8653,62 @@ final class MediaCoreViewModel: ObservableObject {
         return out
     }
 
+    /// Build the tool catalog the agent loop sends to the LLM. Filters
+    /// out animation/overlay tools when the user is on BYOK so the LLM
+    /// (a) doesn't see, (b) can't legitimately invoke, the cloud-only
+    /// animation pipeline. The runtime gate in `executeAgentToolCall`
+    /// also rejects fabricated tool calls for these names — see
+    /// `byokBlockedToolNames` and the rubber-duck note about malicious
+    /// BYOK providers returning hidden tool calls.
+    static func agentToolDefinitions(for provider: AIProviderPreference) -> [ToolDefinition] {
+        var tools: [ToolDefinition] = [
+            AIAction.editTimelineToolDefinition,
+            RestoreCheckpointRequest.toolDefinition,
+            InsertBRollRequest.toolDefinition,
+            GenerateOverlayRequest.toolDefinition,
+            AnimationSkill.listToolDefinition,
+            AnimationSkill.readToolDefinition,
+            UpdateOverlayPropsRequest.toolDefinition,
+            GenerateImageRequest.toolDefinition,
+            CreativeAction.insertCrossfadeToolDefinition,
+            AgentQuery.findFillerWordsTool,
+            AgentQuery.findByTranscriptTool,
+            AgentQuery.getTimelineSummaryTool,
+            AgentQuery.getSegmentDetailTool,
+            VisualAgentQuery.findBlackFramesTool,
+            VisualAgentQuery.findEmptyFramesTool,
+            VisualAgentQuery.findSceneChangesTool,
+            VisualAgentQuery.autoPiPTool,
+            SetSegmentVolumeRequest.toolDefinition,
+            AudioDuckingRequest.toolDefinition,
+            NormalizeLoudnessRequest.toolDefinition,
+            GetFrameAtRequest.toolDefinition,
+            DetectSpeakersRequest.toolDefinition,
+            FindBySpeakerRequest.toolDefinition,
+            MuteSpeakerRequest.toolDefinition,
+            TranslateSubtitlesRequest.toolDefinition,
+            EmphasizeWordsRequest.toolDefinition,
+            SuggestTitleRequest.toolDefinition,
+            SuggestChaptersRequest.toolDefinition,
+            SuggestBRollRequest.toolDefinition,
+            RunFirstCutRequest.toolDefinition
+        ]
+        if provider == .custom {
+            tools.removeAll { Self.byokBlockedToolNames.contains($0.function.name) }
+        }
+        return tools
+    }
+
+    /// Tool names that BYOK users cannot invoke. Source of truth for
+    /// both the tools-catalog filter and the runtime authorization
+    /// check in `executeAgentToolCall`.
+    static let byokBlockedToolNames: Set<String> = [
+        "generate_overlay",
+        "update_overlay_props",
+        "list_animation_rules",
+        "read_animation_rule"
+    ]
+
     /// Execute a single LLM-issued tool call. Mutating tools (edit_timeline,
     /// restore_checkpoint) apply immediately; query tools return data for the
     /// LLM to read on the next step.
@@ -8646,6 +8728,25 @@ final class MediaCoreViewModel: ObservableObject {
             return raw.count <= 240 ? raw : String(raw.prefix(240)) + "…"
         }()
         print("🤖 [agent.tool] name=\(toolCall.function.name) args=\(argsPreview)")
+
+        // Runtime authorization for BYOK. Even though the tools catalog
+        // we send up-front already excludes animation tools when the
+        // user is on `.custom`, a malicious or sloppy BYOK provider can
+        // still return fabricated `tool_calls` for them. Reject early
+        // before we touch any animation skill content (which would leak
+        // proprietary markdown to the BYOK endpoint via the next-turn
+        // tool result) or hit `makeOverlayCache` (already gated, but
+        // belt-and-suspenders).
+        if CuttiSettings.aiProvider() == .custom,
+           Self.byokBlockedToolNames.contains(toolCall.function.name) {
+            let banner = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
+            bannerMessage = banner
+            return AgentToolOutcome(
+                resultJSON: AgentToolJSON.encodeError("animation_unavailable_in_byok"),
+                userSummary: banner,
+                checkpointID: nil
+            )
+        }
 
         switch toolCall.function.name {
         case "edit_timeline":

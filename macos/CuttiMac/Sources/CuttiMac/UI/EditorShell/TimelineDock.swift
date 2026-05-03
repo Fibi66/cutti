@@ -847,7 +847,8 @@ struct TimelineDock: View {
                                         width: contentWidth,
                                         totalDuration: composedDuration,
                                         onDismiss: creativeActions.onDismissBRollSuggestion,
-                                        onGenerate: creativeActions.onGenerateBRollSuggestion
+                                        onGenerate: creativeActions.onGenerateBRollSuggestion,
+                                        animationGenerationAvailable: CuttiSettings.aiProvider() != .custom
                                     )
                                     .frame(height: BRollSuggestionStrip.stripHeight)
                                 }

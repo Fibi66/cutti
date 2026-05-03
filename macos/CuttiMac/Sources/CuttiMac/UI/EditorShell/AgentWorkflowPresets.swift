@@ -311,4 +311,28 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             (g, all.filter { $0.group == g })
         }
     }
+
+    /// Preset ids that depend on the cloud animation pipeline. Hidden
+    /// from BYOK users since the underlying tools (`generate_overlay`,
+    /// the proprietary Remotion skill) are unavailable when on a
+    /// custom AI provider. Image-generation presets stay visible —
+    /// BYOK does support image generation through the user's own API.
+    static let cloudOnlyPresetIDs: Set<String> = [
+        "gen.overlayTitles"
+    ]
+
+    /// Returns the catalog filtered for the given AI provider. BYOK
+    /// (`.custom`) callers should use this instead of `.all` so that
+    /// animation-only presets don't appear in the workflow menu.
+    static func available(for provider: AIProviderPreference) -> [AgentWorkflowPreset] {
+        guard provider == .custom else { return all }
+        return all.filter { !cloudOnlyPresetIDs.contains($0.id) }
+    }
+
+    static func byGroup(for provider: AIProviderPreference) -> [(Group, [AgentWorkflowPreset])] {
+        let visible = available(for: provider)
+        return Group.allCases.map { g in
+            (g, visible.filter { $0.group == g })
+        }
+    }
 }

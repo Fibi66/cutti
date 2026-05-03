@@ -94,7 +94,7 @@ struct WorkflowPresetButton: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(AgentWorkflowPreset.byGroup()), id: \.0) { group, presets in
+                    ForEach(Array(AgentWorkflowPreset.byGroup(for: CuttiSettings.aiProvider())), id: \.0) { group, presets in
                         let filtered = presets.filter { matches($0, q: filter) }
                         if !filtered.isEmpty {
                             sectionHeader(L(group.rawValue))
@@ -131,7 +131,8 @@ struct WorkflowPresetButton: View {
     }
 
     private var allEmpty: Bool {
-        AgentWorkflowPreset.all.allSatisfy { !matches($0, q: filter) }
+        AgentWorkflowPreset.available(for: CuttiSettings.aiProvider())
+            .allSatisfy { !matches($0, q: filter) }
     }
 
     private func matches(_ p: AgentWorkflowPreset, q: String) -> Bool {
