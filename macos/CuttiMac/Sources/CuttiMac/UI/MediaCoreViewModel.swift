@@ -3155,16 +3155,20 @@ final class MediaCoreViewModel: ObservableObject {
         durationSeconds: Double,
         at composedTime: Double
     ) async -> Error? {
+        let provider = CuttiSettings.aiProvider()
+        print("🎬 [overlay] generateOverlay start template=\(templateID) duration=\(durationSeconds)s composedTime=\(composedTime)s aiProvider=\(provider)")
         // Belt-and-suspenders BYOK gate. `makeOverlayCache()` already
         // catches this, but failing fast at the entry point avoids any
         // chance of partial work (banner flashing twice, half-built
         // OverlayRenderSpec, etc.) and keeps every animation entry
         // point obviously gated when grepping for "BYOK".
-        if CuttiSettings.aiProvider() == .custom {
+        if provider == .custom {
+            print("🎬 [overlay] BYOK gate hit (aiProvider == .custom) — bailing BEFORE touching renderer")
             bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
             return NSError(domain: "Cutti.Overlay", code: -2, userInfo: [NSLocalizedDescriptionKey: "Animation rendering is unavailable in BYOK mode."])
         }
         guard let cache = makeOverlayCache() else {
+            print("🎬 [overlay] makeOverlayCache returned nil — bailing (no HTTP will fire)")
             return NSError(domain: "Cutti.Overlay", code: -1, userInfo: [NSLocalizedDescriptionKey: "Overlay cache unavailable."])
         }
 
@@ -3187,7 +3191,9 @@ final class MediaCoreViewModel: ObservableObject {
         let mediaID: UUID
         do {
             mediaID = try await cache.resolveMediaID(for: spec)
+            print("🎬 [overlay] resolveMediaID succeeded mediaID=\(mediaID) cacheKey=\(spec.cacheKey)")
         } catch {
+            print("🎬 [overlay] resolveMediaID THREW: \(error)")
             return error
         }
 
@@ -3201,6 +3207,7 @@ final class MediaCoreViewModel: ObservableObject {
             at: composedTime
         )
         bannerMessage = nil
+        print("🎬 [overlay] generateOverlay done template=\(templateID) composedTime=\(composedTime)s")
         return nil
     }
 
@@ -3370,23 +3377,31 @@ final class MediaCoreViewModel: ObservableObject {
         // existing AI-provider Settings copy keeps the warning
         // consistent across the UI.
         if CuttiSettings.aiProvider() == .custom {
+            print("🎬 [overlay] makeOverlayCache: BYOK mode (aiProvider=.custom) — returning nil + clearing memoized cache")
             _overlayRenderCache = nil
             bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
             return nil
         }
-        if let existing = _overlayRenderCache { return existing }
+        if let existing = _overlayRenderCache {
+            print("🎬 [overlay] makeOverlayCache: returning memoized cache")
+            return existing
+        }
         guard let overlayRenderer else {
+            print("🎬 [overlay] makeOverlayCache: overlayRenderer is nil → \"Animation generation is not configured.\"")
             bannerMessage = L("Animation generation is not configured.")
             return nil
         }
         guard let mediaCore else {
+            print("🎬 [overlay] makeOverlayCache: mediaCore is nil")
             bannerMessage = L("MediaCore is not configured.")
             return nil
         }
         guard let projectRoot else {
+            print("🎬 [overlay] makeOverlayCache: projectRoot is nil")
             bannerMessage = L("Project root is not configured.")
             return nil
         }
+        print("🎬 [overlay] makeOverlayCache: built fresh cache (renderer=\(type(of: overlayRenderer)) projectRoot=\(projectRoot.path))")
         let cache = OverlayRenderCache(
             renderer: overlayRenderer,
             projectRoot: projectRoot,
@@ -3406,9 +3421,11 @@ final class MediaCoreViewModel: ObservableObject {
         at composedTime: Double
     ) {
         guard records.contains(where: { $0.id == mediaID }) else {
+            print("🎬 [overlay] insertOverlaySegment: mediaID=\(mediaID) NOT in records (\(records.count) records loaded) — bailing with 'media not found'. Likely a stale cache entry.")
             bannerMessage = L("Animation media not found after import.")
             return
         }
+        print("🎬 [overlay] insertOverlaySegment: appending V\(project.tracks.filter { $0.kind == .overlay }.count + 2) overlay track @ composedTime=\(composedTime)s mediaID=\(mediaID)")
         let duration = spec.durationSeconds
         let segment = TimelineSegment(
             id: UUID(),
@@ -9215,6 +9232,7 @@ final class MediaCoreViewModel: ObservableObject {
 
         case "generate_overlay":
             guard let request = GenerateOverlayRequest.parse(from: args) else {
+                print("🎬 [overlay] dispatch: PARSE FAILED — generate_overlay args malformed")
                 return AgentToolOutcome(
                     resultJSON: AgentToolJSON.encodeError("Invalid generate_overlay arguments. Need template_id (string), props_json (JSON string matching the template schema), composed_time (number). Optional: duration_seconds."),
                     userSummary: "⚠️ Invalid generate_overlay arguments",
@@ -9222,6 +9240,7 @@ final class MediaCoreViewModel: ObservableObject {
                 )
             }
             guard RemotionOverlayCatalog.supportedTemplateIDs.contains(request.templateID) else {
+                print("🎬 [overlay] dispatch: UNKNOWN TEMPLATE \(request.templateID) — supported: \(RemotionOverlayCatalog.supportedTemplateIDs.joined(separator: ","))")
                 return AgentToolOutcome(
                     resultJSON: AgentToolJSON.encodeError("Unknown template_id '\(request.templateID)'. Supported: \(RemotionOverlayCatalog.supportedTemplateIDs.joined(separator: ", "))."),
                     userSummary: "⚠️ Unknown overlay template \(request.templateID)",
@@ -9238,6 +9257,7 @@ final class MediaCoreViewModel: ObservableObject {
                 let overlayStart = request.composedTime
                 let overlayEnd = request.composedTime + request.durationSeconds
                 if !overlayScope.containsComposedRange(start: overlayStart, end: overlayEnd) {
+                    print("🎬 [overlay] dispatch: SCOPE REJECT \(overlayStart)s..\(overlayEnd)s not in attached scope")
                     return AgentToolOutcome(
                         resultJSON: AgentToolJSON.encodeError(
                             "composed_time \(String(format: "%.2f", overlayStart))s + duration \(String(format: "%.2f", request.durationSeconds))s falls outside the attached scope. Only composed times inside the attached segments' composed ranges are allowed. Virtual timeline length is \(String(format: "%.2f", overlayScope.virtualDuration))s — translate the virtual time to composed using the mapping in the system prompt and try again."

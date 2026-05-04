@@ -127,6 +127,7 @@ struct AppleSiliconPhaseOneStack {
         // honest answer for BYOK — the caller will show the
         // "Cutti Cloud only" banner.
         if aiProvider() == .custom {
+            print("🎬 [overlay] makeDefaultOverlayRenderer: aiProvider=.custom → nil (BYOK has no overlay renderer)")
             return nil
         }
         let url = URL(string: RelayClient.relayBaseURL)!
@@ -141,8 +142,10 @@ struct AppleSiliconPhaseOneStack {
             token = ""
         }
         if !token.isEmpty {
+            print("🎬 [overlay] makeDefaultOverlayRenderer: CloudRemotionRenderer relay=\(url.absoluteString) tokenKind=\(jwt.isEmpty ? "dev" : "jwt")")
             return CloudRemotionRenderer(relayBaseURL: url, bearerToken: token)
         }
+        print("🎬 [overlay] makeDefaultOverlayRenderer: NO token (jwt empty, dev empty) → falling back to LocalRemotionRenderer (only works in dev `swift run`, not packaged .app)")
         return LocalRemotionRenderer(
             projectDirectory: LocalRemotionRenderer.defaultProjectDirectory()
         )

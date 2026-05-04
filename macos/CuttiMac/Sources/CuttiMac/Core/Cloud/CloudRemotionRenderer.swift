@@ -49,6 +49,7 @@ struct CloudRemotionRenderer: RemotionOverlayRendering {
 
     func render(_ request: RemotionRenderRequest, outputURL: URL) async throws {
         let endpoint = relayBaseURL.appendingPathComponent("v1/render/overlay")
+        print("🎬 [overlay] CloudRemotionRenderer POST \(endpoint.absoluteString) template=\(request.templateID) duration=\(request.durationSeconds)s \(request.width)x\(request.height)@\(request.fps)fps tokenPrefix=\(bearerToken.prefix(4))")
         // The relay is a synchronous proxy: it waits for the Azure
         // Container App to run `remotion render` + upload to blob
         // before responding. A 6–15s ProRes 4444 @ 1080×1920 can
@@ -93,9 +94,12 @@ struct CloudRemotionRenderer: RemotionOverlayRendering {
 
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {
+            print("🎬 [overlay] CloudRemotionRenderer: non-HTTP response")
             throw RemotionRenderError.launchFailed("Invalid response from relay (not HTTP).")
         }
+        print("🎬 [overlay] CloudRemotionRenderer response status=\(http.statusCode) bytes=\(data.count)")
         guard (200..<300).contains(http.statusCode) else {
+            print("🎬 [overlay] CloudRemotionRenderer error body (≤512B): \(String(data: data.prefix(512), encoding: .utf8) ?? "<binary>")")
             // Map the relay's typed error envelope (quota_exceeded /
             // email_not_verified / unauthorized) to a friendly localized
             // message. We DELIBERATELY never embed the raw response body

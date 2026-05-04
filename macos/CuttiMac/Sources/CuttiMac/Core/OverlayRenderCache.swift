@@ -46,6 +46,7 @@ actor OverlayRenderCache {
             // Trust-but-don't-verify: if the mov file is gone the next
             // export will re-render. We still consider the mediaID
             // stable for UI continuity.
+            print("🎬 [overlay] OverlayRenderCache: index HIT cacheKey=\(spec.cacheKey) → mediaID=\(cached) (no render call, no HTTP)")
             return cached
         }
         let outputURL = movURL(for: spec)
@@ -55,6 +56,7 @@ actor OverlayRenderCache {
             withIntermediateDirectories: true
         )
         if !fm.fileExists(atPath: outputURL.path) {
+            print("🎬 [overlay] OverlayRenderCache: index MISS + mov absent — calling renderer.render() for cacheKey=\(spec.cacheKey)")
             let request = RemotionRenderRequest(
                 templateID: spec.templateID,
                 propsJSON: spec.propsJSON,
@@ -64,8 +66,12 @@ actor OverlayRenderCache {
                 fps: spec.fps
             )
             try await renderer.render(request, outputURL: outputURL)
+            print("🎬 [overlay] OverlayRenderCache: renderer.render() returned, mov on disk \((try? fm.attributesOfItem(atPath: outputURL.path)[.size]) ?? 0) bytes")
+        } else {
+            print("🎬 [overlay] OverlayRenderCache: index MISS but mov already on disk at \(outputURL.path) — importing existing file (no HTTP)")
         }
         let mediaID = try await mediaCore.importLocalVideo(url: outputURL)
+        print("🎬 [overlay] OverlayRenderCache: imported into MediaCore mediaID=\(mediaID)")
         index[spec.cacheKey] = mediaID
         try persistIndex()
         return mediaID
