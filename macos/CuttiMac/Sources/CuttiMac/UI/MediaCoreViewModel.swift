@@ -810,6 +810,28 @@ final class MediaCoreViewModel: ObservableObject {
         records.first { $0.id == selectedRecordID }
     }
 
+    /// Returns the list of video records currently placed on the V1
+    /// timeline, **deduplicated by source video ID and ordered by
+    /// first occurrence on the timeline**. Image placements and
+    /// orphaned slots (whose source no longer exists in the library)
+    /// are skipped.
+    ///
+    /// This is the canonical "what does first-cut see?" set — the
+    /// timeline drives the cut, never the media library. A clip that
+    /// the user dragged off the timeline (or never dragged on) does
+    /// not appear here even if it's still in the library.
+    var videoRecordsOnTimeline: [MediaAssetRecord] {
+        var seen: Set<UUID> = []
+        var out: [MediaAssetRecord] = []
+        for slot in timelineSegments {
+            if !seen.insert(slot.sourceVideoID).inserted { continue }
+            guard let record = records.first(where: { $0.id == slot.sourceVideoID }) else { continue }
+            guard record.kind == .video else { continue }
+            out.append(record)
+        }
+        return out
+    }
+
     var selectedRecordMessage: String? {
         guard let record = selectedRecord else { return nil }
         guard record.status == .ready, record.derived.proxyRelativePath != nil else {
@@ -1016,47 +1038,68 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
-    /// Build timeline segments from all analyzed records' keptRanges.
+    /// Rebuild the V1 timeline, **preserving the user's clip ordering**.
+    ///
+    /// The timeline is the source of truth for "what's in the final
+    /// video and in what order" — never the media library. So this
+    /// function walks the *existing* timeline slot-by-slot and decides
+    /// per slot:
+    ///
+    /// - If the slot's source record now has analyzed `keptRanges`,
+    ///   replace that slot with one segment per kept range.
+    /// - Otherwise, keep the slot verbatim (untouched placeholder, or a
+    ///   manual edit). This is what lets imports auto-append a
+    ///   full-length placeholder on the timeline without it getting
+    ///   wiped on the next `select()` / `loadRecords()`.
+    /// - Records that exist in the library but are NOT on the timeline
+    ///   contribute nothing — they were either never dragged in or were
+    ///   deliberately deleted from the timeline.
+    ///
+    /// Duplicate placements of the same source survive: each slot
+    /// expands independently. After analysis that means the same kept
+    /// ranges appear once per placement, which is the documented v1
+    /// behavior for "user dragged the same clip in twice".
+    ///
+    /// Fallback: if `timelineSegments` is empty (legacy projects
+    /// loaded for the first time after this change shipped, or projects
+    /// whose persisted timeline hasn't been replayed yet) we fall back
+    /// to the old "iterate `records` and emit every record's
+    /// `keptRanges`" behavior so existing analyzed projects still come
+    /// up with a populated timeline on first load.
     private func rebuildTimelineSegments() {
-        // Collect segments from all records that have keptRanges
+        let preExisting = timelineSegments
+
         var allSegments: [TimelineSegment] = []
 
-        for record in records {
-            guard let keptRanges = record.copilot?.keptRanges, !keptRanges.isEmpty else { continue }
-
-            let texts: [String]
-            if let keptTexts = record.copilot?.keptTexts, keptTexts.count == keptRanges.count {
-                texts = keptTexts
-            } else {
-                texts = Self.parseKeptTextsFromLog(record.copilot?.editLog, rangeCount: keptRanges.count)
-            }
-
-            let transcript = record.copilot?.transcript
-            let wordTranscript = record.copilot?.wordTranscript
-            let alternatesPerRange = record.copilot?.keptAlternativesPerRange
-
-            for (index, range) in keptRanges.enumerated() {
-                let text = texts[safe: index] ?? ""
-                let subs = Self.buildSubtitleEntries(
-                    for: range,
-                    from: transcript,
-                    wordTranscript: wordTranscript
-                )
-                // Stamp record.id onto each alternate so swap-in works
-                // even when upstream transcript segments didn't carry
-                // a sourceVideoID.
-                var alternates = alternatesPerRange?[safe: index] ?? []
-                for i in alternates.indices {
-                    alternates[i].sourceVideoID = record.id
+        if !preExisting.isEmpty {
+            for slot in preExisting {
+                guard let record = records.first(where: { $0.id == slot.sourceVideoID }) else {
+                    // Source record is gone (deleted from library while
+                    // still on timeline) — drop the slot to keep the
+                    // composition consistent.
+                    continue
                 }
-                allSegments.append(TimelineSegment(
-                    id: UUID(),
-                    sourceVideoID: record.id,
-                    range: range,
-                    text: text,
-                    subtitles: subs,
-                    alternatives: alternates
-                ))
+
+                if let kept = record.copilot?.keptRanges, !kept.isEmpty {
+                    let expanded = Self.expandRecordIntoSegments(
+                        record: record,
+                        keptRanges: kept,
+                        template: slot
+                    )
+                    allSegments.append(contentsOf: expanded)
+                } else {
+                    // Untouched placeholder or manual edit — keep as-is.
+                    allSegments.append(slot)
+                }
+            }
+        } else {
+            // Legacy fallback: no timeline yet → emit kept ranges from
+            // every analyzed record in `records` order. Matches the
+            // behavior shipped before timeline-driven first cut.
+            for record in records {
+                guard let kept = record.copilot?.keptRanges, !kept.isEmpty else { continue }
+                let expanded = Self.expandRecordIntoSegments(record: record, keptRanges: kept)
+                allSegments.append(contentsOf: expanded)
             }
         }
 
@@ -1072,6 +1115,73 @@ final class MediaCoreViewModel: ObservableObject {
         }
 
         rebuildComposedSubtitles()
+    }
+
+    /// Build timeline segments for a single record's kept ranges.
+    /// Extracted so `rebuildTimelineSegments` can call it from both the
+    /// slot-preserving path and the legacy-fallback path without
+    /// duplicating the alternate / subtitle plumbing.
+    ///
+    /// `template`, when non-nil, is the pre-analysis placeholder slot
+    /// being replaced. Slot-level edits the user already made before
+    /// analysis (volume, mute, hidden video, speed, effects, PiP /
+    /// free-transform layout) are inherited by every expanded
+    /// sub-segment so the AI cut respects manual adjustments. The
+    /// `range` field is intentionally NOT inherited — kept ranges
+    /// always come from the LLM. `placementOffset` and
+    /// `linkedSegmentID` are also dropped because they only make
+    /// sense as identity-preserving links (1:1) — when the slot
+    /// expands into N sub-segments those links can't survive.
+    private static func expandRecordIntoSegments(
+        record: MediaAssetRecord,
+        keptRanges: [TimeRange],
+        template: TimelineSegment? = nil
+    ) -> [TimelineSegment] {
+        let texts: [String]
+        if let keptTexts = record.copilot?.keptTexts, keptTexts.count == keptRanges.count {
+            texts = keptTexts
+        } else {
+            texts = parseKeptTextsFromLog(record.copilot?.editLog, rangeCount: keptRanges.count)
+        }
+
+        let transcript = record.copilot?.transcript
+        let wordTranscript = record.copilot?.wordTranscript
+        let alternatesPerRange = record.copilot?.keptAlternativesPerRange
+
+        var out: [TimelineSegment] = []
+        for (index, range) in keptRanges.enumerated() {
+            let text = texts[safe: index] ?? ""
+            let subs = buildSubtitleEntries(
+                for: range,
+                from: transcript,
+                wordTranscript: wordTranscript
+            )
+            // Stamp record.id onto each alternate so swap-in works
+            // even when upstream transcript segments didn't carry a
+            // sourceVideoID.
+            var alternates = alternatesPerRange?[safe: index] ?? []
+            for i in alternates.indices {
+                alternates[i].sourceVideoID = record.id
+            }
+            out.append(TimelineSegment(
+                id: UUID(),
+                sourceVideoID: record.id,
+                range: range,
+                text: text,
+                subtitles: subs,
+                volumeLevel: template?.volumeLevel ?? 1.0,
+                isVideoHidden: template?.isVideoHidden ?? false,
+                speedRate: template?.speedRate ?? 1.0,
+                effects: template?.effects ?? .default,
+                placementOffset: nil,
+                alternatives: alternates,
+                linkedSegmentID: nil,
+                pipLayout: template?.pipLayout,
+                freeTransform: template?.freeTransform,
+                overlaySpec: template?.overlaySpec
+            ))
+        }
+        return out
     }
 
     /// Build per-sentence subtitle entries for a keptRange from the transcript.
@@ -2687,12 +2797,23 @@ final class MediaCoreViewModel: ObservableObject {
     }
 
     /// Insert a manual segment from source video at the given timeline position.
-    func insertManualSegment(range: TimeRange, at index: Int, sourceVideoID: UUID? = nil) {
+    func insertManualSegment(
+        range: TimeRange,
+        at index: Int,
+        sourceVideoID: UUID? = nil,
+        revisionTrigger: RevisionTrigger = .userEdit(description: "insert"),
+        revisionLabel: String = "Insert segment"
+    ) {
         guard range.endSeconds - range.startSeconds >= 0.2 else { return }
         guard let sourceID = sourceVideoID ?? selectedRecordID else { return }
-        let subs = Self.buildSubtitleEntries(for: range, from: selectedRecord?.copilot?.transcript)
+        // Pull transcripts off the segment's actual source record so
+        // the placeholder gets correct subtitles even when the user
+        // currently has a different record selected (e.g. the import
+        // auto-add path runs before the new record is selected).
+        let sourceRecord = records.first(where: { $0.id == sourceID })
+        let subs = Self.buildSubtitleEntries(for: range, from: sourceRecord?.copilot?.transcript)
         let segment = TimelineSegment(id: UUID(), sourceVideoID: sourceID, range: range, text: "", subtitles: subs)
-        pushRevision(label: "Insert segment", trigger: .userEdit(description: "insert"))
+        pushRevision(label: revisionLabel, trigger: revisionTrigger)
         let safeIndex = min(index, timelineSegments.count)
         timelineSegments.insert(segment, at: safeIndex)
         setSingleSelectedSegment(id: segment.id)
@@ -2708,9 +2829,19 @@ final class MediaCoreViewModel: ObservableObject {
     }
 
     /// Insert a full-duration segment of `mediaID` at the given primary
-    /// timeline index. Used by the MediaBrowser → V1 drag-drop path.
+    /// timeline index. Used by the MediaBrowser → V1 drag-drop path
+    /// and the import → auto-append-to-end path.
     /// Index is clamped into `[0, timelineSegments.count]`.
-    func insertMediaAsPrimary(mediaID: UUID, at insertIndex: Int) {
+    ///
+    /// `revisionTrigger` lets the import path tag its revisions as
+    /// `.importMedia` so the History panel can distinguish auto-adds
+    /// from user-driven edits / drags.
+    func insertMediaAsPrimary(
+        mediaID: UUID,
+        at insertIndex: Int,
+        revisionTrigger: RevisionTrigger = .userEdit(description: "insert"),
+        revisionLabel: String = "Insert segment"
+    ) {
         guard let record = records.first(where: { $0.id == mediaID }) else {
             bannerMessage = L("Can't add clip — media not found.")
             return
@@ -2732,7 +2863,13 @@ final class MediaCoreViewModel: ObservableObject {
             duration = analysis.durationSeconds
         }
         let range = TimeRange(startSeconds: 0, endSeconds: duration)
-        insertManualSegment(range: range, at: insertIndex, sourceVideoID: mediaID)
+        insertManualSegment(
+            range: range,
+            at: insertIndex,
+            sourceVideoID: mediaID,
+            revisionTrigger: revisionTrigger,
+            revisionLabel: revisionLabel
+        )
     }
 
     /// Append a new overlay segment carrying `mediaID` to the existing
@@ -6011,6 +6148,32 @@ final class MediaCoreViewModel: ObservableObject {
         importTasks[id]?.cancel()
     }
 
+    /// Wait until all import tickets that come before `ticketID` in
+    /// `importingFiles` (i.e. were started earlier in drop order) have
+    /// finished their `performImport` task. Used by the auto-add path
+    /// so that the timeline-append step happens in drop order even
+    /// when imports complete out of order — otherwise N simultaneous
+    /// drops would land on the timeline in finish-time order, which
+    /// then becomes first-cut order, which the user didn't choose.
+    ///
+    /// `await task.value` resolves when the other ticket's
+    /// `performImport` body returns (success OR failure), so a failed
+    /// earlier import unblocks later ones rather than wedging them.
+    /// Cancellation of an earlier import also unblocks later ones
+    /// (cancellation propagates and the task body returns Void).
+    private func waitForEarlierImportsToFinish(ticketID: UUID) async {
+        let myIndex = importingFiles.firstIndex(where: { $0.id == ticketID }) ?? 0
+        guard myIndex > 0 else { return }
+        // Snapshot earlier ticket IDs once — `importingFiles` mutates
+        // as earlier tickets finish (their defer removes themselves).
+        let earlier = importingFiles.prefix(myIndex).map(\.id)
+        for earlierID in earlier {
+            if let task = importTasks[earlierID] {
+                await task.value
+            }
+        }
+    }
+
     private func performImport(ticketID: UUID, url: URL, isImage: Bool) async {
         defer {
             importingFiles.removeAll { $0.id == ticketID }
@@ -6048,6 +6211,44 @@ final class MediaCoreViewModel: ObservableObject {
             }
             selectedRecordID = mediaId
             await loadRecords()
+            // Auto-append the freshly imported clip to the end of the
+            // V1 timeline as a full-length placeholder. The timeline
+            // is the source of truth for "what's in the cut and in
+            // what order" — having the clip implicitly available
+            // means the user can immediately scrub, reorder, or delete
+            // it without having to drag from the library first.
+            //
+            // **Ordering across concurrent imports.** When the user
+            // drops N files at once we get N parallel `performImport`
+            // tasks that finish in arbitrary order. To keep timeline
+            // order == drop order (which becomes first-cut order), we
+            // wait here for all earlier tickets in `importingFiles` to
+            // commit to the timeline first. `importingFiles` is
+            // appended to in `startImport` on MainActor in drop order,
+            // so its prefix gives us the canonical "earlier than me"
+            // set. Each task in `importTasks` resolves to Void when
+            // its `performImport` returns (after its own auto-add or
+            // failure path), so awaiting it cleanly serializes the
+            // inserts.
+            await waitForEarlierImportsToFinish(ticketID: ticketID)
+            // Skipped silently when the record is in any non-ready
+            // state (failed proxy, partial analysis, etc.) so failed
+            // imports don't litter the timeline. Already-present
+            // placeholders for the same source are not deduped — if
+            // the user re-imports the same file under a new media ID
+            // it gets a second placeholder, which the timeline-driven
+            // first-cut model handles correctly.
+            if let record = records.first(where: { $0.id == mediaId }),
+               record.status == .ready,
+               record.kind == .image || (record.analysis?.durationSeconds ?? 0) > 0.1
+            {
+                insertMediaAsPrimary(
+                    mediaID: mediaId,
+                    at: timelineSegments.count,
+                    revisionTrigger: .importMedia,
+                    revisionLabel: "Import clip"
+                )
+            }
         } catch is CancellationError {
             // User-initiated cancel; MediaCore already cleaned up the
             // partial proxy + optimistic record. No banner needed.
@@ -6556,8 +6757,13 @@ final class MediaCoreViewModel: ObservableObject {
             return
         }
 
-        // If multiple records exist, analyze all; otherwise single
-        let readyRecords = records.filter { $0.status == .ready }
+        // The timeline is the source of truth for "what gets cut" —
+        // pull the unique video records currently placed on V1 in
+        // timeline order, and dispatch off that count. Image
+        // placements are excluded (no audio to transcribe). Records in
+        // the library but not on the timeline are intentionally
+        // skipped.
+        let candidates = videoRecordsOnTimeline
         // Surface the One-click first cut flow inside the AI chat so
         // users see the transcribe → scene → audio → LLM phases as a
         // live conversation instead of a detached progress box above
@@ -6566,13 +6772,16 @@ final class MediaCoreViewModel: ObservableObject {
             userAction: L("One-click first cut"),
             userIcon: "bolt.fill"
         )
-        if readyRecords.count > 1 {
+        if candidates.count > 1 {
             await analyzeAllRecords()
-        } else if let selectedRecordID {
-            await analyzeRecord(id: selectedRecordID)
+        } else if let only = candidates.first {
+            await analyzeRecord(id: only.id)
         } else {
-            // Nothing to analyze — drop the placeholder bubble.
-            finishAnalysisChatBubble(content: L("No clip ready for analysis."))
+            // Nothing on the timeline to analyze — point user at the
+            // fix (drag a clip from the media library to the timeline).
+            finishAnalysisChatBubble(
+                content: L("Drag a clip onto the timeline to start the first cut.")
+            )
         }
     }
 
@@ -7219,9 +7428,21 @@ final class MediaCoreViewModel: ObservableObject {
         Task { try? await store?.replace(with: snapshot) }
     }
 
-    /// Analyze all ready records with unified LLM decision across all videos.
-    /// Transcribes each video independently, merges transcripts, then makes
-    /// one LLM call so it can detect cross-video duplicates.
+    /// Analyze video clips currently on the timeline using a unified
+    /// LLM decision across all of them. Transcribes each video
+    /// independently, merges transcripts in **timeline order**, then
+    /// makes one LLM call so it can detect cross-video duplicates.
+    ///
+    /// The timeline (not the media library) decides which clips
+    /// participate, in what order, and which clips are excluded —
+    /// records that exist in the library but were dragged off the
+    /// timeline (or never dragged on) are intentionally skipped.
+    /// Already-analyzed records (with a non-nil `copilot` snapshot) are
+    /// left as-is to avoid re-billing the LLM for clips the user
+    /// already ran through.
+    ///
+    /// Image placements on the timeline are excluded — they have no
+    /// audio track to transcribe.
     func analyzeAllRecords() async {
         guard let store, let analysisPipeline else {
             bannerMessage = L("Analysis pipeline not configured")
@@ -7242,11 +7463,19 @@ final class MediaCoreViewModel: ObservableObject {
             return
         }
 
-        let readyRecords = records.filter {
+        // Walk the timeline once, in display order, and collect the
+        // first-occurrence list of source video IDs that need work.
+        // A record is a candidate iff it's currently on the timeline
+        // (videoRecordsOnTimeline already enforces video-only +
+        // dedup-by-source) AND ready AND not already analyzed.
+        let orderedRecords = videoRecordsOnTimeline.filter {
             $0.status == .ready && $0.copilot == nil
         }
-        // If all already analyzed, just rebuild
-        if readyRecords.isEmpty {
+
+        // If everything on the timeline is already analyzed (or there's
+        // nothing transcribable), just rebuild from existing snapshots
+        // and bail early — no LLM call.
+        if orderedRecords.isEmpty {
             rebuildTimelineSegments()
             rebuildComposition()
             finishAnalysisChatBubble(
@@ -7261,9 +7490,9 @@ final class MediaCoreViewModel: ObservableObject {
         do {
             // Step 1: Transcribe each video independently (sequential for Whisper memory)
             var perVideoLocal: [(record: MediaAssetRecord, result: LocalAnalysisResult)] = []
-            let totalClips = readyRecords.count
+            let totalClips = orderedRecords.count
 
-            for (i, record) in readyRecords.enumerated() {
+            for (i, record) in orderedRecords.enumerated() {
                 let sourceURL: URL
                 if let proxyPath = record.derived.proxyRelativePath, let root = projectRoot {
                     sourceURL = root.appending(path: proxyPath)
@@ -7516,20 +7745,23 @@ final class MediaCoreViewModel: ObservableObject {
                 self.heartbeatStart(bubbleID: liveBubbleID, phrases: phrases)
             }
 
-            let readyRecords = records.filter { $0.status == .ready }
-            if readyRecords.count > 1 {
+            let candidates = videoRecordsOnTimeline
+            if candidates.count > 1 {
                 await analyzeAllRecords()
-            } else if let selectedRecordID {
-                await analyzeRecord(id: selectedRecordID)
+            } else if let only = candidates.first {
+                await analyzeRecord(id: only.id)
             } else {
-                // Nothing importable — lock the bubble with a polite
-                // failure line and stop.
+                // Nothing on the timeline yet — lock the bubble with
+                // a polite failure line and stop. The user has to
+                // drag a clip from the library to the timeline (or
+                // import one, which auto-appends) before chat can
+                // edit anything.
                 liveNarrationCallback = nil
                 lockLiveNarrationAsFailure(
                     id: liveBubbleID,
                     text: isEnglish
-                        ? "No clip to analyse yet. Import a video first."
-                        : "还没有可以分析的素材，先导入一段视频吧。"
+                        ? "Drag a clip onto the timeline first, then I can edit."
+                        : "请先把素材拖到时间线上，我才能开始剪。"
                 )
                 isChatProcessing = false
                 return
@@ -10064,24 +10296,29 @@ final class MediaCoreViewModel: ObservableObject {
                 checkpointID: nil
             )
         }
-        let readyClips = records.filter { $0.status == .ready }
-        guard !readyClips.isEmpty else {
+        // Timeline drives first cut — only video clips currently
+        // placed on V1 (deduped by source, in timeline order) are
+        // eligible. Library-only clips that the user dragged off the
+        // timeline are intentionally skipped so the agent doesn't
+        // resurrect them.
+        let timelineClips = videoRecordsOnTimeline
+        guard !timelineClips.isEmpty else {
             return AgentToolOutcome(
-                resultJSON: AgentToolJSON.encodeError("No ready clip to analyze. Ask the user to import a video first."),
-                userSummary: "⚠️ Nothing to cut — import a clip first.",
+                resultJSON: AgentToolJSON.encodeError("No clip on the timeline to analyze. Ask the user to drag a clip onto the timeline first (imports auto-append, but they may have removed it)."),
+                userSummary: "⚠️ Nothing on the timeline to cut.",
                 checkpointID: nil
             )
         }
         if let target = request.clipID,
-           !records.contains(where: { $0.id == target && $0.status == .ready }) {
+           !timelineClips.contains(where: { $0.id == target && $0.status == .ready }) {
             return AgentToolOutcome(
-                resultJSON: AgentToolJSON.encodeError("clip_id \(target.uuidString) is not a ready imported clip. Omit clip_id to run on every ready clip."),
-                userSummary: "⚠️ Requested clip wasn't ready.",
+                resultJSON: AgentToolJSON.encodeError("clip_id \(target.uuidString) is not a ready clip on the timeline. Omit clip_id to run on every clip currently placed on the timeline."),
+                userSummary: "⚠️ Requested clip wasn't on the timeline.",
                 checkpointID: nil
             )
         }
 
-        let unanalyzedBefore = readyClips.filter { $0.copilot == nil }.count
+        let unanalyzedBefore = timelineClips.filter { $0.copilot == nil && $0.status == .ready }.count
         let segmentsBefore = timelineSegments.count
 
         // Snapshot BEFORE the pipeline runs so restore_checkpoint can
@@ -10099,7 +10336,13 @@ final class MediaCoreViewModel: ObservableObject {
             await analyzeAllRecords()
         }
 
-        let analyzedClipsAfter = max(0, unanalyzedBefore - records.filter { $0.copilot == nil && $0.status == .ready }.count)
+        let analyzedClipsAfter = max(0, unanalyzedBefore - timelineClips.filter { clip in
+            // Re-resolve from `records` because `analyzeAllRecords`
+            // mutates copilot snapshots in place and our local
+            // `timelineClips` array carries pre-analysis copies.
+            guard let current = records.first(where: { $0.id == clip.id }) else { return false }
+            return current.copilot == nil && current.status == .ready
+        }.count)
         // analyzeRecord on a single clip targets exactly one clip; the
         // delta count above can come out 0/1 depending on cache state, so
         // just clamp to ≥1 when we ran the single-clip path successfully.
@@ -10135,7 +10378,7 @@ final class MediaCoreViewModel: ObservableObject {
             segments: segmentsAfter,
             totalDurationSeconds: composedIndex.totalDuration,
             analyzedClips: analyzedClips,
-            totalClips: readyClips.count,
+            totalClips: timelineClips.count,
             note: note
         )
         let summary: String
