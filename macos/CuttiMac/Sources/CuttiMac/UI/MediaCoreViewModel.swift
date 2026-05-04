@@ -5257,6 +5257,19 @@ final class MediaCoreViewModel: ObservableObject {
         let kind: BRollSuggestion.Kind
         let prompt: String
         let rationale: String
+        /// Crisp ≤20-char card title in the transcript's language.
+        /// `nil` for legacy suggestions persisted before the field was
+        /// introduced.
+        let userTitle: String?
+        /// Per-kind structured signal forwarded to the downstream
+        /// overlay agent (e.g. an enumeration's quartile splits).
+        /// `nil` for legacy suggestions or when the LLM didn't supply
+        /// one.
+        let agentHint: String?
+        /// Phase-1 section role (intro/thesis/enumeration/process/...)
+        /// driving deterministic template routing in
+        /// `buildOverlayInstruction`. `nil` for legacy suggestions.
+        let sectionRole: String?
     }
 
     /// Union of every record's non-dismissed B-roll suggestion,
@@ -5280,7 +5293,10 @@ final class MediaCoreViewModel: ObservableObject {
                         anchorDurationSeconds: max(0, s.sourceEndSeconds - s.sourceStartSeconds),
                         kind: s.kind,
                         prompt: s.prompt,
-                        rationale: s.rationale
+                        rationale: s.rationale,
+                        userTitle: s.userTitle,
+                        agentHint: s.agentHint,
+                        sectionRole: s.sectionRole
                     )
                 }
         }
