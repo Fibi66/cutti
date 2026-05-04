@@ -44,7 +44,10 @@ struct SettingsView: View {
         if session.isSignedIn {
             list.append(.provider)
             if aiProvider == .cuttiCloud {
-                list.append(contentsOf: [.quality, .subscription, .usage])
+                // Quality lives inside Provider on Cloud, so it isn't a
+                // sidebar entry. Subscription / Usage stay separate
+                // because they're orthogonal to provider config.
+                list.append(contentsOf: [.subscription, .usage])
             }
         }
         list.append(contentsOf: [.general, .editor, .support, .developer])
@@ -115,7 +118,6 @@ struct SettingsView: View {
         switch selection {
         case .account:      AccountSection()
         case .provider:     ProviderSection()
-        case .quality:      QualitySection()
         case .subscription: SubscriptionSection()
         case .usage:        UsageSection()
         case .general:      GeneralSection()

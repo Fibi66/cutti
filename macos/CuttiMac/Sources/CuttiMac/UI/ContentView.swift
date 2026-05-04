@@ -584,7 +584,10 @@ struct ContentView: View {
                     anchorDurationSeconds: $0.anchorDurationSeconds,
                     kind: $0.kind,
                     prompt: $0.prompt,
-                    rationale: $0.rationale
+                    rationale: $0.rationale,
+                    userTitle: $0.userTitle,
+                    agentHint: $0.agentHint,
+                    sectionRole: $0.sectionRole
                 )
             },
             isRefreshingMarkers: viewModel.isLoadingVisualMarkers,

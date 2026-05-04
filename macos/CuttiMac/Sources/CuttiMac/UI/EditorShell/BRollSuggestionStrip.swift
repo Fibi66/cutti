@@ -145,8 +145,15 @@ struct BRollSuggestionStrip: View {
     }
 
     private func popoverBody(for hint: TimelineCreativeActions.BRollSuggestionHint) -> some View {
+        // Seed the editable textfield from the crisp `userTitle` when
+        // available, falling back to the longer `prompt` for legacy
+        // suggestions. The user's edit is what they actually want to
+        // see on the overlay; the verbose `prompt` and `rationale` sit
+        // in the popover body as context (and as inspiration for the
+        // downstream agent).
+        let seed = hint.userTitle ?? hint.prompt
         let editedBinding = Binding<String>(
-            get: { editedPrompts[hint.id] ?? hint.prompt },
+            get: { editedPrompts[hint.id] ?? seed },
             set: { editedPrompts[hint.id] = $0 }
         )
         let isGenerating = generatingIDs.contains(hint.id)
@@ -165,6 +172,16 @@ struct BRollSuggestionStrip: View {
                 .lineLimit(2...6)
                 .font(.system(size: 12))
                 .disabled(isGenerating)
+            // For new suggestions where `userTitle` was the seed, also
+            // surface the longer `prompt` as a muted subtitle so the
+            // user sees the full scene description without losing the
+            // crisp editable headline.
+            if hint.userTitle != nil, !hint.prompt.isEmpty {
+                Text(hint.prompt)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !hint.rationale.isEmpty {
                 Text(hint.rationale)
                     .font(.system(size: 11))

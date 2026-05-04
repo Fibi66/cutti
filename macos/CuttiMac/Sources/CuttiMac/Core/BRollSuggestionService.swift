@@ -54,7 +54,7 @@ struct BRollSuggestionService: Sendable {
         let upperBound = keptSegments.last?.endSeconds ?? 0
 
         onProgress?("Reading through the cut to understand its structure…")
-        guard let sections = await analyzeStructure(
+        guard let sections = await analyzeStructureWithFallback(
             keptSegments: keptSegments,
             lowerBound: lowerBound,
             upperBound: upperBound
@@ -108,24 +108,130 @@ struct BRollSuggestionService: Sendable {
 
     // MARK: - Phase 1
 
+    /// Closed set of role labels the LLM is constrained to. Anything
+    /// outside this set is normalized to `"other"` before persistence
+    /// so downstream string-equality routing stays deterministic.
+    static let allowedRoles: Set<String> = [
+        "intro", "thesis", "setup", "enumeration", "process",
+        "chronology", "example", "comparison", "quote", "data",
+        "anecdote", "emotional", "transition", "conclusion", "other",
+    ]
+
+    /// Canonicalize a free-form role string from the LLM into the
+    /// closed set above. Trims whitespace, lowercases, and collapses
+    /// anything unrecognized to `"other"`. Preserves nil-ness so a
+    /// section parser can still flag "no role" separately if it wants.
+    static func canonicalRole(_ raw: String?) -> String {
+        guard let raw else { return "other" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return allowedRoles.contains(trimmed) ? trimmed : "other"
+    }
+
+    /// Visual-benefit rating (replaces the old `benefits_visual: bool`).
+    /// Phase 2 fires on `>= medium` so thesis/quote-eligible sections
+    /// that the boolean used to drop now make it through.
+    enum VisualBenefit: String, Sendable {
+        case none, low, medium, high
+
+        var rank: Int {
+            switch self {
+            case .none: return 0
+            case .low: return 1
+            case .medium: return 2
+            case .high: return 3
+            }
+        }
+
+        static func parse(_ raw: Any?) -> VisualBenefit {
+            // Tolerate the legacy `benefits_visual: bool` shape too —
+            // a model that hasn't been updated to the new schema can
+            // still produce useful output by mapping true→high, false→none.
+            if let b = raw as? Bool { return b ? .high : .none }
+            guard let s = (raw as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+            else { return .none }
+            return VisualBenefit(rawValue: s) ?? .none
+        }
+    }
+
     private struct Section: Sendable {
         let startSeconds: Double
         let endSeconds: Double
         let role: String
         let summary: String
-        let benefitsVisual: Bool
+        let visualBenefit: VisualBenefit
         let visualReason: String
+
+        var benefitsVisual: Bool { visualBenefit.rank >= VisualBenefit.medium.rank }
+    }
+
+    /// Run phase 1, retrying once at the more expensive `.creative` tier
+    /// if the cheap-tier output looks degenerate (≤1 section on a
+    /// non-trivial transcript, ≥80% of sections collapsed to `other`,
+    /// or zero sections that would qualify for phase 2). Worst case
+    /// pays for 2 phase-1 calls; common case pays for 1 cheap call.
+    private func analyzeStructureWithFallback(
+        keptSegments: [TranscriptSegment],
+        lowerBound: Double,
+        upperBound: Double
+    ) async -> [Section]? {
+        let cheap = await analyzeStructure(
+            keptSegments: keptSegments,
+            lowerBound: lowerBound,
+            upperBound: upperBound,
+            task: .firstCut
+        )
+        if let cheap, !Self.isDegenerate(sections: cheap, transcriptLines: keptSegments.count) {
+            return cheap
+        }
+        // Either nil (call failed) or degenerate (model under-thought it).
+        // One retry at .creative; we accept whatever comes back.
+        if let cheap {
+            print("ℹ️ BRollSuggestionService phase-1 cheap-tier output looked degenerate (\(cheap.count) sections); retrying at .creative")
+        } else {
+            print("ℹ️ BRollSuggestionService phase-1 cheap-tier failed; retrying at .creative")
+        }
+        return await analyzeStructure(
+            keptSegments: keptSegments,
+            lowerBound: lowerBound,
+            upperBound: upperBound,
+            task: .creative
+        )
+    }
+
+    /// Heuristic for "the cheap model didn't really try". We trigger
+    /// the .creative retry on:
+    ///   • a non-trivial transcript (≥ 12 segments) collapsed to ≤1 section
+    ///   • ≥ 80% of sections labeled `other`
+    ///   • zero sections at `>= medium` visual benefit on a non-trivial transcript
+    /// Short transcripts (< 12 segments) are allowed to legitimately
+    /// produce a single section without triggering retry.
+    private static func isDegenerate(sections: [Section], transcriptLines: Int) -> Bool {
+        let nonTrivial = transcriptLines >= 12
+        if sections.isEmpty { return true }
+        if nonTrivial && sections.count <= 1 { return true }
+        if !sections.isEmpty {
+            let otherCount = sections.filter { $0.role == "other" }.count
+            if Double(otherCount) / Double(sections.count) >= 0.8 { return true }
+        }
+        if nonTrivial {
+            let medOrAbove = sections.filter { $0.benefitsVisual }.count
+            if medOrAbove == 0 { return true }
+        }
+        return false
     }
 
     private func analyzeStructure(
         keptSegments: [TranscriptSegment],
         lowerBound: Double,
-        upperBound: Double
+        upperBound: Double,
+        task: OpenAIClient.TaskHint
     ) async -> [Section]? {
         let transcriptText = Self.formatTranscript(keptSegments)
         let messages: [ChatMessage] = [
             .system(Self.structureSystemPrompt),
-            .user("Kept transcript (after first-cut). Segment it into semantic sections and flag which benefit from a visual aid.\n\n" + transcriptText),
+            .user("Kept transcript (after first-cut). Segment it into semantic sections and rate which would benefit from a visual aid.\n\n" + transcriptText),
         ]
 
         let response: ChatCompletionResponse
@@ -135,10 +241,10 @@ struct BRollSuggestionService: Sendable {
                 tools: [Self.structureTool],
                 toolChoice: .required(name: "analyze_structure"),
                 temperature: 0.2,
-                task: .creative
+                task: task
             )
         } catch {
-            print("⚠️ BRollSuggestionService phase-1 failed — \(error)")
+            print("⚠️ BRollSuggestionService phase-1 (\(task.rawValue)) failed — \(error)")
             return nil
         }
 
@@ -149,14 +255,21 @@ struct BRollSuggestionService: Sendable {
         else { return nil }
 
         let parsed: [Section] = raw.compactMap { row in
-            guard let role = (row["role"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !role.isEmpty,
-                  let summary = (row["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            guard let summary = (row["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !summary.isEmpty,
-                  let benefits = row["benefits_visual"] as? Bool,
                   let startRaw = (row["start_s"] as? Double) ?? (row["start_s"] as? Int).map(Double.init),
                   let endRaw = (row["end_s"] as? Double) ?? (row["end_s"] as? Int).map(Double.init)
             else { return nil }
+            // Canonicalize role here so downstream consumers — both the
+            // routing in the propose_visuals user message and the
+            // persisted `BRollSuggestion.sectionRole` — never see an
+            // off-schema string.
+            let role = Self.canonicalRole(row["role"] as? String)
+            // Tolerate either the new `visual_benefit: string` shape or
+            // the legacy `benefits_visual: bool` shape so an older
+            // deployment that hasn't been updated still produces useful
+            // output instead of returning zero sections.
+            let benefit = VisualBenefit.parse(row["visual_benefit"] ?? row["benefits_visual"])
             let start = max(lowerBound, min(startRaw, upperBound))
             let end = max(start + 0.1, min(endRaw, upperBound))
             let reason = ((row["visual_reason"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -165,7 +278,7 @@ struct BRollSuggestionService: Sendable {
                 endSeconds: end,
                 role: role,
                 summary: summary,
-                benefitsVisual: benefits,
+                visualBenefit: benefit,
                 visualReason: reason
             )
         }
@@ -202,6 +315,21 @@ struct BRollSuggestionService: Sendable {
         }
         if let next {
             contextLines.append("Next section (\(next.role)): \(next.summary)")
+        }
+        // Diversity awareness: tell this section about other ±2 sections
+        // that ALSO got flagged as visual-benefitting. Phase-2 calls run
+        // in parallel so they don't see each other's outputs, but they
+        // can at least see that "the section before me also gets a
+        // visual" and pick a register that isn't a third back-to-back
+        // numbered list.
+        let nearbyVisualPeers: [Section] = (max(0, sectionIndex - 2)...min(allSections.count - 1, sectionIndex + 2))
+            .filter { $0 != sectionIndex }
+            .map { allSections[$0] }
+            .filter { $0.benefitsVisual }
+        if !nearbyVisualPeers.isEmpty {
+            let peerLines = nearbyVisualPeers.map { "  • [\($0.role)] \($0.summary)" }
+            contextLines.append("Other nearby sections (±2) also flagged as visual-benefitting (vary your visual register so the viewer doesn't see three back-to-back lists):")
+            contextLines.append(contentsOf: peerLines)
         }
         let context = contextLines.joined(separator: "\n")
 
@@ -259,13 +387,35 @@ struct BRollSuggestionService: Sendable {
             let end = max(start + 0.1, min(endRaw, sectionEnd))
 
             let kind = BRollSuggestion.Kind(rawValue: kindRaw) ?? .other
+
+            // user_title / agent_hint are optional — the model may
+            // legitimately omit them on `kind: .other` content where
+            // there's nothing structured to extract. Empty strings are
+            // treated the same as nil so a lazy `""` from the model
+            // doesn't show up as a blank line in the popover.
+            let userTitle: String? = {
+                guard let raw = (row["user_title"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                      !raw.isEmpty else { return nil }
+                return raw
+            }()
+            let agentHint: String? = {
+                guard let raw = (row["agent_hint"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                      !raw.isEmpty else { return nil }
+                return raw
+            }()
+
             return BRollSuggestion(
                 sourceVideoID: sourceVideoID,
                 sourceStartSeconds: start,
                 sourceEndSeconds: end,
                 kind: kind,
                 prompt: prompt,
-                rationale: rationale
+                rationale: rationale,
+                userTitle: userTitle,
+                agentHint: agentHint,
+                sectionRole: Self.canonicalRole(section.role)
             )
         }
     }
@@ -310,15 +460,19 @@ struct BRollSuggestionService: Sendable {
         other          — doesn't fit cleanly (use sparingly)
     • `summary` — one to two sentences in the transcript's own language
       describing what the speaker does in this section.
-    • `benefits_visual` — true ONLY if a visual aid (chart, animation,
-      image, screen recording, map, data table) would clearly make
-      this section clearer or more engaging. False for purely
-      conversational / emotional / transition content.
-    • `visual_reason` — one sentence. If `benefits_visual=true`, say
-      what kind of visual pattern applies (enumeration → numbered list
-      animation; process → flow diagram; data → chart; quote → pull-
-      quote card; comparison → two-column; etc.). If false, say why a
-      visual would be filler here.
+    • `visual_benefit` — one of `none` | `low` | `medium` | `high`. A
+      4-level rating of how much a visual aid (chart, animation, image,
+      screen recording, map, data table) would clearly improve this
+      section. Use `medium` or `high` when a visual would teach the
+      viewer something the speech alone doesn't already convey
+      visually; use `low` for "minor lift, optional"; use `none` for
+      purely conversational / emotional / transition content. The
+      downstream pass only follows up on `>= medium`.
+    • `visual_reason` — one sentence. If `visual_benefit >= medium`,
+      say what kind of visual pattern applies (enumeration → numbered
+      list animation; process → flow diagram; data → chart; quote →
+      pull-quote card; comparison → two-column; etc.). Otherwise, say
+      why a visual would be filler here.
 
     Favor fewer, larger sections over many tiny ones. A 3-minute
     speaker monologue is rarely more than 6–10 sections.
@@ -330,7 +484,7 @@ struct BRollSuggestionService: Sendable {
         type: "function",
         function: .init(
             name: "analyze_structure",
-            description: "Divide the kept transcript into semantic sections and flag visual-aid candidates.",
+            description: "Divide the kept transcript into semantic sections and rate each one's visual-aid benefit on a 4-level scale.",
             parameters: .init(
                 type: "object",
                 properties: [
@@ -343,11 +497,11 @@ struct BRollSuggestionService: Sendable {
                                 "start_s": .init(type: "number", description: "Section start in source seconds.", items: nil),
                                 "end_s": .init(type: "number", description: "Section end in source seconds.", items: nil),
                                 "role": .init(type: "string", description: "One of: intro, thesis, setup, enumeration, process, chronology, example, comparison, quote, data, anecdote, emotional, transition, conclusion, other.", items: nil),
-                                "summary": .init(type: "string", description: "1–2 sentences describing this section's content.", items: nil),
-                                "benefits_visual": .init(type: "boolean", description: "True iff a visual aid would genuinely help.", items: nil),
+                                "summary": .init(type: "string", description: "1–2 sentences describing this section's content, in the transcript's own language.", items: nil),
+                                "visual_benefit": .init(type: "string", description: "One of: none, low, medium, high. Downstream visual-proposal pass only fires on `>= medium`.", items: nil),
                                 "visual_reason": .init(type: "string", description: "One sentence: what kind of visual, or why none fits.", items: nil),
                             ],
-                            required: ["start_s", "end_s", "role", "summary", "benefits_visual", "visual_reason"]
+                            required: ["start_s", "end_s", "role", "summary", "visual_benefit", "visual_reason"]
                         )
                     )
                 ],
@@ -374,22 +528,45 @@ struct BRollSuggestionService: Sendable {
     phase-1 flag looks wrong in hindsight), return an empty list —
     that's a fine answer.
 
-    Rules per anchor:
+    ## LANGUAGE — non-negotiable
+
+    `prompt`, `rationale`, `user_title`, and `agent_hint` MUST be in
+    the SAME language as the transcript. If the transcript is Chinese,
+    these fields are Chinese. If the transcript mixes languages, match
+    the dominant language of THIS section. The downstream UI shows
+    `user_title` to the speaker in their own popover; mismatched
+    language is a user-visible bug.
+
+    ## Per-anchor fields
+
     - `kind` — one of: chart, animation, image, screenRecording,
       mapGraphic, dataTable, other. Favor `animation` for enumerations,
       processes, chronologies, pull-quotes, and A-vs-B comparisons —
       those render great as Remotion motion graphics.
-    - `prompt` — a concrete natural-language description of what the
-      visual should SHOW. Examples:
-        "numbered list animation: 1) Prepare stories 2) Read the room
-         3) Ask sharp questions"
-        "horizontal step flow with arrows: Record → Transcribe → Edit
-         → Publish"
-        "pull-quote card: 'Stay hungry, stay foolish.' — Steve Jobs"
-        "bar chart with three bars labelled 2022/2023/2024, flat
-         style, dark background"
-      Do NOT write Remotion template IDs — the downstream agent picks
-      the template from your prompt.
+    - `prompt` — concrete natural-language description of what the
+      visual should SHOW. Treated as inspiration by the downstream
+      agent (it may rephrase). 1–2 sentences.
+    - `user_title` — short card title (≤ 20 characters incl. punctuation,
+      ≤ 12 CJK glyphs) ready to display verbatim in the editor's
+      popover. This is what the user sees and may edit. Make it crisp
+      and human; this is NOT the place for a "horizontal step flow with
+      arrows" engineering description — that goes in `prompt`.
+    - `agent_hint` — extracted structured signal the next-stage agent
+      can lift directly into overlay props. Format depends on `kind`
+      / section role; pick the matching mini-format below or omit if
+      the content doesn't fit any pattern (truly freeform `kind: other`
+      can leave this empty):
+        • enumeration  →  `item1 | item2 | item3`
+        • process      →  `step1 → step2 → step3`
+        • chronology   →  `2020: founded | 2022: series A | 2024: ipo`
+        • quote        →  `"<sentence>" — <attribution>` (attribution
+                          optional; omit the dash when absent)
+        • comparison   →  `LEFT: <label> :: RIGHT: <label>`
+        • data / chart →  `bar 2022=10 | bar 2023=14 | bar 2024=22`
+        • image / map  →  may be empty
+      Item labels MUST be in the transcript's language. Use literal
+      wording from the transcript whenever possible (these are the
+      words the speaker actually said — don't paraphrase).
     - `rationale` — one sentence: why this visual helps this moment.
     - `source_start_s`, `source_end_s` — span the ENTIRE content the
       visual represents, not just the triggering phrase. Stay within
@@ -400,6 +577,53 @@ struct BRollSuggestionService: Sendable {
         • quote / punchline → just that sentence
         • single stat / data point → just that mention
       When in doubt, err wider.
+
+    ## Examples
+
+    English:
+      kind: animation
+      prompt: "numbered list animation: 1) Prepare stories 2) Read the room 3) Ask sharp questions"
+      user_title: "Three small bets"
+      agent_hint: "Prepare stories | Read the room | Ask sharp questions"
+      rationale: "Speaker enumerates three concrete tactics; a numbered list cements the structure."
+
+      kind: animation
+      prompt: "horizontal step flow with arrows: Record → Transcribe → Edit → Publish"
+      user_title: "The 4-step pipeline"
+      agent_hint: "Record → Transcribe → Edit → Publish"
+
+      kind: animation
+      prompt: "pull-quote card: 'Stay hungry, stay foolish.' — Steve Jobs"
+      user_title: "Stay hungry"
+      agent_hint: "\"Stay hungry, stay foolish.\" — Steve Jobs"
+
+      kind: chart
+      prompt: "bar chart with three bars labelled 2022/2023/2024, flat style, dark background"
+      user_title: "Revenue 2022–2024"
+      agent_hint: "bar 2022=10 | bar 2023=14 | bar 2024=22"
+
+    Chinese (note: every visible field in the speaker's language):
+      kind: animation
+      prompt: "三步流程动画：录制 → 转写 → 剪辑"
+      user_title: "三步剪辑流程"
+      agent_hint: "录制 → 转写 → 剪辑"
+      rationale: "讲者明确说了"先录、再转写、最后剪辑"，流程动画把这条线显现出来。"
+
+      kind: animation
+      prompt: "对比卡片：本地剪辑 vs 云端剪辑"
+      user_title: "本地 vs 云端"
+      agent_hint: "LEFT: 本地剪辑 :: RIGHT: 云端剪辑"
+      rationale: "整段都在对比两种方案的取舍，左右两栏比纯口述清楚。"
+
+    ## Diversity
+
+    If a sibling section nearby (you'll see them under "Other nearby
+    sections (±2) also flagged as visual-benefitting") already implies
+    a list-style visual, prefer a different register here unless the
+    content strictly requires another list. Three back-to-back
+    SequenceSteps overlays make the viewer numb.
+
+    ## Anti-filler
 
     Do NOT suggest generic mood B-roll, "talking head cutaway", or
     filler inserts. Visuals must teach the viewer something the speech
@@ -425,10 +649,12 @@ struct BRollSuggestionService: Sendable {
                                 "source_start_s": .init(type: "number", description: "Start time in source seconds (within section bounds).", items: nil),
                                 "source_end_s": .init(type: "number", description: "End time in source seconds (> start, within section bounds).", items: nil),
                                 "kind": .init(type: "string", description: "One of: chart, animation, image, screenRecording, mapGraphic, dataTable, other.", items: nil),
-                                "prompt": .init(type: "string", description: "Concrete description of the visual's content.", items: nil),
-                                "rationale": .init(type: "string", description: "One-sentence reason this visual helps.", items: nil),
+                                "prompt": .init(type: "string", description: "Concrete description of the visual's content, in the transcript's language.", items: nil),
+                                "user_title": .init(type: "string", description: "Short card title (≤20 chars / ≤12 CJK glyphs) shown to the user in the popover, in the transcript's language.", items: nil),
+                                "agent_hint": .init(type: "string", description: "Extracted structured signal for the next-stage agent, in the transcript's language. Use the per-kind mini-format described in the system prompt; omit (empty string) for kind:other or freeform image/map content.", items: nil),
+                                "rationale": .init(type: "string", description: "One-sentence reason this visual helps, in the transcript's language.", items: nil),
                             ],
-                            required: ["source_start_s", "source_end_s", "kind", "prompt", "rationale"]
+                            required: ["source_start_s", "source_end_s", "kind", "prompt", "user_title", "rationale"]
                         )
                     )
                 ],

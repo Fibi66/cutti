@@ -6,7 +6,6 @@ import SwiftUI
 enum SettingsSection: String, Identifiable, Hashable {
     case account
     case provider
-    case quality
     case subscription
     case usage
     case general
@@ -21,7 +20,6 @@ enum SettingsSection: String, Identifiable, Hashable {
         switch self {
         case .account:      return "Account"
         case .provider:     return "AI Provider"
-        case .quality:      return "AI Quality"
         case .subscription: return "Subscription"
         case .usage:        return "Credit Usage"
         case .general:      return "General"
@@ -36,7 +34,6 @@ enum SettingsSection: String, Identifiable, Hashable {
         switch self {
         case .account:      return "person.crop.circle"
         case .provider:     return "cpu"
-        case .quality:      return "sparkles"
         case .subscription: return "creditcard"
         case .usage:        return "chart.bar.xaxis"
         case .general:      return "slider.horizontal.3"

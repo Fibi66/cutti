@@ -31,6 +31,8 @@ struct ProviderSection: View {
     @State private var llmStatus: ProbeStatus = .idle
     @State private var imageStatus: ProbeStatus = .idle
 
+    @ObservedObject private var session = RelaySession.shared
+
     /// Last successful test result, persisted across Settings opens so
     /// "Connected · last test 14:22" doesn't reset every ⌘, cycle.
     @AppStorage("cutti.byok.llm.lastTestAt")     private var llmLastTestEpoch: Double = 0
@@ -105,6 +107,7 @@ struct ProviderSection: View {
 
     // MARK: - Cloud info
 
+    @ViewBuilder
     private var cloudCard: some View {
         SettingsCard(padding: 14) {
             HStack(alignment: .top, spacing: 12) {
@@ -124,6 +127,86 @@ struct ProviderSection: View {
                 Spacer(minLength: 0)
             }
         }
+
+        // Quality preference is only meaningful on Cutti Cloud — BYOK
+        // users use whatever model they configure. So it lives here
+        // (instead of as its own sidebar page) and disappears the moment
+        // the user switches to Custom (BYOK).
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsGroupTitle(
+                title: "Quality preference",
+                hint: "How Cutti picks models for first-cut and creative tasks."
+            )
+            HStack(alignment: .top, spacing: 8) {
+                qualityCard(
+                    mode: "smart",
+                    title: "Smart",
+                    description: "Routes between fast & premium based on task complexity. Best balance."
+                )
+                qualityCard(
+                    mode: "high_quality",
+                    title: "High Quality",
+                    description: "Always uses premium models. Slower, costs more credits."
+                )
+                qualityCard(
+                    mode: "economy",
+                    title: "Economy",
+                    description: "Always uses cheaper models. Fast, fewer credits."
+                )
+            }
+            .accessibilityRepresentation {
+                Picker(selection: qualityBinding) {
+                    Text("Smart").tag("smart")
+                    Text("High Quality").tag("high_quality")
+                    Text("Economy").tag("economy")
+                } label: {
+                    T("Quality preference")
+                }
+                .pickerStyle(.radioGroup)
+            }
+        }
+        .padding(.top, 18)
+    }
+
+    @ViewBuilder
+    private func qualityCard(mode: String, title: LocalizedStringKey, description: LocalizedStringKey) -> some View {
+        Button {
+            qualityBinding.wrappedValue = mode
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                T(title)
+                    .font(SettingsTheme.bodyMedium)
+                    .foregroundStyle(SettingsTheme.text)
+                T(description)
+                    .font(SettingsTheme.captionFaint)
+                    .foregroundStyle(SettingsTheme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(session.qualityMode == mode ? SettingsTheme.accentSoft : SettingsTheme.panel)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(
+                        session.qualityMode == mode ? SettingsTheme.accent : SettingsTheme.border,
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var qualityBinding: Binding<String> {
+        Binding(
+            get: { session.qualityMode },
+            set: { newValue in
+                Task { await session.setQualityMode(newValue) }
+            }
+        )
     }
 
     // MARK: - BYOK

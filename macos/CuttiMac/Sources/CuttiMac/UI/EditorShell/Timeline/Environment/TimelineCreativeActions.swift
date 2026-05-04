@@ -76,6 +76,40 @@ struct TimelineCreativeActions {
         let kind: BRollSuggestion.Kind
         let prompt: String
         let rationale: String
+        /// Crisp ≤20-char card title in the transcript's language.
+        /// Seeds the popover textfield. Optional for back-compat with
+        /// suggestions persisted before this field existed.
+        let userTitle: String?
+        /// Per-kind extracted signal (e.g. `item1 | item2 | item3`)
+        /// the downstream agent can lift directly into overlay props.
+        /// Optional.
+        let agentHint: String?
+        /// Phase-1 section role (intro/thesis/enumeration/process/...).
+        /// Drives deterministic template routing in
+        /// `MediaCoreViewModel.buildOverlayInstruction`. Optional.
+        let sectionRole: String?
+
+        init(
+            id: UUID,
+            composedSeconds: Double,
+            anchorDurationSeconds: Double,
+            kind: BRollSuggestion.Kind,
+            prompt: String,
+            rationale: String,
+            userTitle: String? = nil,
+            agentHint: String? = nil,
+            sectionRole: String? = nil
+        ) {
+            self.id = id
+            self.composedSeconds = composedSeconds
+            self.anchorDurationSeconds = anchorDurationSeconds
+            self.kind = kind
+            self.prompt = prompt
+            self.rationale = rationale
+            self.userTitle = userTitle
+            self.agentHint = agentHint
+            self.sectionRole = sectionRole
+        }
     }
 
     /// One detached-audio clip mirrored onto an aux-audio track. Rendered

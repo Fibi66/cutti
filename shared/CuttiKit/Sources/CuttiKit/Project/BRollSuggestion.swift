@@ -29,6 +29,12 @@ public struct BRollSuggestion: Codable, Equatable, Identifiable, Sendable {
     /// Short, concrete description ready to be fed to an image-gen
     /// model later (feature A). Example: "bar chart, 3 bars labelled
     /// Q1/Q2/Q3, minimal flat style".
+    ///
+    /// Historically this field doubled as the user-editable popover
+    /// text. New suggestions emit a separate `userTitle` for that role
+    /// and keep `prompt` as the longer scene description; pre-existing
+    /// persisted suggestions still work because `userTitle` is nullable
+    /// and the popover falls back to `prompt` when it's missing.
     public let prompt: String
 
     /// One-sentence explanation of why the suggestion helps — shown in
@@ -38,6 +44,36 @@ public struct BRollSuggestion: Codable, Equatable, Identifiable, Sendable {
     /// Soft-delete flag set by the user's "Dismiss" action.
     public var isDismissed: Bool = false
 
+    /// Crisp, human-friendly card title (≤20 chars in the language of
+    /// the transcript). Seeds the popover textfield so the user sees
+    /// something they can read at a glance and edit if they want.
+    /// `nil` for suggestions persisted before this field existed —
+    /// callers fall back to `prompt`.
+    public let userTitle: String?
+
+    /// Per-`kind` extracted signal the downstream "Generate animation"
+    /// agent can lift directly into the overlay's props. Format depends
+    /// on the suggestion's role:
+    ///   • enumeration  →  `item1 | item2 | item3`
+    ///   • process      →  `step1 → step2 → step3`
+    ///   • chronology   →  `2020: founded | 2022: series A | 2024: ipo`
+    ///   • quote        →  `"<sentence>" — <attribution>`
+    ///   • comparison   →  `LEFT: <label> :: RIGHT: <label>`
+    ///   • other        →  may be `nil`
+    /// `nil` for suggestions persisted before this field existed; the
+    /// agent falls back to extracting from the anchor-window transcript.
+    public let agentHint: String?
+
+    /// Phase-1 section role this suggestion is anchored in. One of the
+    /// closed set the LLM was constrained to: `intro`, `thesis`,
+    /// `setup`, `enumeration`, `process`, `chronology`, `example`,
+    /// `comparison`, `quote`, `data`, `anecdote`, `emotional`,
+    /// `transition`, `conclusion`, or `other`. Unknown / off-schema
+    /// strings are normalized to `other` before persistence so the
+    /// downstream string-equality routing stays deterministic. `nil`
+    /// for suggestions persisted before this field existed.
+    public let sectionRole: String?
+
     public init(
         id: UUID = UUID(),
         sourceVideoID: UUID,
@@ -46,7 +82,10 @@ public struct BRollSuggestion: Codable, Equatable, Identifiable, Sendable {
         kind: Kind,
         prompt: String,
         rationale: String,
-        isDismissed: Bool = false
+        isDismissed: Bool = false,
+        userTitle: String? = nil,
+        agentHint: String? = nil,
+        sectionRole: String? = nil
     ) {
         self.id = id
         self.sourceVideoID = sourceVideoID
@@ -56,6 +95,9 @@ public struct BRollSuggestion: Codable, Equatable, Identifiable, Sendable {
         self.prompt = prompt
         self.rationale = rationale
         self.isDismissed = isDismissed
+        self.userTitle = userTitle
+        self.agentHint = agentHint
+        self.sectionRole = sectionRole
     }
 
     public enum Kind: String, Codable, CaseIterable, Sendable {
