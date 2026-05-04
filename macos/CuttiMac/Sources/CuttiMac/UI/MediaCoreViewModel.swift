@@ -1117,6 +1117,53 @@ final class MediaCoreViewModel: ObservableObject {
         rebuildComposedSubtitles()
     }
 
+    /// Compact, deterministic routing hint string fed into the
+    /// downstream overlay-generation prompt for a given Phase-1
+    /// section role.
+    ///
+    /// The downstream agent receives this verbatim — its job is to
+    /// pick the right Remotion template for the role. The string must
+    /// therefore name the canonical template (`SequenceSteps`,
+    /// `ProcessFlow`, `Timeline`, `QuoteCard`, `ComparisonGrid`, or
+    /// fall back to a non-routing catalog pick) and include the
+    /// colloquial cue the LLM will actually attend to (`list`,
+    /// `flow`, `timeline`, `Quote`, `Comparison`).
+    ///
+    /// Roles outside the closed canonical set fall back to a
+    /// catalog-pick line that explicitly does *not* mention any
+    /// strong-routing template — `BRollSuggestionServiceParsingTests`
+    /// asserts on this, so a future contributor can't silently bias
+    /// `other` toward (say) `SequenceSteps` by extending the switch
+    /// carelessly.
+    static func roleRoutingHint(_ role: String, isEnglish: Bool) -> String {
+        switch role.lowercased() {
+        case "enumeration":
+            return isEnglish
+                ? "Use the SequenceSteps template — render as a list, optionally split into quartiles."
+                : "使用 SequenceSteps 模板 —— 以 list 列表形式呈现，必要时切成四分位。"
+        case "process":
+            return isEnglish
+                ? "Use the ProcessFlow template — render as a stepwise flow."
+                : "使用 ProcessFlow 模板 —— 以 flow 步骤流程呈现。"
+        case "chronology":
+            return isEnglish
+                ? "Use the Timeline template — chronological timeline of events."
+                : "使用 Timeline 模板 —— 按时间顺序的 timeline。"
+        case "quote", "thesis":
+            return isEnglish
+                ? "Use the QuoteCard template — Quote the speaker's key line verbatim."
+                : "使用 QuoteCard 模板 —— Quote 引用讲者的核心金句。"
+        case "comparison":
+            return isEnglish
+                ? "Use the ComparisonGrid template — Comparison side-by-side."
+                : "使用 ComparisonGrid 模板 —— Comparison 并列对照。"
+        default:
+            return isEnglish
+                ? "Pick from the catalog — no role-specific routing."
+                : "从模板目录中挑选 —— 无特定角色路由。"
+        }
+    }
+
     /// Build timeline segments for a single record's kept ranges.
     /// Extracted so `rebuildTimelineSegments` can call it from both the
     /// slot-preserving path and the legacy-fallback path without
@@ -5335,7 +5382,22 @@ final class MediaCoreViewModel: ObservableObject {
             }
         }
 
-        let rawPrompt = (editedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+        // Treat the user's textfield edit as authoritative when it
+        // genuinely differs from the popover seed (`userTitle ?? prompt`).
+        // If they kept the seed, cleared the field, or didn't pass an
+        // edit at all, fall back to the existing transcript-driven
+        // extraction. The two cases drive very different agent
+        // instructions below — edited → the user's words are the
+        // source of truth for screen text; not-edited → the transcript
+        // drives item labels and the suggestion is just inspiration.
+        let trimmedEdit = editedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let popoverSeed = (hint.userTitle ?? hint.prompt)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let userDidEdit: Bool = {
+            guard let e = trimmedEdit, !e.isEmpty else { return false }
+            return e != popoverSeed
+        }()
+        let rawPrompt = (trimmedEdit?.isEmpty == false ? trimmedEdit : nil)
             ?? hint.prompt
 
         // Image-like suggestions route through the FLUX image service
