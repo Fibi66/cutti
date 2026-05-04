@@ -745,10 +745,6 @@
 "Clip %d/%d: %@" = "素材 %1$d/%2$d：%3$@";
 "AI analyzing %d segments across %d clips…" = "AI 正在分析跨 %2$d 个素材的 %1$d 段…";
 "ℹ️ All clips were already analyzed. Rebuilt the timeline from existing cuts." = "ℹ️ 所有素材都已分析过。已基于已有剪辑重建时间线。";
-"One-click first cut (re-cut)" = "一键第一刀（重剪）";
-"Re-cut every clip on the timeline?" = "重新剪辑时间线上的所有素材？";
-"All clips on the timeline have already been cut. Re-cutting overwrites the previous AI output, costs another LLM round-trip, and cannot be undone." = "时间线上的所有素材都已经剪过了。重剪会覆盖之前的 AI 剪辑结果，重新调用一次 LLM 计费，且无法撤回。";
-"Re-cut" = "重剪";
 
 /* AI workflow preset menu (⚡ button in chat composer) */
 "Smart cut" = "智能剪辑";
