@@ -10,8 +10,17 @@ enum TranscodeResult {
     case failure(String)
 }
 
-enum MediaCoreError: Error {
+enum MediaCoreError: Error, LocalizedError {
     case recordNotFound(UUID)
+
+    var errorDescription: String? {
+        switch self {
+        // We deliberately don't include the UUID — it's a developer
+        // identifier, not something the user can act on.
+        case .recordNotFound:
+            return L("That media clip is no longer in the project.")
+        }
+    }
 }
 
 /// User-facing reasons an import was rejected before any work happened.

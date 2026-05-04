@@ -119,14 +119,16 @@ enum BugReportError: Error, LocalizedError, Equatable {
         case .validation(let msg):
             return msg
         case .payloadTooLarge(let actual, let limit):
-            return "Report is too large (\(actual / 1024) KB, limit \(limit / 1024) KB). " +
-                   "Please trim the description or steps."
+            return L("Report is too large (%d KB, limit %d KB). Please trim the description or steps.", actual / 1024, limit / 1024)
         case .rateLimited(let retry):
-            return "Too many reports. Please try again in about \(retry) seconds."
-        case .server(let status, let message):
-            return "Server error \(status): \(message)"
-        case .network(let detail):
-            return "Couldn't reach the bug report server: \(detail)"
+            return L("Too many reports. Please try again in about %d seconds.", retry)
+        case .server:
+            // Server-provided text is a developer diagnostic — never
+            // surface it (or the HTTP status) to the user. A generic
+            // localized line is enough; details are still in the logs.
+            return L("Couldn't submit the bug report right now. Please try again in a moment.")
+        case .network:
+            return L("Network error. Please check your connection and try again.")
         }
     }
 }

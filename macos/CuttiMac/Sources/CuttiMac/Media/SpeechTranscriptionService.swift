@@ -17,11 +17,24 @@ struct SpeechTranscriptionService: Sendable {
         let wordSegments: [TranscriptSegment]
     }
 
-    enum TranscriptionError: Error, Sendable {
+    enum TranscriptionError: Error, LocalizedError, Sendable {
         case recognizerUnavailable
         case authorizationDenied
         case noResult
         case recognitionFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .recognizerUnavailable:
+                return L("Speech recognition isn't available for this language on this device.")
+            case .authorizationDenied:
+                return L("Cutti needs Speech Recognition permission. Enable it in System Settings → Privacy & Security → Speech Recognition.")
+            case .noResult:
+                return L("Transcription returned no text. The audio may be silent or too short.")
+            case .recognitionFailed:
+                return L("Transcription failed. Please try again.")
+            }
+        }
     }
 
     let locale: Locale

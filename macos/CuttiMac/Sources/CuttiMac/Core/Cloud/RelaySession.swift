@@ -516,9 +516,17 @@ enum RelaySessionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .misconfigured(let s): return s
-        case .network(let s): return "Network error: \(s)"
-        case .server(let code, let m): return "Server \(code): \(m)"
+        case .misconfigured(let s):
+            // Misconfigured strings are authored by us (e.g. "Sign in
+            // to Cutti from Settings before…"), so they're already
+            // user-facing.
+            return s
+        case .network:
+            return L("Network error. Please check your connection and try again.")
+        case .server:
+            // Don't surface raw HTTP status / upstream body to the
+            // user — those are developer diagnostics.
+            return L("Cutti is temporarily unavailable. Please try again in a moment.")
         }
     }
 }

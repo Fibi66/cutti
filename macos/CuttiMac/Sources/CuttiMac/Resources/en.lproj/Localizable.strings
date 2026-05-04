@@ -50,6 +50,20 @@
 "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets.";
 "Animation rendering is temporarily unavailable. Please try again in a moment." = "Animation rendering is temporarily unavailable. Please try again in a moment.";
 "Image generation is temporarily unavailable. Please try again in a moment." = "Image generation is temporarily unavailable. Please try again in a moment.";
+"AI is temporarily unavailable. Please try again in a moment." = "AI is temporarily unavailable. Please try again in a moment.";
+"Too many requests right now. Please try again in a moment." = "Too many requests right now. Please try again in a moment.";
+"AI returned an unexpected response. Please try again." = "AI returned an unexpected response. Please try again.";
+"AI returned an empty response. Please try again." = "AI returned an empty response. Please try again.";
+"Network error. Please check your connection and try again." = "Network error. Please check your connection and try again.";
+"Cutti is temporarily unavailable. Please try again in a moment." = "Cutti is temporarily unavailable. Please try again in a moment.";
+"That media clip is no longer in the project." = "That media clip is no longer in the project.";
+"Speech recognition isn't available for this language on this device." = "Speech recognition isn't available for this language on this device.";
+"Cutti needs Speech Recognition permission. Enable it in System Settings → Privacy & Security → Speech Recognition." = "Cutti needs Speech Recognition permission. Enable it in System Settings → Privacy & Security → Speech Recognition.";
+"Transcription returned no text. The audio may be silent or too short." = "Transcription returned no text. The audio may be silent or too short.";
+"Transcription failed. Please try again." = "Transcription failed. Please try again.";
+"Report is too large (%d KB, limit %d KB). Please trim the description or steps." = "Report is too large (%1$d KB, limit %2$d KB). Please trim the description or steps.";
+"Too many reports. Please try again in about %d seconds." = "Too many reports. Please try again in about %d seconds.";
+"Couldn't submit the bug report right now. Please try again in a moment." = "Couldn't submit the bug report right now. Please try again in a moment.";
 
 /* App menu — Edit / View */
 "Undo" = "Undo";

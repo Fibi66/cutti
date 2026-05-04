@@ -108,4 +108,33 @@ final class RelayErrorMappingTests: XCTestCase {
         XCTAssertFalse(shown.contains("Image generation failed"), "Developer-prefix must not wrap relayMessage: \(shown)")
         XCTAssertFalse(shown.contains("(402)"), "HTTP status must not leak: \(shown)")
     }
+
+    /// `OpenAIClientError` now conforms to `LocalizedError`, so callers
+    /// using `error.localizedDescription` (banner messages, action-chat
+    /// failure rows, SwiftUI alerts) all get the friendly displayMessage
+    /// text — not the default
+    /// "The operation couldn’t be completed. (CuttiMac.OpenAIClientError error N.)"
+    func test_localizedDescription_returnsDisplayMessage_notSwiftEnumDump() {
+        let err: Error = OpenAIClientError.relayQuotaExceeded(used: 100, quota: 200, resetAt: nil)
+        // localizedDescription bridges through NSError; with
+        // LocalizedError conformance it returns errorDescription.
+        let shown = err.localizedDescription
+        XCTAssertTrue(shown.contains("100"), "Expected friendly quota message via localizedDescription, got: \(shown)")
+        XCTAssertFalse(shown.contains("OpenAIClientError"), "Type name must not leak: \(shown)")
+        XCTAssertFalse(shown.contains("operation couldn"), "Default NSError fallback must not show: \(shown)")
+    }
+
+    /// `.invalidResponse` must NEVER include the raw response body, even
+    /// when the body looks like JSON or contains internal fields. This
+    /// is the catch-all for non-relay-shaped 5xx / unknown responses.
+    func test_invalidResponse_neverLeaksRawBody() {
+        let err = OpenAIClientError.invalidResponse(
+            statusCode: 500,
+            body: #"{"internal_request_id":"abc-123","stack":"…"}"#
+        )
+        let shown = err.localizedDescription
+        XCTAssertFalse(shown.contains("internal_request_id"), "Internal field leaked: \(shown)")
+        XCTAssertFalse(shown.contains("{"), "Raw JSON leaked: \(shown)")
+        XCTAssertFalse(shown.contains("500"), "HTTP status leaked: \(shown)")
+    }
 }

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Configuration
 
-enum OpenAIClientError: Error, Sendable {
+enum OpenAIClientError: Error, LocalizedError, Sendable {
     case invalidResponse(statusCode: Int, body: String)
     case decodingFailed(String)
     case noChoices
@@ -37,23 +37,34 @@ enum OpenAIClientError: Error, Sendable {
     /// User-facing message used by the chat panel.
     var displayMessage: String {
         switch self {
-        case .invalidResponse(let status, let body):
-            let hint: String
+        case .invalidResponse(let status, _):
+            // Never include the raw response body — it can leak
+            // internal relay diagnostics (credits_used, request_id, …).
+            // Map the HTTP status to a friendly localized hint instead.
             switch status {
-            case 401: hint = L("Please sign in from Settings.")
-            case 403: hint = "Access denied (403)."
-            case 404: hint = "Endpoint not found (404)."
-            case 429: hint = "Rate-limited (429). Please try again in a moment."
-            case 500...599: hint = "Server error (\(status)). Try again in a moment."
-            default: hint = "HTTP \(status)."
+            case 401:
+                return L("Please sign in from Settings.")
+            case 403:
+                return L("AI is temporarily unavailable. Please try again in a moment.")
+            case 404:
+                return L("AI is temporarily unavailable. Please try again in a moment.")
+            case 429:
+                return L("Too many requests right now. Please try again in a moment.")
+            case 500...599:
+                return L("AI is temporarily unavailable. Please try again in a moment.")
+            default:
+                return L("AI is temporarily unavailable. Please try again in a moment.")
             }
-            return "\(hint) \(body.prefix(200))"
-        case .decodingFailed(let msg):
-            return "Failed to parse AI response: \(msg)"
+        case .decodingFailed:
+            return L("AI returned an unexpected response. Please try again.")
         case .noChoices:
-            return "AI returned an empty response."
-        case .networkError(let msg):
-            return "Network error: \(msg)"
+            return L("AI returned an empty response. Please try again.")
+        case .networkError:
+            // The OS error string (e.g. "The Internet connection
+            // appears to be offline.") is already localized + friendly,
+            // but we don't trust every URLError code to be polite, so
+            // we use a single canonical line.
+            return L("Network error. Please check your connection and try again.")
         case .relayAuthRequired:
             return L("Please sign in from Settings.")
         case .relayEmailNotVerified:
@@ -61,6 +72,15 @@ enum OpenAIClientError: Error, Sendable {
         case .relayQuotaExceeded(let used, let quota, let resetAt):
             return Self.formatQuotaExceeded(used: used, quota: quota, resetAt: resetAt)
         }
+    }
+
+    /// Same as `displayMessage`. Conforming to `LocalizedError` means
+    /// SwiftUI alerts and any `error.localizedDescription` call site
+    /// (banner messages, action-chat failure rows, etc.) all get the
+    /// friendly localized text — not the default
+    /// "The operation couldn’t be completed. (CuttiMac.OpenAIClientError error N.)"
+    var errorDescription: String? {
+        displayMessage
     }
 
     private static func formatQuotaExceeded(

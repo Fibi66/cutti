@@ -50,6 +50,20 @@
 "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "本月 AI 额度已用完（%@）。升级到付费方案可获得更多额度，或等到下个月 1 号额度重置。";
 "Animation rendering is temporarily unavailable. Please try again in a moment." = "动画渲染服务暂时不可用，请稍后再试。";
 "Image generation is temporarily unavailable. Please try again in a moment." = "图片生成服务暂时不可用，请稍后再试。";
+"AI is temporarily unavailable. Please try again in a moment." = "AI 服务暂时不可用，请稍后再试。";
+"Too many requests right now. Please try again in a moment." = "当前请求过于频繁，请稍后再试。";
+"AI returned an unexpected response. Please try again." = "AI 返回了无法识别的内容，请重试。";
+"AI returned an empty response. Please try again." = "AI 返回了空内容，请重试。";
+"Network error. Please check your connection and try again." = "网络错误，请检查网络后重试。";
+"Cutti is temporarily unavailable. Please try again in a moment." = "Cutti 服务暂时不可用，请稍后再试。";
+"That media clip is no longer in the project." = "该素材已不在项目中。";
+"Speech recognition isn't available for this language on this device." = "此设备暂不支持该语言的语音识别。";
+"Cutti needs Speech Recognition permission. Enable it in System Settings → Privacy & Security → Speech Recognition." = "Cutti 需要语音识别权限。请前往「系统设置 → 隐私与安全性 → 语音识别」开启。";
+"Transcription returned no text. The audio may be silent or too short." = "未识别到任何语音内容，音频可能为静音或时长过短。";
+"Transcription failed. Please try again." = "语音识别失败，请重试。";
+"Report is too large (%d KB, limit %d KB). Please trim the description or steps." = "反馈内容过长（%1$d KB，上限 %2$d KB）。请精简描述或步骤后重试。";
+"Too many reports. Please try again in about %d seconds." = "提交过于频繁，请在约 %d 秒后重试。";
+"Couldn't submit the bug report right now. Please try again in a moment." = "当前无法提交反馈，请稍后再试。";
 
 /* App menu — Edit / View */
 "Undo" = "撤销";
