@@ -1045,12 +1045,17 @@ final class MediaCoreViewModel: ObservableObject {
     /// function walks the *existing* timeline slot-by-slot and decides
     /// per slot:
     ///
-    /// - If the slot's source record now has analyzed `keptRanges`,
-    ///   replace that slot with one segment per kept range.
-    /// - Otherwise, keep the slot verbatim (untouched placeholder, or a
-    ///   manual edit). This is what lets imports auto-append a
-    ///   full-length placeholder on the timeline without it getting
-    ///   wiped on the next `select()` / `loadRecords()`.
+    /// - If the slot is a **full-source placeholder** (its range
+    ///   covers essentially the entire source) AND its source has
+    ///   analyzed `keptRanges`, replace that slot with one segment
+    ///   per kept range.
+    /// - Otherwise (already-expanded sub-range, manual trim, manually
+    ///   inserted segment), keep the slot verbatim. This is what
+    ///   makes the function **idempotent** — once a slot has been
+    ///   expanded into sub-ranges, re-running rebuild leaves it alone.
+    ///   Without this guard, every call would re-expand each sub-range
+    ///   slot by `keptRanges`, multiplying the timeline by M on each
+    ///   call (M → M² → M³ …).
     /// - Records that exist in the library but are NOT on the timeline
     ///   contribute nothing — they were either never dragged in or were
     ///   deliberately deleted from the timeline.
@@ -1080,7 +1085,9 @@ final class MediaCoreViewModel: ObservableObject {
                     continue
                 }
 
-                if let kept = record.copilot?.keptRanges, !kept.isEmpty {
+                let isPlaceholder = Self.slotIsFullSourcePlaceholder(slot: slot, record: record)
+
+                if isPlaceholder, let kept = record.copilot?.keptRanges, !kept.isEmpty {
                     let expanded = Self.expandRecordIntoSegments(
                         record: record,
                         keptRanges: kept,
@@ -1088,7 +1095,11 @@ final class MediaCoreViewModel: ObservableObject {
                     )
                     allSegments.append(contentsOf: expanded)
                 } else {
-                    // Untouched placeholder or manual edit — keep as-is.
+                    // Already expanded, manually trimmed, or manually
+                    // inserted — keep verbatim. Re-expanding here is
+                    // what caused the M² timeline explosion (every
+                    // select() rebuild would multiply segments by the
+                    // source's keptRanges count).
                     allSegments.append(slot)
                 }
             }
@@ -1115,6 +1126,25 @@ final class MediaCoreViewModel: ObservableObject {
         }
 
         rebuildComposedSubtitles()
+    }
+
+    /// True iff the slot's source range covers (essentially) the full
+    /// source duration — i.e., it's an unexpanded placeholder produced
+    /// by the import auto-append path. AI-expanded sub-ranges and
+    /// user-trimmed slots fail this check and are kept verbatim by
+    /// `rebuildTimelineSegments`. Tolerance is 50ms on each end to
+    /// absorb proxy/source duration rounding and floating-point noise
+    /// from JSON round-trips.
+    ///
+    /// One legitimate corner: a single keptRange covering the entire
+    /// source also satisfies this check after expansion, but
+    /// re-expanding produces the same single segment, so the timeline
+    /// stays at 1 segment (idempotent for that case).
+    private static func slotIsFullSourcePlaceholder(slot: TimelineSegment, record: MediaAssetRecord) -> Bool {
+        guard let dur = record.analysis?.durationSeconds, dur > 0 else { return false }
+        let tolerance: Double = 0.05
+        return slot.range.startSeconds <= tolerance
+            && slot.range.endSeconds >= dur - tolerance
     }
 
     /// Compact, deterministic routing hint string fed into the
@@ -5512,80 +5542,174 @@ final class MediaCoreViewModel: ObservableObject {
             let instruction: String
             let durationFormatted = String(format: "%.1f", anchorDuration)
             if isEnglish {
-                instruction = """
-                Generate a single animated overlay at composed_time = \
-                \(String(format: "%.2f", hint.composedSeconds))s.
+                if userDidEdit {
+                    instruction = """
+                    Generate a single animated overlay at composed_time = \
+                    \(String(format: "%.2f", hint.composedSeconds))s.
 
-                ## Anchor window
-                The speaker spends \(durationFormatted)s on this topic. \
-                For sequence-style overlays the overlay must match that \
-                runtime: set `durationSeconds` ≈ \(durationFormatted) \
-                (clamped to the template's allowed range, max 30s).
+                    ## Anchor window
+                    The speaker spends \(durationFormatted)s on this topic. \
+                    For sequence-style overlays the overlay must match \
+                    that runtime: set `durationSeconds` ≈ \(durationFormatted) \
+                    (clamped to the template's allowed range, max 30s).
 
-                ## Transcript in the anchor window (word-level buckets; \
-                timestamps are RELATIVE to the overlay start, 0 = overlay \
-                begins)
-                \(transcriptBlock)
+                    ## User direction (THIS is what the user wants on screen — \
+                    use it as the authoritative source for all text content)
+                    "\(rawPrompt)"
 
-                ## Suggestion hint (inspiration only — DO NOT copy verbatim)
-                "\(rawPrompt)"
+                    The user has hand-edited the prompt for this overlay. \
+                    Treat their text above as the source of truth for what \
+                    appears on screen. For SequenceSteps / Comparison / \
+                    TripleTap / SkillMeter / Quote / etc., extract item \
+                    labels, headings, bullets, and quoted text from THIS \
+                    user direction — NOT from the transcript below. The \
+                    transcript is included only so you can pick reasonable \
+                    `atSeconds` timing for sequence items.
 
-                ## Why this moment benefits from a visual
-                "\(hint.rationale)"
+                    ## Transcript in the anchor window (for TIMING reference \
+                    only; word-level buckets, timestamps RELATIVE to overlay \
+                    start, 0 = overlay begins)
+                    \(transcriptBlock)
 
-                Pick the most appropriate template from the catalog \
-                (ChapterTitle / TitleCard / ChatBubble / PromptTyping / \
-                SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / \
-                SequenceSteps / Quote / Comparison) and call \
-                `generate_overlay` exactly once. Routing hints:
-                - Enumeration ("first… second… third…") → \
-                  SequenceSteps layout="list"
-                - Step/process description ("A → B → C", "先 X 再 Y") → \
-                  SequenceSteps layout="flow"
-                - Dated chronology ("in 2020…, in 2022…, in 2024…") → \
-                  SequenceSteps layout="timeline"
-                - Single memorable line → Quote
-                - Contrast A vs B → Comparison
-                - Standalone title / chapter break (~2–3s) → \
-                  ChapterTitle or TitleCard (DO NOT size these to the \
-                  full anchor window — keep them tight).
+                    ## Why this moment benefits from a visual
+                    "\(hint.rationale)"
 
-                For SequenceSteps: set each item's `atSeconds` from the \
-                transcript offsets above (find the phrase where item N \
-                is uttered → that item's atSeconds ≈ that phrase's +X.Xs \
-                timestamp). Extract the real item labels from the \
-                transcript, NOT from the suggestion hint text. Do not \
-                run any other tools.
-                """
+                    Pick the most appropriate template from the catalog \
+                    (ChapterTitle / TitleCard / ChatBubble / PromptTyping / \
+                    SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / \
+                    SequenceSteps / Quote / Comparison) based on the structure \
+                    of the User direction above and call `generate_overlay` \
+                    exactly once. Routing hints:
+                    - Enumeration ("first… second… third…") → \
+                      SequenceSteps layout="list"
+                    - Step/process description ("A → B → C", "先 X 再 Y") → \
+                      SequenceSteps layout="flow"
+                    - Dated chronology ("in 2020…, in 2022…, in 2024…") → \
+                      SequenceSteps layout="timeline"
+                    - Single memorable line → Quote
+                    - Contrast A vs B → Comparison
+                    - Standalone title / chapter break (~2–3s) → \
+                      ChapterTitle or TitleCard (DO NOT size these to the \
+                      full anchor window — keep them tight).
+
+                    For SequenceSteps: lift each item's label directly from \
+                    the User direction above (split on bullets, line breaks, \
+                    or numbered/lettered enumeration). For each item's \
+                    `atSeconds`, prefer the relative timestamp of the \
+                    closest phrase in the transcript that names that item; \
+                    if no clear correspondence exists, distribute items \
+                    evenly across the overlay duration. Do not run any \
+                    other tools.
+                    """
+                } else {
+                    instruction = """
+                    Generate a single animated overlay at composed_time = \
+                    \(String(format: "%.2f", hint.composedSeconds))s.
+
+                    ## Anchor window
+                    The speaker spends \(durationFormatted)s on this topic. \
+                    For sequence-style overlays the overlay must match that \
+                    runtime: set `durationSeconds` ≈ \(durationFormatted) \
+                    (clamped to the template's allowed range, max 30s).
+
+                    ## Transcript in the anchor window (word-level buckets; \
+                    timestamps are RELATIVE to the overlay start, 0 = overlay \
+                    begins)
+                    \(transcriptBlock)
+
+                    ## Suggestion hint (inspiration only — DO NOT copy verbatim)
+                    "\(rawPrompt)"
+
+                    ## Why this moment benefits from a visual
+                    "\(hint.rationale)"
+
+                    Pick the most appropriate template from the catalog \
+                    (ChapterTitle / TitleCard / ChatBubble / PromptTyping / \
+                    SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / \
+                    SequenceSteps / Quote / Comparison) and call \
+                    `generate_overlay` exactly once. Routing hints:
+                    - Enumeration ("first… second… third…") → \
+                      SequenceSteps layout="list"
+                    - Step/process description ("A → B → C", "先 X 再 Y") → \
+                      SequenceSteps layout="flow"
+                    - Dated chronology ("in 2020…, in 2022…, in 2024…") → \
+                      SequenceSteps layout="timeline"
+                    - Single memorable line → Quote
+                    - Contrast A vs B → Comparison
+                    - Standalone title / chapter break (~2–3s) → \
+                      ChapterTitle or TitleCard (DO NOT size these to the \
+                      full anchor window — keep them tight).
+
+                    For SequenceSteps: set each item's `atSeconds` from the \
+                    transcript offsets above (find the phrase where item N \
+                    is uttered → that item's atSeconds ≈ that phrase's +X.Xs \
+                    timestamp). Extract the real item labels from the \
+                    transcript, NOT from the suggestion hint text. Do not \
+                    run any other tools.
+                    """
+                }
             } else {
-                instruction = """
-                请在 composed_time = \(String(format: "%.2f", hint.composedSeconds))s 处生成一个动画 overlay。
+                if userDidEdit {
+                    instruction = """
+                    请在 composed_time = \(String(format: "%.2f", hint.composedSeconds))s 处生成一个动画 overlay。
 
-                ## Anchor 窗口
-                用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
+                    ## Anchor 窗口
+                    用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
 
-                ## 窗口内的原文（word-level 短句分桶，时间戳**相对于 overlay 开始**，0 = overlay 开播）
-                \(transcriptBlock)
+                    ## 用户指令（**这就是要显示在屏幕上的内容** — 把它当作文字内容的权威来源）
+                    "\(rawPrompt)"
 
-                ## 灵感提示（仅供参考，**不要**原样当 props）
-                "\(rawPrompt)"
+                    用户手动编辑了这条 overlay 的 prompt，请把上面这段当作 overlay 屏幕文字的权威来源。对于 SequenceSteps / Comparison / TripleTap / SkillMeter / Quote 等模板，item 的 label、heading、bullet、引用文字 **必须从用户指令里提炼**，不要从下面的转录原文里抽。下方转录仅用于给 SequenceSteps 计算 `atSeconds`。
 
-                ## 为什么此处需要视觉辅助
-                "\(hint.rationale)"
+                    ## 窗口内的原文（**仅用于时间参考**；word-level 短句分桶，时间戳相对于 overlay 开始，0 = overlay 开播）
+                    \(transcriptBlock)
 
-                请从 generate_overlay 模板目录里（ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison）挑最合适的一个，调用一次 generate_overlay。路由提示：
-                - 列举"第一/第二/第三" → SequenceSteps layout="list"
-                - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
-                - 带日期的年表"2020 创立，2022 融资，2024 上线" → SequenceSteps layout="timeline"
-                - 一句金句/关键总结 → Quote
-                - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
-                - 纯标题卡/章节过场（2–3s）→ ChapterTitle 或 TitleCard（**不要**把这类撑满整个 anchor 窗口，短小紧凑）
+                    ## 为什么此处需要视觉辅助
+                    "\(hint.rationale)"
 
-                SequenceSteps 的要点：
-                - 每个 item 的 `atSeconds` **从上面的相对时间戳里提取**（找到第 N 条对应的短句 → 该 item 的 atSeconds ≈ 短句的 +X.Xs），这样动画节奏跟着讲话走
-                - 真正要显示的 item label **从原文里提炼**，不要把"灵感提示"那段当 props
-                - 不要调用其它工具
-                """
+                    请从 generate_overlay 模板目录里（ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison）**根据用户指令的结构**挑最合适的一个，调用一次 generate_overlay。路由提示：
+                    - 列举"第一/第二/第三" → SequenceSteps layout="list"
+                    - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
+                    - 带日期的年表"2020 创立，2022 融资，2024 上线" → SequenceSteps layout="timeline"
+                    - 一句金句/关键总结 → Quote
+                    - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
+                    - 纯标题卡/章节过场（2–3s）→ ChapterTitle 或 TitleCard（**不要**把这类撑满整个 anchor 窗口，短小紧凑）
+
+                    SequenceSteps 的要点：
+                    - item 的 label **直接从用户指令里拆**（按符号、换行或编号切）
+                    - 每个 item 的 `atSeconds`：优先用转录里最接近该 item 的短句的相对时间戳；如果对不上，则在 overlay 时长内均匀分布
+                    - 不要调用其它工具
+                    """
+                } else {
+                    instruction = """
+                    请在 composed_time = \(String(format: "%.2f", hint.composedSeconds))s 处生成一个动画 overlay。
+
+                    ## Anchor 窗口
+                    用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
+
+                    ## 窗口内的原文（word-level 短句分桶，时间戳**相对于 overlay 开始**，0 = overlay 开播）
+                    \(transcriptBlock)
+
+                    ## 灵感提示（仅供参考，**不要**原样当 props）
+                    "\(rawPrompt)"
+
+                    ## 为什么此处需要视觉辅助
+                    "\(hint.rationale)"
+
+                    请从 generate_overlay 模板目录里（ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison）挑最合适的一个，调用一次 generate_overlay。路由提示：
+                    - 列举"第一/第二/第三" → SequenceSteps layout="list"
+                    - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
+                    - 带日期的年表"2020 创立，2022 融资，2024 上线" → SequenceSteps layout="timeline"
+                    - 一句金句/关键总结 → Quote
+                    - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
+                    - 纯标题卡/章节过场（2–3s）→ ChapterTitle 或 TitleCard（**不要**把这类撑满整个 anchor 窗口，短小紧凑）
+
+                    SequenceSteps 的要点：
+                    - 每个 item 的 `atSeconds` **从上面的相对时间戳里提取**（找到第 N 条对应的短句 → 该 item 的 atSeconds ≈ 短句的 +X.Xs），这样动画节奏跟着讲话走
+                    - 真正要显示的 item label **从原文里提炼**，不要把"灵感提示"那段当 props
+                    - 不要调用其它工具
+                    """
+                }
             }
             Task { await handleAIPrompt(instruction, displayAs: suggestionDisplayText) }
             return
