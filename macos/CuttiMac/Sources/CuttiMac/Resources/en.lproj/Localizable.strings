@@ -895,3 +895,77 @@
 "Thanks — your report is in." = "Thanks — your report is in.";
 "We'll triage it and follow up if we need more info." = "We'll triage it and follow up if we need more info.";
 "View on GitHub" = "View on GitHub";
+
+/* ---------------------------------------------------------------- */
+/* Settings redesign (Obsidian-Pro dark) — added in Settings UI v2  */
+/* ---------------------------------------------------------------- */
+
+/* Account */
+"AI features need an account." = "AI features need an account.";
+"Sign in" = "Sign in";
+"Use your Cutti account to enable AI features." = "Use your Cutti account to enable AI features.";
+"Email and password are required." = "Email and password are required.";
+"Email or password is incorrect." = "Email or password is incorrect.";
+"Please enter a valid email address." = "Please enter a valid email address.";
+"verify.email.message_with_address" = "We sent a verification link to %@. Click the link to activate AI features.";
+"verify.email.message_generic" = "Check the inbox for the email you signed up with. Click the verification link to activate AI features.";
+"verify.email.sent" = "Verification email sent.";
+"verify.email.rate_limited" = "Try again in a moment.";
+"verify.email.already_verified" = "Your email is already verified.";
+
+/* Provider */
+"Compatible providers" = "Compatible providers";
+"Using Cutti Cloud" = "Using Cutti Cloud";
+"All AI features available — first cut, B-roll generation, agent chat, subtitle translation, image generation, and animated overlays." = "All AI features available — first cut, B-roll generation, agent chat, subtitle translation, image generation, and animated overlays.";
+"Idle · last test %@" = "Idle · last test %@";
+"Connected · last test %@" = "Connected · last test %@";
+"Testing…" = "Testing…";
+"Auth required" = "Auth required";
+"Auth failed (%d)" = "Auth failed (%d)";
+"Endpoint not found" = "Endpoint not found";
+"Quota exceeded" = "Quota exceeded";
+"Network: %@" = "Network: %@";
+"Non-HTTP response" = "Non-HTTP response";
+"Invalid base URL" = "Invalid base URL";
+"Could not decode response" = "Could not decode response";
+"No choices in response" = "No choices in response";
+"Email not verified" = "Email not verified";
+
+/* Quality */
+"Quality preference" = "Quality preference";
+"Smart  ·  Recommended" = "Smart  ·  Recommended";
+"High Quality" = "High Quality";
+"Economy" = "Economy";
+
+/* Subscription */
+"Free plan" = "Free plan";
+"plan_suffix" = "plan";
+"renews_on_%@" = "Renews on %@";
+"Resets today" = "Resets today";
+"Resets in 1 day" = "Resets in 1 day";
+"Resets in %d days" = "Resets in %d days";
+"Monthly credits" = "Monthly credits";
+"Pack credits" = "Pack credits";
+"One-time purchase · never expires" = "One-time purchase · never expires";
+"credits_suffix" = "credits";
+"Pick a plan to unlock AI features billed through your App Store account." = "Pick a plan to unlock AI features billed through your App Store account.";
+"Subscription products are not available on this build yet." = "Subscription products are not available on this build yet.";
+
+/* Usage */
+"Last 7 days" = "Last 7 days";
+"Last 30 days" = "Last 30 days";
+"Last 90 days" = "Last 90 days";
+"No AI calls billed in this window yet." = "No AI calls billed in this window yet.";
+"Whisper transcription runs locally on your Mac and is not counted." = "Whisper transcription runs locally on your Mac and is not counted.";
+"Total" = "Total";
+"calls_suffix" = "calls";
+"Refresh" = "Refresh";
+
+/* Editor */
+"System  ·  English" = "System  ·  English";
+"System  ·  Chinese" = "System  ·  Chinese";
+
+/* Bug report */
+"Report a bug" = "Report a bug";
+"Reports go to our public GitHub. Diagnostics are optional." = "Reports go to our public GitHub. Diagnostics are optional.";
+"Include enough detail and we'll triage quickly." = "Include enough detail and we'll triage quickly.";

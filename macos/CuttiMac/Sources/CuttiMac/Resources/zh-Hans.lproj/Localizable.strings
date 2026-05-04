@@ -896,3 +896,77 @@
 "Thanks — your report is in." = "感谢——反馈已收到。";
 "We'll triage it and follow up if we need more info." = "我们会处理，需要更多信息时会联系你。";
 "View on GitHub" = "在 GitHub 上查看";
+
+/* ---------------------------------------------------------------- */
+/* 设置面板重设计（Obsidian-Pro 深色主题）— Settings UI v2 新增      */
+/* ---------------------------------------------------------------- */
+
+/* 账户 */
+"AI features need an account." = "使用 AI 功能需要登录账户。";
+"Sign in" = "登录";
+"Use your Cutti account to enable AI features." = "使用 Cutti 账户启用 AI 功能。";
+"Email and password are required." = "邮箱和密码不能为空。";
+"Email or password is incorrect." = "邮箱或密码不正确。";
+"Please enter a valid email address." = "请输入有效的邮箱地址。";
+"verify.email.message_with_address" = "我们已向 %@ 发送了验证邮件。点击邮件中的链接即可启用 AI 功能。";
+"verify.email.message_generic" = "请查收注册时使用的邮箱，点击邮件中的验证链接启用 AI 功能。";
+"verify.email.sent" = "验证邮件已发送。";
+"verify.email.rate_limited" = "请稍后再试。";
+"verify.email.already_verified" = "你的邮箱已经验证过了。";
+
+/* 提供方 */
+"Compatible providers" = "兼容的提供方";
+"Using Cutti Cloud" = "使用 Cutti 云端";
+"All AI features available — first cut, B-roll generation, agent chat, subtitle translation, image generation, and animated overlays." = "全部 AI 功能可用——初剪、B-roll 生成、Agent 对话、字幕翻译、图像生成与动画叠加。";
+"Idle · last test %@" = "未连接 · 上次测试 %@";
+"Connected · last test %@" = "已连接 · 上次测试 %@";
+"Testing…" = "测试中…";
+"Auth required" = "需要鉴权";
+"Auth failed (%d)" = "鉴权失败（%d）";
+"Endpoint not found" = "找不到接口";
+"Quota exceeded" = "额度已用尽";
+"Network: %@" = "网络：%@";
+"Non-HTTP response" = "非 HTTP 响应";
+"Invalid base URL" = "Base URL 无效";
+"Could not decode response" = "无法解析响应";
+"No choices in response" = "响应中无 choices";
+"Email not verified" = "邮箱未验证";
+
+/* 质量 */
+"Quality preference" = "质量偏好";
+"Smart  ·  Recommended" = "智能  ·  推荐";
+"High Quality" = "高质量";
+"Economy" = "经济";
+
+/* 订阅 */
+"Free plan" = "免费方案";
+"plan_suffix" = "方案";
+"renews_on_%@" = "%@ 续费";
+"Resets today" = "今日重置";
+"Resets in 1 day" = "1 天后重置";
+"Resets in %d days" = "%d 天后重置";
+"Monthly credits" = "月度额度";
+"Pack credits" = "加油包额度";
+"One-time purchase · never expires" = "一次性购买 · 永久有效";
+"credits_suffix" = "积分";
+"Pick a plan to unlock AI features billed through your App Store account." = "选择一个方案以启用 AI 功能，通过你的 App Store 账户付款。";
+"Subscription products are not available on this build yet." = "当前版本暂未提供订阅商品。";
+
+/* 用量 */
+"Last 7 days" = "最近 7 天";
+"Last 30 days" = "最近 30 天";
+"Last 90 days" = "最近 90 天";
+"No AI calls billed in this window yet." = "此时间段内暂无 AI 计费记录。";
+"Whisper transcription runs locally on your Mac and is not counted." = "Whisper 转写在你的 Mac 本地运行，不计入用量。";
+"Total" = "合计";
+"calls_suffix" = "次调用";
+"Refresh" = "刷新";
+
+/* 编辑器 */
+"System  ·  English" = "跟随系统  ·  英文";
+"System  ·  Chinese" = "跟随系统  ·  中文";
+
+/* Bug 报告 */
+"Report a bug" = "报告 Bug";
+"Reports go to our public GitHub. Diagnostics are optional." = "反馈会提交到我们公开的 GitHub Issue 列表，诊断信息可选附带。";
+"Include enough detail and we'll triage quickly." = "提供足够细节，我们会尽快处理。";

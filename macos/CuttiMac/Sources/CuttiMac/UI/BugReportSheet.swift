@@ -2,9 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Modal sheet for filing a bug report from inside the app. Reachable
-/// from Settings → Support. Shows a form, posts the report to the
-/// relay (`BugReportService`), and renders a success or failure
-/// state inline so the user gets immediate confirmation.
+/// from Settings → Support. Restyled for the Obsidian-Pro dark theme:
+/// custom titlebar with Cancel/Send buttons, dark cards for each field.
 ///
 /// The disclosure under "Include diagnostics" displays the exact JSON
 /// that will be transmitted, so users can verify nothing surprising
@@ -46,143 +45,229 @@ struct BugReportSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let response = submissionResponse {
-                    successView(response)
-                } else {
-                    formView
-                }
-            }
-            .navigationTitle(L("Report a Bug"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        T(submissionResponse == nil ? "Cancel" : "Close")
-                    }
-                }
-                if submissionResponse == nil {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button {
-                            Task { await submit() }
-                        } label: {
-                            if isSubmitting {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                T("Send")
-                            }
-                        }
-                        .disabled(!canSubmit)
-                        .keyboardShortcut(.return, modifiers: [.command])
-                    }
-                }
-            }
+        VStack(spacing: 0) {
+            header
+            Rectangle()
+                .fill(SettingsTheme.borderSoft)
+                .frame(height: 1)
+            content
+            Rectangle()
+                .fill(SettingsTheme.borderSoft)
+                .frame(height: 1)
+            footer
         }
         .frame(width: 560, height: 620)
+        .background(SettingsTheme.bg)
+        .preferredColorScheme(.dark)
+        .tint(SettingsTheme.accent)
+        .settingsThemed()
         .onAppear {
             if contactEmail.isEmpty, let email = session.user?.email {
                 contactEmail = email
             }
-            // Refresh once on open so a stale snapshot from when the
-            // sheet was first instantiated doesn't ship out.
             diagnosticsSnapshot = BugReportDiagnostics.current()
         }
         .onChange(of: includeDiagnostics) { _, newValue in
-            // Re-snapshot when the user opts back in so `submittedAt`
-            // reflects when they made that choice, not sheet-open.
             if newValue {
                 diagnosticsSnapshot = BugReportDiagnostics.current()
             }
         }
     }
 
+    // MARK: - Chrome
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                T("Report a Bug")
+                    .font(SettingsTheme.ui(15, weight: .semibold))
+                    .foregroundStyle(SettingsTheme.text)
+                T("Include enough detail and we'll triage quickly.")
+                    .font(SettingsTheme.caption)
+                    .foregroundStyle(SettingsTheme.textDim)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .background(SettingsTheme.bg)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            SettingsButton(
+                submissionResponse == nil ? "Cancel" : "Close",
+                variant: .ghost,
+                size: .medium
+            ) { dismiss() }
+
+            if submissionResponse == nil {
+                SettingsButton(
+                    variant: .primary,
+                    size: .medium,
+                    loading: isSubmitting,
+                    disabled: !canSubmit,
+                    action: { Task { await submit() } },
+                    label: { T("Send") }
+                )
+                .keyboardShortcut(.return, modifiers: [.command])
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(SettingsTheme.panel2)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let response = submissionResponse {
+            successView(response)
+        } else {
+            ScrollView {
+                formContent
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 16)
+            }
+        }
+    }
+
     // MARK: - Form
 
-    private var formView: some View {
-        Form {
-            Section {
-                T("Tell us what went wrong. The more detail you can give, the faster we can fix it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $description)
-                    .font(.body)
-                    .frame(minHeight: 110)
-                    .overlay(alignment: .topLeading) {
-                        if description.isEmpty {
-                            T("e.g. The app froze when I dragged a 4K clip onto an empty timeline.")
-                                .foregroundStyle(.tertiary)
-                                .padding(.top, 8)
-                                .padding(.leading, 4)
-                                .allowsHitTesting(false)
-                        }
-                    }
-            } header: {
-                T("What happened?")
+    private var formContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            field(
+                title: "What happened?",
+                hint: "Tell us what went wrong. The more detail you can give, the faster we can fix it."
+            ) {
+                editor(
+                    text: $description,
+                    minHeight: 110,
+                    placeholder: L("e.g. The app froze when I dragged a 4K clip onto an empty timeline.")
+                )
             }
 
-            Section {
-                TextEditor(text: $reproSteps)
-                    .font(.body)
-                    .frame(minHeight: 70)
-            } header: {
-                T("Steps to reproduce (optional)")
+            field(title: "Steps to reproduce (optional)") {
+                editor(text: $reproSteps, minHeight: 70, placeholder: nil)
             }
 
-            Section {
-                TextField(L("name@example.com"), text: $contactEmail)
-                    .textContentType(.emailAddress)
-                    .disableAutocorrection(true)
-                T("Only used to follow up on this report. Leave blank to submit anonymously.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                T("Reply email (optional)")
+            field(
+                title: "Reply email (optional)",
+                hint: "Only used to follow up on this report. Leave blank to submit anonymously."
+            ) {
+                SettingsField(
+                    text: $contactEmail,
+                    placeholder: "name@example.com",
+                    mono: false,
+                    maxWidth: nil
+                )
             }
 
-            Section {
-                Toggle(isOn: $includeDiagnostics) {
-                    T("Include diagnostics")
-                }
-                T("Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                DisclosureGroup(isExpanded: $showsDiagnosticsPreview) {
-                    ScrollView {
-                        Text(BugReportService.previewJSON(for: report))
-                            .font(.system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                    }
-                    .frame(height: 160)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.secondary.opacity(0.08))
+            field(title: "Privacy") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SettingsToggle(
+                        isOn: $includeDiagnostics,
+                        label: "Include diagnostics"
                     )
-                } label: {
-                    T("Show what will be sent")
-                        .font(.caption)
+                    T("Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files.")
+                        .font(SettingsTheme.caption)
+                        .foregroundStyle(SettingsTheme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    DisclosureGroup(isExpanded: $showsDiagnosticsPreview) {
+                        ScrollView {
+                            Text(BugReportService.previewJSON(for: report))
+                                .font(SettingsTheme.monoSmall)
+                                .foregroundStyle(SettingsTheme.text)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                        }
+                        .frame(height: 160)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(SettingsTheme.panel3)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(SettingsTheme.borderSoft, lineWidth: 1)
+                        )
+                        .padding(.top, 4)
+                    } label: {
+                        T("Show what will be sent")
+                            .font(SettingsTheme.caption)
+                            .foregroundStyle(SettingsTheme.textDim)
+                    }
+                    .tint(SettingsTheme.accent)
                 }
-            } header: {
-                T("Privacy")
             }
 
             if let submissionError {
-                Section {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                        Text(submissionError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(SettingsTheme.red)
+                    Text(submissionError)
+                        .font(SettingsTheme.caption)
+                        .foregroundStyle(SettingsTheme.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
                 }
             }
         }
-        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func field<Content: View>(
+        title: LocalizedStringKey,
+        hint: LocalizedStringKey? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            T(title)
+                .font(SettingsTheme.captionFaint)
+                .foregroundStyle(SettingsTheme.textDim)
+            SettingsCard(padding: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let hint {
+                        T(hint)
+                            .font(SettingsTheme.caption)
+                            .foregroundStyle(SettingsTheme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    content()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func editor(text: Binding<String>, minHeight: CGFloat, placeholder: String?) -> some View {
+        TextEditor(text: text)
+            .font(SettingsTheme.bodyRegular)
+            .foregroundStyle(SettingsTheme.text)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: minHeight)
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(SettingsTheme.panel3)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(SettingsTheme.borderSoft, lineWidth: 1)
+            )
+            .overlay(alignment: .topLeading) {
+                if let placeholder, text.wrappedValue.isEmpty {
+                    Text(placeholder)
+                        .font(SettingsTheme.bodyRegular)
+                        .foregroundStyle(SettingsTheme.textFaint)
+                        .padding(.top, 14)
+                        .padding(.leading, 12)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 
     // MARK: - Success
@@ -190,15 +275,16 @@ struct BugReportSheet: View {
     @ViewBuilder
     private func successView(_ response: BugReportSubmissionResponse) -> some View {
         VStack(spacing: 16) {
+            Spacer().frame(height: 20)
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 56))
-                .foregroundStyle(.green)
+                .foregroundStyle(SettingsTheme.green)
             T("Thanks — your report is in.")
-                .font(.title2)
-                .fontWeight(.semibold)
+                .font(SettingsTheme.ui(17, weight: .semibold))
+                .foregroundStyle(SettingsTheme.text)
             T("We'll triage it and follow up if we need more info.")
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(SettingsTheme.bodyRegular)
+                .foregroundStyle(SettingsTheme.textDim)
                 .multilineTextAlignment(.center)
 
             if let issueURLString = response.issueURL,
@@ -210,20 +296,23 @@ struct BugReportSheet: View {
                         Image(systemName: "arrow.up.right.square")
                         T("View on GitHub")
                     }
+                    .font(SettingsTheme.caption)
+                    .foregroundStyle(SettingsTheme.accent)
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
             }
 
             if let ticketID = response.ticketID {
                 Text(verbatim: "Ticket: \(ticketID)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .font(SettingsTheme.monoSmall)
+                    .foregroundStyle(SettingsTheme.textFaint)
                     .textSelection(.enabled)
             }
 
             Spacer()
         }
-        .padding(.top, 60)
+        .padding(.horizontal, 24)
+        .padding(.top, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
