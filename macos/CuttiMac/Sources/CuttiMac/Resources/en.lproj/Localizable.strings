@@ -746,6 +746,10 @@
 "Clip %d/%d: %@" = "Clip %1$d/%2$d: %3$@";
 "AI analyzing %d segments across %d clips…" = "AI analyzing %1$d segments across %2$d clips…";
 "ℹ️ All clips were already analyzed. Rebuilt the timeline from existing cuts." = "ℹ️ All clips were already analyzed. Rebuilt the timeline from existing cuts.";
+"One-click first cut (re-cut)" = "One-click first cut (re-cut)";
+"Re-cut every clip on the timeline?" = "Re-cut every clip on the timeline?";
+"All clips on the timeline have already been cut. Re-cutting overwrites the previous AI output, costs another LLM round-trip, and cannot be undone." = "All clips on the timeline have already been cut. Re-cutting overwrites the previous AI output, costs another LLM round-trip, and cannot be undone.";
+"Re-cut" = "Re-cut";
 
 /* AI workflow preset menu (⚡ button in chat composer) */
 "Smart cut" = "Smart cut";

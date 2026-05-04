@@ -832,6 +832,21 @@ final class MediaCoreViewModel: ObservableObject {
         return out
     }
 
+    /// True when every ready video clip on the timeline already has a
+    /// `copilot` snapshot. Drives the "this is a re-cut, please
+    /// confirm" branch in the One-click first cut entry points: if
+    /// ANY ready timeline video is still unanalyzed there's regular
+    /// work to do (no confirm); if EVERY ready timeline video is
+    /// analyzed, the next click is asking the AI to redo work that
+    /// was already paid for, so we surface a confirm dialog. Empty
+    /// timeline / image-only timeline → false (nothing to re-cut, so
+    /// the question doesn't apply).
+    var allTimelineClipsAnalyzed: Bool {
+        let ready = videoRecordsOnTimeline.filter { $0.status == .ready }
+        guard !ready.isEmpty else { return false }
+        return ready.allSatisfy { $0.copilot != nil }
+    }
+
     var selectedRecordMessage: String? {
         guard let record = selectedRecord else { return nil }
         guard record.status == .ready, record.derived.proxyRelativePath != nil else {
@@ -6754,7 +6769,13 @@ final class MediaCoreViewModel: ObservableObject {
     }
 
     /// Analyze the currently selected record.
-    func analyzeSelectedRecord() async {
+    ///
+    /// `force` re-runs analysis on clips that already have a `copilot`
+    /// snapshot. The user confirm dialog drives this; the chat-driven
+    /// implicit-analysis path and shortcut never set it. See
+    /// `analyzeAllRecords(force:)` for the full semantics (V1 collapse,
+    /// non-undoability, etc.).
+    func analyzeSelectedRecord(force: Bool = false) async {
         // Gate every AI entry point on a valid relay session. WhisperKit
         // transcription is local, so without this check the user could
         // sit through a slow on-device transcribe before we hit the
@@ -6786,12 +6807,31 @@ final class MediaCoreViewModel: ObservableObject {
         // live conversation instead of a detached progress box above
         // the chat.
         beginAnalysisChatBubble(
-            userAction: L("One-click first cut"),
+            userAction: force
+                ? L("One-click first cut (re-cut)")
+                : L("One-click first cut"),
             userIcon: "bolt.fill"
         )
         if candidates.count > 1 {
-            await analyzeAllRecords()
+            await analyzeAllRecords(force: force)
         } else if let only = candidates.first {
+            // The single-clip pipeline already overwrites `copilot`
+            // unconditionally, so `force` is implicit there. We still
+            // collapse the V1 timeline back to a single full-length
+            // placeholder when forced so the slot-preserving rebuild
+            // doesn't multiply existing AI-output segments — same
+            // reasoning as the multi-clip path.
+            if force, let analysis = only.analysis, analysis.durationSeconds > 0.1 {
+                timelineSegments = [
+                    TimelineSegment(
+                        id: UUID(),
+                        sourceVideoID: only.id,
+                        range: TimeRange(startSeconds: 0, endSeconds: analysis.durationSeconds),
+                        text: "",
+                        subtitles: []
+                    )
+                ]
+            }
             await analyzeRecord(id: only.id)
         } else {
             // Nothing on the timeline to analyze — point user at the
@@ -7460,7 +7500,25 @@ final class MediaCoreViewModel: ObservableObject {
     ///
     /// Image placements on the timeline are excluded — they have no
     /// audio track to transcribe.
-    func analyzeAllRecords() async {
+    ///
+    /// `force` lets the caller re-run analysis on clips that already
+    /// have a `copilot` snapshot. When forced:
+    ///   • All ready video clips on the timeline are re-analyzed
+    ///     (the `copilot == nil` filter is dropped).
+    ///   • The V1 timeline is **collapsed back to one full-length
+    ///     placeholder per unique source** before the pipeline runs.
+    ///     Without this collapse, the slot-preserving rebuild would
+    ///     expand each existing AI-output segment into N new ranges,
+    ///     producing N×M segments instead of N. Overlay tracks are
+    ///     not touched. Slot-level edits the user made on the AI
+    ///     output (volume, mute, speed, etc.) are dropped — that's
+    ///     the documented cost of "give me a fresh cut."
+    ///   • The old `copilot` snapshots are overwritten when the
+    ///     pipeline writes new ones; this is NOT undoable through the
+    ///     revision system (revisions snapshot timeline state, not
+    ///     manifest copilot blobs). The user-facing confirm dialog
+    ///     warns about this.
+    func analyzeAllRecords(force: Bool = false) async {
         guard let store, let analysisPipeline else {
             bannerMessage = L("Analysis pipeline not configured")
             finishAnalysisChatBubble(
@@ -7484,14 +7542,23 @@ final class MediaCoreViewModel: ObservableObject {
         // first-occurrence list of source video IDs that need work.
         // A record is a candidate iff it's currently on the timeline
         // (videoRecordsOnTimeline already enforces video-only +
-        // dedup-by-source) AND ready AND not already analyzed.
-        let orderedRecords = videoRecordsOnTimeline.filter {
-            $0.status == .ready && $0.copilot == nil
+        // dedup-by-source) AND ready, AND — unless `force` — not
+        // already analyzed.
+        let orderedRecords: [MediaAssetRecord]
+        if force {
+            orderedRecords = videoRecordsOnTimeline.filter { $0.status == .ready }
+        } else {
+            orderedRecords = videoRecordsOnTimeline.filter {
+                $0.status == .ready && $0.copilot == nil
+            }
         }
 
         // If everything on the timeline is already analyzed (or there's
         // nothing transcribable), just rebuild from existing snapshots
-        // and bail early — no LLM call.
+        // and bail early — no LLM call. `force` callers always have at
+        // least one candidate (since they came in via `allTimelineClipsAnalyzed`)
+        // so this branch only fires for non-force callers with an
+        // empty/all-analyzed timeline.
         if orderedRecords.isEmpty {
             rebuildTimelineSegments()
             rebuildComposition()
@@ -7499,6 +7566,33 @@ final class MediaCoreViewModel: ObservableObject {
                 content: L("ℹ️ All clips were already analyzed. Rebuilt the timeline from existing cuts.")
             )
             return
+        }
+
+        // For a force re-cut, collapse the V1 timeline back to one
+        // full-length placeholder per unique source video before
+        // running the pipeline. Otherwise the slot-preserving rebuild
+        // (which expands every slot whose source has keptRanges) would
+        // explode old AI-output segments into N×M segments. Overlay /
+        // BGM / S1 tracks are untouched — they live on `project.*`
+        // arrays separate from `primarySegments`. We do NOT push a
+        // revision here because copilot snapshots are also about to
+        // be overwritten and `pushRevision` only captures timeline
+        // state — undoing would leave the manifest with new keptRanges
+        // and the timeline with old placeholders, which the next
+        // `select()` would silently re-expand into the new cut. The
+        // user confirm dialog warns about non-undoability up front.
+        if force {
+            timelineSegments = orderedRecords.compactMap { record in
+                guard let analysis = record.analysis,
+                      analysis.durationSeconds > 0.1 else { return nil }
+                return TimelineSegment(
+                    id: UUID(),
+                    sourceVideoID: record.id,
+                    range: TimeRange(startSeconds: 0, endSeconds: analysis.durationSeconds),
+                    text: "",
+                    subtitles: []
+                )
+            }
         }
 
         isAnalyzing = true
@@ -10338,22 +10432,76 @@ final class MediaCoreViewModel: ObservableObject {
             )
         }
 
+        // Refuse to silently re-bill the LLM for already-analyzed clips
+        // unless the caller explicitly asks for a re-cut. The agent
+        // should only set `force=true` when the user has clearly
+        // opted in to redoing the cut. The user-facing button shows
+        // a confirm dialog before reaching this path.
+        if !request.force {
+            if let target = request.clipID,
+               let clip = timelineClips.first(where: { $0.id == target }),
+               clip.copilot != nil {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError("clip_id \(target.uuidString) has already been analyzed. To re-cut it (overwriting the previous AI output, costs another LLM round-trip, NOT undoable), call run_first_cut again with force=true after confirming with the user."),
+                    userSummary: "ℹ️ Clip already cut — ask the user before re-cutting.",
+                    checkpointID: nil
+                )
+            }
+            if request.clipID == nil,
+               timelineClips.filter({ $0.status == .ready }).allSatisfy({ $0.copilot != nil }) {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError("Every clip on the timeline is already cut. To re-cut everything (overwriting the previous AI output, costs another LLM round-trip, NOT undoable), call run_first_cut again with force=true after confirming with the user."),
+                    userSummary: "ℹ️ Already cut — ask the user before re-cutting.",
+                    checkpointID: nil
+                )
+            }
+        }
+
         let unanalyzedBefore = timelineClips.filter { $0.copilot == nil && $0.status == .ready }.count
         let segmentsBefore = timelineSegments.count
 
         // Snapshot BEFORE the pipeline runs so restore_checkpoint can
         // rewind past the first cut, mirroring how every other mutating
         // agent tool captures a pre-state revision.
+        //
+        // CAVEAT: when `force` is true we're about to overwrite the
+        // copilot snapshots on the manifest, which `pushRevision` does
+        // NOT capture. Restoring this checkpoint will rewind the
+        // timeline but leave the new keptRanges in the manifest, and
+        // a subsequent `select()` will silently re-expand the new cut
+        // onto the restored slots. The agent tool's userSummary
+        // reflects this — the chat shows an undo entry but the
+        // underlying AI output is permanently replaced.
         pushRevision(
-            label: "AI first cut",
+            label: request.force ? "AI re-cut" : "AI first cut",
             trigger: .aiAction(messageID: userMessageID)
         )
         let checkpointID = revisions.last?.id
 
         if let target = request.clipID {
+            // Single-clip path: `analyzeRecord` overwrites copilot
+            // unconditionally, so `force` for a clip_id is mostly a
+            // gating signal (handled above). When forced, we collapse
+            // the timeline slots that point at this source back to a
+            // single full-length placeholder so the slot-preserving
+            // rebuild doesn't multiply the new keptRanges.
+            if request.force,
+               let clip = timelineClips.first(where: { $0.id == target }),
+               let analysis = clip.analysis,
+               analysis.durationSeconds > 0.1 {
+                timelineSegments.removeAll { $0.sourceVideoID == target }
+                let placeholder = TimelineSegment(
+                    id: UUID(),
+                    sourceVideoID: target,
+                    range: TimeRange(startSeconds: 0, endSeconds: analysis.durationSeconds),
+                    text: "",
+                    subtitles: []
+                )
+                timelineSegments.append(placeholder)
+            }
             await analyzeRecord(id: target)
         } else {
-            await analyzeAllRecords()
+            await analyzeAllRecords(force: request.force)
         }
 
         let analyzedClipsAfter = max(0, unanalyzedBefore - timelineClips.filter { clip in

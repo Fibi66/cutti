@@ -38,6 +38,11 @@ struct ContentView: View {
     /// hosting view tree has keyboard focus, which isn't reliable here.
     @StateObject private var immersiveEscHandler = ImmersiveEscHandler()
     @State private var showSFXLibrary: Bool = false
+    /// Drives the "this clip was already cut — confirm overwrite?"
+    /// dialog. Set true by the One-click first cut click handler when
+    /// every ready timeline video has a `copilot` snapshot. Confirm →
+    /// `analyzeSelectedRecord(force: true)`. Cancel → no-op.
+    @State private var showFirstCutForceConfirm: Bool = false
     /// When non-nil, the emphasis sheet is presented for this cue. Set
     /// by the S-lane cue context menu; cleared by the sheet's Apply /
     /// Cancel / dismissal handlers.
@@ -92,7 +97,16 @@ struct ContentView: View {
             canStartAnalysis: canStartAnalysis,
             isAnalyzing: viewModel.isAnalyzing,
             onStartAnalysis: {
-                Task { await viewModel.analyzeSelectedRecord() }
+                // When every ready timeline clip is already analyzed,
+                // a click means "I want to redo the cut." Surface a
+                // confirm dialog so the user opts into another LLM
+                // round-trip + losing the previous AI output (which
+                // is NOT undoable — see analyzeAllRecords(force:)).
+                if viewModel.allTimelineClipsAnalyzed {
+                    showFirstCutForceConfirm = true
+                } else {
+                    Task { await viewModel.analyzeSelectedRecord() }
+                }
             },
             onRunTrimPauses: {
                 Task { await viewModel.trimPausesOnSelectedRecord() }
@@ -140,6 +154,18 @@ struct ContentView: View {
             y: viewModel.isChatProcessing ? 0 : EditorShellStyle.shadow1Y
         )
         .animation(.easeInOut(duration: EditorShellStyle.transitionMedium), value: viewModel.isChatProcessing)
+        .confirmationDialog(
+            L("Re-cut every clip on the timeline?"),
+            isPresented: $showFirstCutForceConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(L("Re-cut"), role: .destructive) {
+                Task { await viewModel.analyzeSelectedRecord(force: true) }
+            }
+            Button(L("Cancel"), role: .cancel) { }
+        } message: {
+            Text(L("All clips on the timeline have already been cut. Re-cutting overwrites the previous AI output, costs another LLM round-trip, and cannot be undone."))
+        }
     }
 
     private var freeTransformHandleTarget: FreeTransformHandle.Target? {
@@ -1188,21 +1214,17 @@ struct ContentView: View {
         .padding(.vertical, 3)
     }
 
-    /// Whether the Start button should be enabled: selected clip is ready and has no complete AI edit decisions.
+    /// Whether the One-click first cut button should be clickable.
+    /// True iff the timeline has at least one ready video clip —
+    /// regardless of analysis state. When every clip is already
+    /// analyzed, clicking surfaces a re-cut confirm dialog (handled
+    /// in the click closure) instead of running silently. Empty
+    /// timeline / image-only timeline → disabled (nothing to cut).
+    /// The ⌘⇧1 keyboard shortcut routes through the same closure so
+    /// it gets the confirm-or-run treatment uniformly.
     private var canStartAnalysis: Bool {
         guard !viewModel.isAnalyzing else { return false }
-        // Multi-video: allow if any ready record hasn't been analyzed
-        let hasUnanalyzed = viewModel.records.contains { record in
-            record.status == .ready && (record.copilot == nil || record.copilot?.keptRanges == nil || record.copilot?.keptRanges?.isEmpty == true)
-        }
-        if hasUnanalyzed { return true }
-        // Single video fallback
-        guard let record = viewModel.selectedRecord else { return false }
-        guard record.status == .ready else { return false }
-        if let copilot = record.copilot {
-            return copilot.keptRanges == nil || copilot.keptRanges?.isEmpty == true
-        }
-        return true
+        return viewModel.videoRecordsOnTimeline.contains { $0.status == .ready }
     }
 
     /// Compute agent status, incorporating real-time analysis/export progress.
