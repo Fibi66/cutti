@@ -871,3 +871,23 @@
 "Email verification pending." = "Email verification pending.";
 "Free plan" = "Free plan";
 "Sign in to view your plan." = "Sign in to view your plan.";
+
+/* Bug report sheet (English keys self-mapped — these were missing from en.lproj) */
+"Report a Bug" = "Report a Bug";
+"Report a Bug…" = "Report a Bug…";
+"Support" = "Support";
+"Send us a description of what went wrong. Optionally attaches app and OS version, hardware, and locale so we can reproduce the issue. Goes straight to GitHub." = "Send us a description of what went wrong. Optionally attaches app and OS version, hardware, and locale so we can reproduce the issue. Goes straight to GitHub.";
+"Tell us what went wrong. The more detail you can give, the faster we can fix it." = "Tell us what went wrong. The more detail you can give, the faster we can fix it.";
+"What happened?" = "What happened?";
+"e.g. The app froze when I dragged a 4K clip onto an empty timeline." = "e.g. The app froze when I dragged a 4K clip onto an empty timeline.";
+"Steps to reproduce (optional)" = "Steps to reproduce (optional)";
+"Reply email (optional)" = "Reply email (optional)";
+"name@example.com" = "name@example.com";
+"Only used to follow up on this report. Leave blank to submit anonymously." = "Only used to follow up on this report. Leave blank to submit anonymously.";
+"Include diagnostics" = "Include diagnostics";
+"Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files." = "Helps us reproduce the bug. Includes app and OS version, hardware, locale, and timezone. Does not include your email, account, or project files.";
+"Show what will be sent" = "Show what will be sent";
+"Privacy" = "Privacy";
+"Thanks — your report is in." = "Thanks — your report is in.";
+"We'll triage it and follow up if we need more info." = "We'll triage it and follow up if we need more info.";
+"View on GitHub" = "View on GitHub";
