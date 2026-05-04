@@ -50,7 +50,14 @@ struct SettingsView: View {
                 list.append(contentsOf: [.subscription, .usage])
             }
         }
-        list.append(contentsOf: [.general, .editor, .support, .developer])
+        list.append(contentsOf: [.general, .editor])
+        // Auto-update controls only exist on direct-download builds.
+        // On Mac App Store builds Apple handles updates and Sparkle is
+        // not even instantiated (see SparkleUpdater).
+        if SparkleUpdater.shared.isEnabled {
+            list.append(.updates)
+        }
+        list.append(contentsOf: [.support, .developer])
         return list
     }
 
@@ -122,6 +129,7 @@ struct SettingsView: View {
         case .usage:        UsageSection()
         case .general:      GeneralSection()
         case .editor:       EditorSection()
+        case .updates:      UpdatesSection()
         case .support:      SupportSection()
         case .developer:    DeveloperSection()
         }

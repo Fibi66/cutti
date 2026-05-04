@@ -1001,3 +1001,14 @@
 "When you create a new clip, the subtitle overlay is visible in preview and timeline." = "When you create a new clip, the subtitle overlay is visible in preview and timeline.";
 "Where your credits went, by feature." = "Where your credits went, by feature.";
 "Your Cutti Cloud plan and credit balance." = "Your Cutti Cloud plan and credit balance.";
+
+/* Settings — Updates */
+"Updates" = "Updates";
+"Cutti checks GitHub Releases for new versions." = "Cutti checks GitHub Releases for new versions.";
+"Check Now" = "Check Now";
+"Never checked yet." = "Never checked yet.";
+"Preferences" = "Preferences";
+"Automatically check for updates" = "Automatically check for updates";
+"Cutti checks for new versions in the background once per day." = "Cutti checks for new versions in the background once per day.";
+"Automatically install updates" = "Automatically install updates";
+"Download and install new versions on quit, without asking. Off by default." = "Download and install new versions on quit, without asking. Off by default.";

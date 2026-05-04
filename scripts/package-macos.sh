@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# package-macos.sh — Wrap the SwiftPM-built CuttiMac executable into a
+# distributable Cutti.app bundle.
+#
+# Usage:
+#   scripts/package-macos.sh --version 1.0.0 --build 1
+#   scripts/package-macos.sh --version 1.0.0 --build 1 --sign
+#
+# Without --sign, produces an unsigned .app for local smoke testing.
+# With --sign, expects these env vars:
+#   DEVELOPER_ID_APPLICATION   — e.g. "Developer ID Application: Foo Bar (ABCD12EFGH)"
+#   SPARKLE_PUBLIC_ED_KEY      — base64 EdDSA public key from `generate_keys`
+#
+# Output:
+#   build/Cutti.app
+#
+# This script is idempotent — it deletes any prior build/Cutti.app first.
+
+set -euo pipefail
+
+# ---------- Argument parsing ----------
+VERSION=""
+BUILD_NUMBER=""
+SIGN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) VERSION="$2"; shift 2 ;;
+    --build)   BUILD_NUMBER="$2"; shift 2 ;;
+    --sign)    SIGN=1; shift ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$VERSION" || -z "$BUILD_NUMBER" ]]; then
+  echo "Usage: $0 --version X.Y.Z --build N [--sign]" >&2
+  exit 2
+fi
+
+if [[ $SIGN -eq 1 ]]; then
+  : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION when --sign}"
+  : "${SPARKLE_PUBLIC_ED_KEY:?Set SPARKLE_PUBLIC_ED_KEY when --sign}"
+fi
+
+# ---------- Paths ----------
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PKG_DIR="$ROOT/macos/CuttiMac"
+SCRIPT_DIR="$ROOT/scripts/macos"
+BUILD_DIR="$ROOT/build"
+APP="$BUILD_DIR/Cutti.app"
+
+INFO_TPL="$SCRIPT_DIR/Info.plist.template"
+ENT="$SCRIPT_DIR/Cutti.entitlements"
+
+# ---------- Build ----------
+echo "==> swift build -c release --arch arm64"
+cd "$PKG_DIR"
+DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+  swift build -c release --arch arm64
+
+# Locate build outputs.
+EXEC_PATH="$PKG_DIR/.build/arm64-apple-macosx/release/CuttiMac"
+RES_BUNDLE="$PKG_DIR/.build/arm64-apple-macosx/release/CuttiMac_CuttiMac.bundle"
+
+if [[ ! -x "$EXEC_PATH" ]]; then
+  echo "ERROR: executable not found at $EXEC_PATH" >&2; exit 1
+fi
+if [[ ! -d "$RES_BUNDLE" ]]; then
+  echo "ERROR: SwiftPM resource bundle not found at $RES_BUNDLE" >&2; exit 1
+fi
+
+# Locate Sparkle.framework. SwiftPM's binary-target cache lives under
+# .build/artifacts/<package>/Sparkle/. The exact path varies by Sparkle
+# version, so we glob.
+SPARKLE_FRAMEWORK="$(find "$PKG_DIR/.build/artifacts" -type d -name 'Sparkle.framework' -path '*/Sparkle*' | head -n1 || true)"
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+  echo "ERROR: Sparkle.framework not found under .build/artifacts/" >&2
+  echo "       Run 'swift package resolve' inside macos/CuttiMac and try again." >&2
+  exit 1
+fi
+echo "==> Using Sparkle at $SPARKLE_FRAMEWORK"
+
+# ---------- Build the .app ----------
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/Frameworks"
+
+# Main executable. Renamed from "CuttiMac" to "Cutti" to match
+# CFBundleExecutable.
+cp "$EXEC_PATH" "$APP/Contents/MacOS/Cutti"
+chmod +x "$APP/Contents/MacOS/Cutti"
+
+# SwiftPM-generated resource accessor looks for the bundle next to the
+# main executable (`Bundle.main.bundleURL.appendingPathComponent(...)`),
+# so place it in Contents/MacOS/ — NOT Contents/Resources/.
+cp -R "$RES_BUNDLE" "$APP/Contents/MacOS/"
+
+# Sparkle.framework — preserve symlinks (-R, not -RL).
+cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+
+# Add @executable_path/../Frameworks to the binary's rpath so the
+# dynamic loader can find Sparkle at launch.
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+  "$APP/Contents/MacOS/Cutti" 2>/dev/null || true
+
+# ---------- Render Info.plist ----------
+ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+sed \
+  -e "s|{{VERSION}}|$VERSION|g" \
+  -e "s|{{BUILD}}|$BUILD_NUMBER|g" \
+  -e "s|{{ED_PUB_KEY}}|$ED_KEY|g" \
+  "$INFO_TPL" > "$APP/Contents/Info.plist"
+
+# Validate the result.
+plutil -lint "$APP/Contents/Info.plist" >/dev/null
+
+# ---------- Sign (optional) ----------
+if [[ $SIGN -eq 1 ]]; then
+  IDENTITY="$DEVELOPER_ID_APPLICATION"
+  echo "==> Codesigning with identity: $IDENTITY"
+
+  # Sign nested helpers FIRST. Sparkle ships an Autoupdate.app and an
+  # Updater.app inside Sparkle.framework, plus XPC services. We sign
+  # them bottom-up so each enclosing signature wraps already-signed
+  # content. Sparkle docs explicitly warn against `codesign --deep`.
+  sign() {
+    codesign --force --options runtime --timestamp \
+      --sign "$IDENTITY" "$@"
+  }
+
+  # Inner XPC services and helper apps.
+  while IFS= read -r helper; do
+    [[ -n "$helper" ]] || continue
+    sign "$helper"
+  done < <(find "$APP/Contents/Frameworks/Sparkle.framework" \
+            \( -name '*.xpc' -o -name '*.app' \) -print)
+
+  # The framework itself.
+  sign "$APP/Contents/Frameworks/Sparkle.framework"
+
+  # Finally the main app, with hardened runtime + entitlements.
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ENT" \
+    --sign "$IDENTITY" \
+    "$APP"
+
+  # Verify.
+  codesign --verify --strict --verbose=2 "$APP"
+fi
+
+echo
+echo "==> Built $APP"
+echo "    Version $VERSION (build $BUILD_NUMBER)"
+[[ $SIGN -eq 1 ]] && echo "    Signed:  yes" || echo "    Signed:  no (smoke-test only — not distributable)"

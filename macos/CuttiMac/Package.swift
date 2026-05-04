@@ -10,6 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.12.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(path: "../../shared/CuttiKit"),
     ],
     targets: [
@@ -41,6 +42,7 @@ let package = Package(
             dependencies: [
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
                 .product(name: "CuttiKit", package: "CuttiKit"),
+                .product(name: "Sparkle", package: "Sparkle"),
                 "SherpaOnnxC",
                 "OnnxRuntimeC",
             ],

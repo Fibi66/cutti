@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cutti Info.plist template.
+
+  Placeholders below are substituted by `scripts/package-macos.sh`:
+    {{VERSION}}     — marketing version (e.g. "1.0.1")
+    {{BUILD}}       — monotonically increasing build number
+    {{ED_PUB_KEY}}  — Sparkle EdDSA public key (base64)
+
+  This file is the source of truth for distribution. Editing it has no
+  effect on `swift run` development builds (those use no Info.plist) —
+  it only kicks in when the executable gets wrapped into Cutti.app.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>                     <string>Cutti</string>
+  <key>CFBundleDisplayName</key>              <string>Cutti</string>
+  <key>CFBundleIdentifier</key>               <string>app.cutti.mac</string>
+  <key>CFBundleExecutable</key>               <string>Cutti</string>
+  <key>CFBundleVersion</key>                  <string>{{BUILD}}</string>
+  <key>CFBundleShortVersionString</key>       <string>{{VERSION}}</string>
+  <key>CFBundlePackageType</key>              <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>    <string>6.0</string>
+  <key>CFBundleSupportedPlatforms</key>       <array><string>MacOSX</string></array>
+  <key>CFBundleDevelopmentRegion</key>        <string>en</string>
+  <key>LSApplicationCategoryType</key>        <string>public.app-category.video</string>
+  <key>LSMinimumSystemVersion</key>           <string>14.0</string>
+
+  <!-- Apple Silicon only — Intel / Rosetta is not supported (see README). -->
+  <key>LSArchitecturePriority</key>
+  <array>
+    <string>arm64</string>
+  </array>
+  <key>LSRequiresNativeExecution</key>        <true/>
+
+  <key>NSHighResolutionCapable</key>          <true/>
+  <key>NSPrincipalClass</key>                 <string>NSApplication</string>
+
+  <!-- Hardware access prompts -->
+  <key>NSCameraUsageDescription</key>
+  <string>Cutti uses the camera to record clips you can edit.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Cutti uses the microphone to capture audio for clips and AI voice prompts.</string>
+
+  <!-- Sparkle auto-update.
+       SUFeedURL points at GitHub's "always redirects to the latest
+       release" alias, so every release just needs to upload a fresh
+       appcast.xml as a release asset. No custom domain, no extra
+       hosting, no CDN setup. -->
+  <key>SUFeedURL</key>
+  <string>https://github.com/Fibi66/cutti/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>{{ED_PUB_KEY}}</string>
+  <key>SUEnableAutomaticChecks</key>          <true/>
+  <key>SUScheduledCheckInterval</key>         <integer>86400</integer>
+</dict>
+</plist>

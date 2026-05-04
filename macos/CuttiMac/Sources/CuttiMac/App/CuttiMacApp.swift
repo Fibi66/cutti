@@ -274,6 +274,14 @@ struct CuttiMacApp: App {
         // for users who are signed in.
         _ = RelaySession.shared
 
+        // Force-init Sparkle so its controller wires itself into the
+        // run-loop before the first window appears. Background update
+        // checks need to see the app become active, which happens
+        // moments after SwiftUI brings the WindowGroup up. On Mac App
+        // Store builds this is a no-op (controller stays nil; see
+        // `SparkleUpdater`).
+        _ = SparkleUpdater.shared
+
         // Make AppKit tooltips appear after ~300ms instead of the
         // default ~1s. AppKit reads this UserDefaults key at launch to
         // seed NSToolTipManager's initial delay, so we set it here
@@ -333,6 +341,7 @@ struct CuttiMacApp: App {
 
         Settings {
             SettingsView()
+                .environmentObject(SparkleUpdater.shared)
                 .preferredColorScheme(.dark)
         }
         .windowResizability(.contentSize)
