@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Support page — Bug-report row + small Docs / Discord link cards.
+/// Support page — bug-report entry point.
 struct SupportSection: View {
     @State private var showsBugReportSheet: Bool = false
 
@@ -42,28 +42,6 @@ struct SupportSection: View {
                     }
                 }
             }
-            .padding(.bottom, 8)
-
-            HStack(spacing: 8) {
-                linkCard(
-                    icon: "book",
-                    title: "Docs",
-                    action: {
-                        if let url = URL(string: "https://cutti.app/docs") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                )
-                linkCard(
-                    icon: "bubble.left.and.bubble.right",
-                    title: "Discord",
-                    action: {
-                        if let url = URL(string: "https://discord.gg/cutti") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                )
-            }
 
             Spacer(minLength: 0)
         }
@@ -71,34 +49,5 @@ struct SupportSection: View {
             BugReportSheet()
         }
     }
-
-    @ViewBuilder
-    private func linkCard(icon: String, title: LocalizedStringKey, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(SettingsTheme.textDim)
-                T(title)
-                    .font(SettingsTheme.bodyRegular)
-                    .foregroundStyle(SettingsTheme.text)
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(SettingsTheme.textFaint)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: SettingsTheme.cardCornerRadius)
-                    .fill(SettingsTheme.panel)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: SettingsTheme.cardCornerRadius)
-                    .strokeBorder(SettingsTheme.border, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
 }
+
