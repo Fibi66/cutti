@@ -719,6 +719,18 @@ struct TimelineDock: View {
                     }
                 }()
 
+                // The HStack below grows to `totalContentHeight` when
+                // there are many tracks (V1, overlay V2/V3..., detached
+                // audio, S1, etc.). Without a vertical wrapper, anything
+                // past `panelHeight` was clipped — there was no way to
+                // reach a track that fell off the bottom edge. Wrap the
+                // whole multi-track HStack in a vertical ScrollView so
+                // overflow becomes scrollable. When content fits the
+                // pane (most projects), the scroll bar is invisible and
+                // `newTrackZoneHeight` still expands to absorb the
+                // remaining space (so MediaBrowser drops anywhere in
+                // the empty bottom region create a new lane).
+                ScrollView(.vertical, showsIndicators: true) {
                 HStack(spacing: 0) {
                     // Track labels
                     VStack(alignment: .trailing, spacing: trackSpacing) {
@@ -1073,6 +1085,7 @@ struct TimelineDock: View {
                     }
                     }
                 }
+                }   // ScrollView(.vertical)
             }
         }
         .overlay {
