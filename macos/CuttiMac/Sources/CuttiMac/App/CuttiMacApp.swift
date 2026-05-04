@@ -251,6 +251,13 @@ struct CuttiMacApp: App {
     @State private var activeProjectID: UUID?
 
     init() {
+        // Register bundled fonts (Inter + JetBrains Mono) BEFORE any
+        // other init step so the very first SwiftUI view can resolve
+        // them. Idempotent — safe even if a previous process registered
+        // the same fonts (CoreText returns "already registered" which
+        // we treat as success). See SettingsFontRegistrar for details.
+        SettingsFontRegistrar.registerAll()
+
         CuttiSettings.ensureDefaults()
         // Apply UI language override (system / en / zh-Hans) before any
         // SwiftUI view materializes so all LocalizedStringKeys resolve
@@ -328,6 +335,7 @@ struct CuttiMacApp: App {
             SettingsView()
                 .preferredColorScheme(.dark)
         }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -414,6 +422,19 @@ private extension Double {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Force the entire app's AppKit chrome into dark aqua so
+        // SwiftUI's `.preferredColorScheme(.dark)` (which only sets the
+        // SwiftUI environment) doesn't leave SecureField / Picker /
+        // ProgressView / system menu surfaces rendering with light
+        // chrome on light-mode systems. The redesigned Settings is
+        // dark-only by design, and the editor already declares
+        // `.preferredColorScheme(.dark)` on its WindowGroup, so making
+        // the entire process dark matches existing behavior + fixes
+        // the Settings light-mode leakage in one go.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)

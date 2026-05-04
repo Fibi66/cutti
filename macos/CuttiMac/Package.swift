@@ -49,6 +49,14 @@ let package = Package(
                 .copy("Resources/AnimationSkill"),
                 .process("Resources/en.lproj"),
                 .process("Resources/zh-Hans.lproj"),
+                // Bundled UI fonts. Inter (UI text) + JetBrains Mono
+                // (monospaced fields / IDs / version strings) are
+                // registered at app launch via CTFontManager so the
+                // Settings redesign can use them without depending on
+                // system-installed copies. Both ship under SIL OFL 1.1
+                // — license files live alongside the .otf / .ttf files
+                // and are part of the bundle.
+                .process("Resources/Fonts"),
             ],
             linkerSettings: [
                 .linkedLibrary("c++"),
