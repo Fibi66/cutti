@@ -2559,4 +2559,104 @@ final class MediaCoreViewModelTests: XCTestCase {
         XCTAssertTrue(decoded.subtitleTombstones.isEmpty)
         XCTAssertEqual(decoded.showSubtitles, true)
     }
+
+    // MARK: - rebuildTimelineSegments idempotency (M² explosion regression)
+
+    private func makeAnalyzedRecordForRebuild(
+        id: UUID = UUID(),
+        durationSeconds: Double = 100.0,
+        keptRanges: [TimeRange]
+    ) -> MediaAssetRecord {
+        var record = MediaAssetRecord(
+            id: id,
+            sourcePath: "/tmp/\(id.uuidString).mp4",
+            fingerprint: SourceFingerprint(fileSize: 1000, modifiedAt: Date(), sha256Prefix: "abc"),
+            status: .ready,
+            analysis: AnalysisSummary(durationSeconds: durationSeconds, width: 1920, height: 1080, nominalFPS: 30, hasAudio: true),
+            derived: DerivedAssetState(proxyRelativePath: "p.mov", thumbnailsReady: false, waveformsReady: false),
+            errorMessage: nil,
+            usedFallbackTranscoder: false
+        )
+        record.copilot = AICopilotSnapshot(
+            semanticTags: [],
+            issues: [],
+            suggestions: [],
+            markers: [],
+            keptRanges: keptRanges
+        )
+        return record
+    }
+
+    func test_rebuildTimeline_expandsFullSourcePlaceholder() {
+        // The "first cut just finished" path: timeline had a single
+        // full-source placeholder; rebuild should explode it into one
+        // segment per kept range.
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let recordID = UUID()
+        let kept = [
+            TimeRange(startSeconds: 5, endSeconds: 15),
+            TimeRange(startSeconds: 30, endSeconds: 45),
+            TimeRange(startSeconds: 60, endSeconds: 80),
+        ]
+        vm.records = [makeAnalyzedRecordForRebuild(id: recordID, durationSeconds: 100, keptRanges: kept)]
+        vm.timelineSegments = [
+            TimelineSegment(id: UUID(), sourceVideoID: recordID, range: TimeRange(startSeconds: 0, endSeconds: 100), text: "", subtitles: []),
+        ]
+
+        // Trigger rebuild via select — same path that the AI completion
+        // hits when it re-selects the record.
+        vm.select(recordID: recordID)
+
+        XCTAssertEqual(vm.timelineSegments.count, kept.count,
+                       "Placeholder should expand to one segment per kept range")
+    }
+
+    func test_rebuildTimeline_isIdempotent_doesNotMultiplyExpandedSegments() {
+        // Regression: pre-fix, walking already-expanded sub-range
+        // segments would re-expand each into N keptRanges → N² growth.
+        // After fix, every call past the first must be a no-op.
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let recordID = UUID()
+        let kept = (0..<10).map { i in
+            TimeRange(startSeconds: Double(i) * 9.0, endSeconds: Double(i) * 9.0 + 5)
+        }
+        vm.records = [makeAnalyzedRecordForRebuild(id: recordID, durationSeconds: 100, keptRanges: kept)]
+        vm.timelineSegments = [
+            TimelineSegment(id: UUID(), sourceVideoID: recordID, range: TimeRange(startSeconds: 0, endSeconds: 100), text: "", subtitles: []),
+        ]
+
+        vm.select(recordID: recordID)
+        let afterFirst = vm.timelineSegments.count
+        XCTAssertEqual(afterFirst, kept.count)
+
+        // Second select would have produced afterFirst² before the fix.
+        vm.select(recordID: recordID)
+        XCTAssertEqual(vm.timelineSegments.count, afterFirst,
+                       "rebuildTimelineSegments must be idempotent — no growth on second call")
+
+        // And a few more for good measure (the original bug was M³,
+        // M⁴, … on every subsequent select).
+        for _ in 0..<5 { vm.select(recordID: recordID) }
+        XCTAssertEqual(vm.timelineSegments.count, afterFirst,
+                       "Repeated rebuilds must not grow the timeline")
+    }
+
+    func test_rebuildTimeline_keepsManuallyTrimmedSlotVerbatim() {
+        // A user-trimmed slot must NOT be re-expanded by rebuild — its
+        // bounds are user intent, not a placeholder.
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let recordID = UUID()
+        let kept = [TimeRange(startSeconds: 5, endSeconds: 15)]
+        vm.records = [makeAnalyzedRecordForRebuild(id: recordID, durationSeconds: 100, keptRanges: kept)]
+        let trimmedSlotID = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(id: trimmedSlotID, sourceVideoID: recordID, range: TimeRange(startSeconds: 20, endSeconds: 40), text: "manual", subtitles: []),
+        ]
+
+        vm.select(recordID: recordID)
+
+        XCTAssertEqual(vm.timelineSegments.count, 1)
+        XCTAssertEqual(vm.timelineSegments.first?.range.startSeconds, 20)
+        XCTAssertEqual(vm.timelineSegments.first?.range.endSeconds, 40)
+    }
 }
