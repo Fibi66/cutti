@@ -48,6 +48,8 @@
 "Please sign in from Settings." = "请从「设置」登录。";
 "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti." = "使用 AI 功能前请先验证邮箱。查看收件箱，点击 Cutti 发送的验证链接。";
 "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "本月 AI 额度已用完（%@）。升级到付费方案可获得更多额度，或等到下个月 1 号额度重置。";
+"Animation rendering is temporarily unavailable. Please try again in a moment." = "动画渲染服务暂时不可用，请稍后再试。";
+"Image generation is temporarily unavailable. Please try again in a moment." = "图片生成服务暂时不可用，请稍后再试。";
 
 /* App menu — Edit / View */
 "Undo" = "撤销";

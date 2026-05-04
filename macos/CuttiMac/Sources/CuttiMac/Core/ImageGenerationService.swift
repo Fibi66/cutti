@@ -7,7 +7,15 @@ import Foundation
 enum ImageGenerationError: Error, LocalizedError {
     case relayNotConfigured
     case invalidResponse
+    /// Used by the BYOK path where the upstream error body comes from
+    /// the user's OWN provider (OpenAI / Anthropic / etc.). We surface
+    /// a truncated body so the user can self-diagnose ("invalid api
+    /// key", "rate limit"), since they own that account.
     case relayError(status: Int, body: String)
+    /// Pre-localized, user-safe message from our own cloud relay
+    /// (quota exhausted, email not verified, sign-in required).
+    /// Shown verbatim — callers must NOT stuff raw HTTP bodies in here.
+    case relayMessage(String)
     case noImagesReturned
     case fileIOFailed(String)
 
@@ -19,6 +27,8 @@ enum ImageGenerationError: Error, LocalizedError {
             return "The image service returned an unexpected response."
         case .relayError(let status, let body):
             return "Image generation failed (\(status)): \(body.prefix(200))"
+        case .relayMessage(let message):
+            return message
         case .noImagesReturned:
             return "The image service returned no images."
         case .fileIOFailed(let detail):
@@ -160,8 +170,21 @@ actor ImageGenerationService {
         RelayCreditsNotification.postIfPresent(from: http)
 
         guard http.statusCode == 200 else {
-            let text = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            throw ImageGenerationError.relayError(status: http.statusCode, body: text)
+            // Map the relay's typed error envelope (quota_exceeded /
+            // email_not_verified / unauthorized) to a friendly
+            // localized message. We DELIBERATELY never embed the raw
+            // response body in user-facing strings — the JSON contains
+            // internal fields like `credits_used` / `worst_case_cost`
+            // that are dev-only diagnostics, not UI copy.
+            if let mapped = OpenAIClient.parseRelayError(
+                statusCode: http.statusCode,
+                data: data
+            ) {
+                throw ImageGenerationError.relayMessage(mapped.displayMessage)
+            }
+            throw ImageGenerationError.relayMessage(
+                L("Image generation is temporarily unavailable. Please try again in a moment.")
+            )
         }
 
         return try Self.decodeOpenAIShapeImageResponse(data)

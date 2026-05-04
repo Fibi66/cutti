@@ -96,10 +96,20 @@ struct CloudRemotionRenderer: RemotionOverlayRendering {
             throw RemotionRenderError.launchFailed("Invalid response from relay (not HTTP).")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let errText = String(data: data, encoding: .utf8) ?? ""
-            throw RemotionRenderError.renderFailed(
-                exitCode: Int32(http.statusCode),
-                stderr: "Relay /v1/render/overlay returned \(http.statusCode): \(errText)"
+            // Map the relay's typed error envelope (quota_exceeded /
+            // email_not_verified / unauthorized) to a friendly localized
+            // message. We DELIBERATELY never embed the raw response body
+            // in user-facing strings — the JSON contains internal fields
+            // like `credits_used` / `worst_case_cost` that are dev-only
+            // diagnostics, not UI copy.
+            if let mapped = OpenAIClient.parseRelayError(
+                statusCode: http.statusCode,
+                data: data
+            ) {
+                throw RemotionRenderError.relayMessage(mapped.displayMessage)
+            }
+            throw RemotionRenderError.relayMessage(
+                L("Animation rendering is temporarily unavailable. Please try again in a moment.")
             )
         }
 

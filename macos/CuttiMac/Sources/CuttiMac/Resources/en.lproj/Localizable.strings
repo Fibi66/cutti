@@ -48,6 +48,8 @@
 "Please sign in from Settings." = "Please sign in from Settings.";
 "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti." = "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti.";
 "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets.";
+"Animation rendering is temporarily unavailable. Please try again in a moment." = "Animation rendering is temporarily unavailable. Please try again in a moment.";
+"Image generation is temporarily unavailable. Please try again in a moment." = "Image generation is temporarily unavailable. Please try again in a moment.";
 
 /* App menu — Edit / View */
 "Undo" = "Undo";

@@ -47,6 +47,10 @@ enum RemotionRenderError: Error, LocalizedError, Equatable {
     case projectDirectoryMissing(URL)
     case renderFailed(exitCode: Int32, stderr: String)
     case launchFailed(String)
+    /// Pre-localized, user-safe message coming from the cloud relay
+    /// (e.g. quota exhausted, email not verified, sign-in required).
+    /// Shown verbatim — callers must NOT stuff raw HTTP bodies in here.
+    case relayMessage(String)
 
     var errorDescription: String? {
         switch self {
@@ -57,6 +61,8 @@ enum RemotionRenderError: Error, LocalizedError, Equatable {
             return "Remotion render failed (exit \(code)): \(trimmed)"
         case .launchFailed(let message):
             return "Remotion render could not launch: \(message)"
+        case .relayMessage(let message):
+            return message
         }
     }
 }

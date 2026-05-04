@@ -73,4 +73,39 @@ final class RelayErrorMappingTests: XCTestCase {
         // refer to "next month" generically instead.
         XCTAssertFalse(msg.contains("2025"), "Reset date should not leak into UI: \(msg)")
     }
+
+    // MARK: - Render / Image leak guards
+
+    /// Render path — a 402 with the relay's quota_exceeded envelope must
+    /// produce a friendly user-facing message, not a JSON dump. Mirrors
+    /// the chat path; locks in the fix for the leak where
+    /// `CloudRemotionRenderer` previously surfaced the raw response body
+    /// inside `RemotionRenderError.renderFailed.stderr`.
+    func test_renderRelayMessage_quotaExceeded_hidesRawJSONFromUser() {
+        let body = #"{"error":"quota_exceeded","credits_used":2100,"credits_quota":2000,"worst_case_cost":75,"period_reset_at":1735689600}"#.data(using: .utf8)!
+        guard let mapped = OpenAIClient.parseRelayError(statusCode: 402, data: body) else {
+            return XCTFail("parseRelayError should recognize quota_exceeded body")
+        }
+        let err = RemotionRenderError.relayMessage(mapped.displayMessage)
+        let shown = err.errorDescription ?? ""
+        XCTAssertTrue(shown.contains("2100"), "Should mention used credits: \(shown)")
+        XCTAssertFalse(shown.contains("{"), "Raw JSON must not leak: \(shown)")
+        XCTAssertFalse(shown.contains("worst_case_cost"), "Internal field must not leak: \(shown)")
+        XCTAssertFalse(shown.contains("Remotion render"), "Developer-prefix must not wrap relayMessage: \(shown)")
+        XCTAssertFalse(shown.contains("exit 402"), "HTTP status must not leak: \(shown)")
+    }
+
+    /// Image path — same guarantee for `ImageGenerationService` cloud path.
+    func test_imageRelayMessage_quotaExceeded_hidesRawJSONFromUser() {
+        let body = #"{"error":"quota_exceeded","credits_used":2100,"credits_quota":2000}"#.data(using: .utf8)!
+        guard let mapped = OpenAIClient.parseRelayError(statusCode: 402, data: body) else {
+            return XCTFail("parseRelayError should recognize quota_exceeded body")
+        }
+        let err = ImageGenerationError.relayMessage(mapped.displayMessage)
+        let shown = err.errorDescription ?? ""
+        XCTAssertTrue(shown.contains("2100"), "Should mention used credits: \(shown)")
+        XCTAssertFalse(shown.contains("{"), "Raw JSON must not leak: \(shown)")
+        XCTAssertFalse(shown.contains("Image generation failed"), "Developer-prefix must not wrap relayMessage: \(shown)")
+        XCTAssertFalse(shown.contains("(402)"), "HTTP status must not leak: \(shown)")
+    }
 }
