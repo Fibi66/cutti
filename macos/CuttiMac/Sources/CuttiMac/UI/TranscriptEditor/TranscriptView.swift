@@ -125,7 +125,23 @@ struct TranscriptView: View {
     }
 
     private struct Paragraph: Identifiable {
-        let id = UUID()
+        /// Stable across `paragraphs` recomputations: derived from the
+        /// first item's id (cue or tombstone id, both UUIDs that live
+        /// on the underlying SubtitleEntry / SubtitleTombstone, not
+        /// generated per-render). Without this, a fresh `UUID()` would
+        /// be minted every time the body re-evaluates — and because
+        /// `playheadSeconds` updates ~30× per second during playback,
+        /// every render produced an all-new `[Paragraph]` array. The
+        /// `ForEach(paragraphs)` diff then treated every paragraph as
+        /// brand-new, the LazyVStack tore down and rebuilt every row,
+        /// and the ScrollView's offset reset to the top — yanking the
+        /// transcript away from the karaoke-highlighted cue.
+        ///
+        /// When a paragraph genuinely splits or merges (e.g. speaker
+        /// diarization adds a label, or the user inserts a different
+        /// speaker in the middle), the first-item id legitimately
+        /// changes and the paragraph rebuilds — which is what we want.
+        let id: UUID
         let speakerID: Int?
         var items: [Item]
     }
@@ -194,7 +210,7 @@ struct TranscriptView: View {
             if let last = result.last, last.speakerID == effective {
                 result[result.count - 1].items.append(item)
             } else {
-                result.append(Paragraph(speakerID: effective, items: [item]))
+                result.append(Paragraph(id: item.id, speakerID: effective, items: [item]))
             }
         }
         return result
