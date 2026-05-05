@@ -97,6 +97,71 @@ final class AIActionSystemTests: XCTestCase {
         }
     }
 
+    func test_parseBatch_supportsInsertSourceClip() {
+        let sourceID = UUID()
+        let args: [String: Any] = [
+            "explanation": "Cold-open hook teaser",
+            "actions": [[
+                "type": "insert_source_clip",
+                "source_video_id": sourceID.uuidString,
+                "source_start": 132.4,
+                "source_end": 137.9,
+                "composed_insert_at": 0,
+                "fade_in_seconds": 0.15,
+                "fade_out_seconds": 0.30
+            ]]
+        ]
+        let batch = AIAction.parseBatch(from: args)
+        XCTAssertEqual(batch?.actions.count, 1)
+        guard case let .insertSourceClip(sid, ss, se, ci, fi, fo)? = batch?.actions.first else {
+            return XCTFail("Expected insertSourceClip action")
+        }
+        XCTAssertEqual(sid, sourceID)
+        XCTAssertEqual(ss, 132.4, accuracy: 0.001)
+        XCTAssertEqual(se, 137.9, accuracy: 0.001)
+        XCTAssertEqual(ci, 0, accuracy: 0.001)
+        XCTAssertEqual(fi, 0.15, accuracy: 0.001)
+        XCTAssertEqual(fo, 0.30, accuracy: 0.001)
+    }
+
+    func test_parseBatch_insertSourceClip_omittedComposedInsertAt_isRejected() {
+        // Parser-side rejection: composed_insert_at is required so a
+        // dropped argument doesn't silently become a destructive
+        // prepend at 0. The validator never even sees this batch.
+        let args: [String: Any] = [
+            "explanation": "missing composed_insert_at",
+            "actions": [[
+                "type": "insert_source_clip",
+                "source_video_id": UUID().uuidString,
+                "source_start": 1.0,
+                "source_end": 4.0
+            ]]
+        ]
+        let batch = AIAction.parseBatch(from: args)
+        XCTAssertEqual(batch?.actions.count, 0)
+    }
+
+    func test_parseBatch_insertSourceClip_omittedFades_useDefaults() {
+        let sid = UUID()
+        let args: [String: Any] = [
+            "explanation": "default fades",
+            "actions": [[
+                "type": "insert_source_clip",
+                "source_video_id": sid.uuidString,
+                "source_start": 0.0,
+                "source_end": 5.0,
+                "composed_insert_at": 0
+            ]]
+        ]
+        let batch = AIAction.parseBatch(from: args)
+        XCTAssertEqual(batch?.actions.count, 1)
+        guard case let .insertSourceClip(_, _, _, _, fi, fo)? = batch?.actions.first else {
+            return XCTFail("Expected insertSourceClip action")
+        }
+        XCTAssertEqual(fi, 0.15, accuracy: 0.001)
+        XCTAssertEqual(fo, 0.30, accuracy: 0.001)
+    }
+
     func test_deleteRange_trimsAcrossSegments() {
         let sourceID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
         let segments = [

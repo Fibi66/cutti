@@ -47,7 +47,7 @@ If any one fails, the file belongs in `macos/CuttiMac/` or
 - Code that we haven't yet needed on both sides. "Predictive sharing" is
   banned.
 
-## Current contents (2026-04-22)
+## Current contents (2026-05-05)
 
 ### Data & persistence — `Project/`
 The project file format. Both apps must read/write the same JSON on disk.
@@ -111,6 +111,11 @@ platform must not offer it.
 
 Today **all `AIAction` cases are Both** — they only mutate
 `[TimelineSegment]` / `SubtitleEntry`, which is schema every platform owns.
+This includes `insertSourceClip`, which slices an arbitrary source media
+record into the timeline (powering cold-open hook teasers and callbacks)
+— it produces a regular `TimelineSegment` whose source range references
+a foreign `MediaAssetRecord`, so iOS executors can apply it once they
+gain a media library and an LLM driver.
 
 `CreativeAction`:
 

@@ -39,9 +39,17 @@ public enum AIActionValidator {
     /// snapshot. Unknown segment IDs, negative / inverted time ranges,
     /// and out-of-range speed rates are flagged as errors. Values that
     /// will be auto-clamped are flagged as warnings.
+    ///
+    /// `knownSourceVideoIDs` is consulted only by `insertSourceClip`,
+    /// which references a foreign source recording the validator can't
+    /// otherwise see. When non-empty, an unknown source UUID is flagged
+    /// as an error so the LLM gets a structured retry path. Pass `[]`
+    /// (the default) to skip the check, e.g. in unit tests that don't
+    /// exercise the source-record indirection.
     public static func validate(
         batch: AIActionBatch,
-        segments: [TimelineSegment]
+        segments: [TimelineSegment],
+        knownSourceVideoIDs: Set<UUID> = []
     ) -> Report {
         var report = Report()
 
@@ -149,6 +157,49 @@ public enum AIActionValidator {
                         code: "reorder_mismatch",
                         message: "reorderSegments must list every current segment id exactly once (\(parts.joined(separator: "; "))).")
                     )
+                }
+
+            case .insertSourceClip(let sourceVideoID, let sourceStart, let sourceEnd, let composedInsertAt, let fadeIn, let fadeOut):
+                if sourceEnd <= sourceStart {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "inverted_source_range",
+                        message: "Source range end (\(sourceEnd)) must be strictly greater than start (\(sourceStart))."
+                    ))
+                } else if sourceEnd - sourceStart < 0.2 {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "source_range_too_short",
+                        message: "Source range duration \(String(format: "%.3f", sourceEnd - sourceStart))s is below the 0.2s minimum. Pick a wider window."
+                    ))
+                }
+                if composedInsertAt < -0.001 {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "negative_composed_insert",
+                        message: "composed_insert_at (\(composedInsertAt)) must be >= 0."
+                    ))
+                }
+                if composedInsertAt > totalDuration + 0.5 {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "insert_past_timeline",
+                        message: "composed_insert_at (\(String(format: "%.2f", composedInsertAt))s) is past the end of the timeline (\(String(format: "%.2f", totalDuration))s). Use 0 to prepend or the timeline length to append."
+                    ))
+                }
+                if fadeIn < 0 || fadeOut < 0 {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "negative_fade",
+                        message: "Fade durations must be >= 0 (got fade_in \(fadeIn), fade_out \(fadeOut))."
+                    ))
+                }
+                if !knownSourceVideoIDs.isEmpty && !knownSourceVideoIDs.contains(sourceVideoID) {
+                    report.errors.append(.init(
+                        actionIndex: index,
+                        code: "unknown_source_video",
+                        message: "source_video_id \(sourceVideoID.uuidString) is not in the project's media library. Only IDs surfaced by score_hook_candidates / get_timeline_summary are allowed."
+                    ))
                 }
 
             case .editSubtitle(let id, let atSeconds, let newText):

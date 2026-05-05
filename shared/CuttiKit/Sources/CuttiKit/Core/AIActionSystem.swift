@@ -14,6 +14,28 @@ public enum AIAction: Codable, Sendable {
     case setSpeed(id: UUID, rate: Double)
     case setSpeedRange(start: Double, end: Double, rate: Double)
     case reorderSegments(ids: [UUID])
+    /// Splice a slice of an arbitrary source recording into the current
+    /// primary track at a composed-time anchor. Powers cold-open hook
+    /// teasers, callbacks, and recap clips: the source clip can come
+    /// from any media record (not just the ones already on the
+    /// timeline). Inserting at composed time `0` prepends the slice
+    /// before everything else; inserting between two segments cleanly
+    /// pushes the rest of the timeline back. Inserting strictly inside
+    /// a host segment splits the host and places the new clip between
+    /// the two halves. Audio fades are applied via the new segment's
+    /// `effects.audioFadeIn/OutDuration`. The action only mutates
+    /// primary-track sequential placement (no `placementOffset`); the
+    /// orchestrator that composes hook teasers (`add_hook_teaser`)
+    /// owns higher-level concerns like duck-on-BGM and
+    /// quote-card overlay.
+    case insertSourceClip(
+        sourceVideoID: UUID,
+        sourceStart: Double,
+        sourceEnd: Double,
+        composedInsertAt: Double,
+        fadeInSeconds: Double,
+        fadeOutSeconds: Double
+    )
 
     // MARK: Subtitle actions
 
@@ -61,6 +83,9 @@ public struct AIActionBatch: Codable, Sendable {
                 return "Set \(AIActionExecutor.formatTime(start))-\(AIActionExecutor.formatTime(end)) to \(AIActionExecutor.formatRate(rate))x"
             case .reorderSegments:
                 return "Reorder segments"
+            case .insertSourceClip(_, let sStart, let sEnd, let at, _, _):
+                let duration = max(0, sEnd - sStart)
+                return "Insert \(AIActionExecutor.formatTime(duration)) clip at \(AIActionExecutor.formatTime(at))"
             case .editSubtitle:
                 return "Edit a subtitle"
             case .replaceSubtitleText(let find, let replaceWith, _):
@@ -281,6 +306,30 @@ public struct AIActionExecutor {
                 segs = reordered
                 applied += 1
 
+            case .insertSourceClip(
+                let sourceVideoID,
+                let sourceStart,
+                let sourceEnd,
+                let composedInsertAt,
+                let fadeIn,
+                let fadeOut
+            ):
+                if let updated = insertSourceClip(
+                    sourceVideoID: sourceVideoID,
+                    sourceStart: sourceStart,
+                    sourceEnd: sourceEnd,
+                    composedInsertAt: composedInsertAt,
+                    fadeInSeconds: fadeIn,
+                    fadeOutSeconds: fadeOut,
+                    in: segs,
+                    transcriptLookup: transcriptLookup
+                ) {
+                    segs = updated
+                    applied += 1
+                } else {
+                    skipped += 1
+                }
+
             case .editSubtitle(let id, let atSeconds, let newText):
                 let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { skipped += 1; continue }
@@ -444,6 +493,122 @@ public struct AIActionExecutor {
         }
 
         return changed ? result : nil
+    }
+
+    /// Splice a slice of an arbitrary source recording into the
+    /// composed timeline. See `AIAction.insertSourceClip` for the
+    /// behaviour contract. Returns the mutated segment array, or `nil`
+    /// when the source range is degenerate (the executor records this
+    /// as `skipped`).
+    private static func insertSourceClip(
+        sourceVideoID: UUID,
+        sourceStart: Double,
+        sourceEnd: Double,
+        composedInsertAt: Double,
+        fadeInSeconds: Double,
+        fadeOutSeconds: Double,
+        in segments: [TimelineSegment],
+        transcriptLookup: TranscriptLookup
+    ) -> [TimelineSegment]? {
+        let clipDuration = sourceEnd - sourceStart
+        guard clipDuration > 0.01 else { return nil }
+        guard sourceEnd > sourceStart else { return nil }
+
+        let clipRange = TimeRange(startSeconds: sourceStart, endSeconds: sourceEnd)
+        let subtitles = transcriptLookup([clipRange], sourceVideoID)
+        let text = buildText(from: subtitles, fallback: "")
+
+        // Fades are clamped to non-negative AND to half the clip
+        // duration so a misconfigured tool call can't produce
+        // overlapping fade-in/out curves that swallow the segment.
+        let halfDuration = clipDuration / 2.0
+        let safeFadeIn = max(0, min(fadeInSeconds, halfDuration))
+        let safeFadeOut = max(0, min(fadeOutSeconds, halfDuration))
+
+        var newSegment = TimelineSegment(
+            id: UUID(),
+            sourceVideoID: sourceVideoID,
+            range: clipRange,
+            text: text,
+            subtitles: subtitles
+        )
+        var effects = SegmentEffects.default
+        effects.audioFadeInDuration = safeFadeIn
+        effects.audioFadeOutDuration = safeFadeOut
+        newSegment.effects = effects
+
+        let totalDuration = segments.reduce(0.0) { $0 + $1.durationSeconds }
+        let clamped = max(0.0, min(composedInsertAt, totalDuration))
+
+        // Walk segments accumulating composed offsets to find the
+        // insert point.
+        var composedOffset = 0.0
+        var inserted = false
+        var result: [TimelineSegment] = []
+        result.reserveCapacity(segments.count + 2)
+
+        for segment in segments {
+            let segmentStart = composedOffset
+            let segmentEnd = composedOffset + segment.durationSeconds
+            defer { composedOffset = segmentEnd }
+
+            // Land before this segment? Insert the new clip first.
+            if !inserted && clamped <= segmentStart + 0.001 {
+                result.append(newSegment)
+                inserted = true
+            }
+
+            // Land strictly inside this segment? Split host, insert
+            // new clip in the middle, then append the right half.
+            if !inserted && clamped > segmentStart + 0.001
+                && clamped < segmentEnd - 0.001 {
+                let cutSourceTime = sourceTime(
+                    for: segment,
+                    segmentComposedStart: segmentStart,
+                    composedTime: clamped
+                )
+                let leftRange = TimeRange(
+                    startSeconds: segment.range.startSeconds,
+                    endSeconds: cutSourceTime
+                )
+                let rightRange = TimeRange(
+                    startSeconds: cutSourceTime,
+                    endSeconds: segment.range.endSeconds
+                )
+                if var left = makeDerivedSegment(
+                    from: segment,
+                    range: leftRange,
+                    transcriptLookup: transcriptLookup
+                ), var right = makeDerivedSegment(
+                    from: segment,
+                    range: rightRange,
+                    transcriptLookup: transcriptLookup
+                ) {
+                    // Clear interior-edge fades so a host segment with
+                    // start/end fades doesn't bleed an unwanted dip
+                    // into the new internal boundary on either side.
+                    left.effects.audioFadeOutDuration = 0
+                    right.effects.audioFadeInDuration = 0
+                    result.append(left)
+                    result.append(newSegment)
+                    result.append(right)
+                    inserted = true
+                    continue
+                }
+                // Split failed (degenerate fragment) — fall through
+                // and append the original segment, retry on next
+                // boundary.
+            }
+
+            result.append(segment)
+        }
+
+        if !inserted {
+            // Append-at-end (or empty timeline).
+            result.append(newSegment)
+        }
+
+        return result
     }
 
     private static func setSpeedForComposedRange(

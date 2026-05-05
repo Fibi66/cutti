@@ -79,6 +79,14 @@ enum ScopeGuard {
                 // attached segments *and* doesn't implicitly move
                 // segments across the scope boundary.
                 inScope = !ids.isEmpty && ids.allSatisfy { attachedIDs.contains($0) }
+            case .insertSourceClip:
+                // insertSourceClip pulls in arbitrary source media
+                // and doesn't fit cleanly inside an attached scope
+                // (the new clip's source range has no
+                // attached-segment id, and the splice point can shift
+                // unattached content). Conservatively reject; users
+                // can run hook insertion with no scope attached.
+                inScope = false
             case .editSubtitle(_, let atSeconds, _):
                 if let at = atSeconds {
                     inScope = rangeInScope(at, at)
@@ -121,6 +129,7 @@ enum ScopeGuard {
             case .setSpeed: return "set speed"
             case .setSpeedRange: return "set speed range"
             case .reorderSegments: return "reorder segments"
+            case .insertSourceClip: return "insert source clip"
             case .editSubtitle: return "edit subtitle"
             case .replaceSubtitleText: return "replace subtitle text"
             case .setSubtitleStyle: return "set subtitle style"

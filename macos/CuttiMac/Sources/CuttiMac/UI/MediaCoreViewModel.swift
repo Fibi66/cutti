@@ -10476,9 +10476,15 @@ final class MediaCoreViewModel: ObservableObject {
             // out-of-range speed / volume, inverted ranges, … BEFORE
             // we touch the executor. Structured issues are fed back
             // to the LLM so it can correct on the next turn.
+            // `knownSourceVideoIDs` lets the validator reject
+            // `insert_source_clip` calls that reference a UUID outside
+            // the project library — without this the LLM could
+            // hallucinate an ID and the segment would later render as
+            // black-frame missing-media.
             let validation = AIActionValidator.validate(
                 batch: rawBatch,
-                segments: timelineSegments
+                segments: timelineSegments,
+                knownSourceVideoIDs: Set(records.map(\.id))
             )
             if validation.hasErrors {
                 let encoder = JSONEncoder()

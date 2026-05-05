@@ -9,7 +9,7 @@ extension AIAction {
         type: "function",
         function: .init(
             name: "edit_timeline",
-            description: "Apply one or more deterministic timeline or subtitle edits. Use delete_range and set_speed_range when the user refers to final-video time ranges. Subtitle actions: edit_subtitle (change one cue's text — pass subtitle_id or at_time), replace_subtitle_text (batch find/replace), set_subtitle_style (adjust font size / colors / position / bilingual display — any subset of fields; use the `bilingual_*` fields to turn the secondary translation line on/off and lay it out), set_subtitles_visible (toggle overlay). For bilingual subtitles, always call `translate_subtitles` first to populate the translations, then use set_subtitle_style with `bilingual=true` and `bilingual_secondary_locale` matching the translate target.",
+            description: "Apply one or more deterministic timeline or subtitle edits. Use delete_range and set_speed_range when the user refers to final-video time ranges. Use insert_source_clip to splice a slice of an arbitrary source recording (any record from the project library, not just clips already on the timeline) into the timeline at a composed-time anchor — this powers cold-open hook teasers and callbacks. Subtitle actions: edit_subtitle (change one cue's text — pass subtitle_id or at_time), replace_subtitle_text (batch find/replace), set_subtitle_style (adjust font size / colors / position / bilingual display — any subset of fields; use the `bilingual_*` fields to turn the secondary translation line on/off and lay it out), set_subtitles_visible (toggle overlay). For bilingual subtitles, always call `translate_subtitles` first to populate the translations, then use set_subtitle_style with `bilingual=true` and `bilingual_secondary_locale` matching the translate target.",
             parameters: .init(
                 type: "object",
                 properties: [
@@ -26,7 +26,7 @@ extension AIAction {
                             properties: [
                                 "type": .init(
                                     type: "string",
-                                    description: "Action type: delete, delete_range, split, trim_start, trim_end, set_volume, set_speed, set_speed_range, reorder_segments, edit_subtitle, replace_subtitle_text, set_subtitle_style, or set_subtitles_visible.",
+                                    description: "Action type: delete, delete_range, split, trim_start, trim_end, set_volume, set_speed, set_speed_range, reorder_segments, insert_source_clip, edit_subtitle, replace_subtitle_text, set_subtitle_style, or set_subtitles_visible.",
                                     items: nil
                                 ),
                                 "segment_id": .init(
@@ -58,6 +58,36 @@ extension AIAction {
                                     type: "array",
                                     description: "Full ordered list of segment UUIDs for reorder_segments. Must contain every current segment exactly once — call get_timeline_summary first to discover them.",
                                     items: .init(type: "string", properties: nil, required: nil)
+                                ),
+                                "source_video_id": .init(
+                                    type: "string",
+                                    description: "For insert_source_clip: UUID of the source media record to slice from. Must reference a record present in the project library — call get_timeline_summary or score_hook_candidates first to discover valid IDs.",
+                                    items: nil
+                                ),
+                                "source_start": .init(
+                                    type: "number",
+                                    description: "For insert_source_clip: start time in source-recording seconds.",
+                                    items: nil
+                                ),
+                                "source_end": .init(
+                                    type: "number",
+                                    description: "For insert_source_clip: end time in source-recording seconds. Must be > source_start and at least 0.2s longer.",
+                                    items: nil
+                                ),
+                                "composed_insert_at": .init(
+                                    type: "number",
+                                    description: "For insert_source_clip: composed-timeline second to splice the new clip at. 0 prepends before everything (cold-open hook teaser); the current timeline length appends; values strictly inside an existing segment split it cleanly.",
+                                    items: nil
+                                ),
+                                "fade_in_seconds": .init(
+                                    type: "number",
+                                    description: "For insert_source_clip: audio fade-in duration in seconds (0 disables). Recommend 0.15s for a hook teaser.",
+                                    items: nil
+                                ),
+                                "fade_out_seconds": .init(
+                                    type: "number",
+                                    description: "For insert_source_clip: audio fade-out duration in seconds (0 disables). Recommend 0.30s for a hook teaser.",
+                                    items: nil
                                 ),
                                 "subtitle_id": .init(
                                     type: "string",
@@ -240,6 +270,27 @@ extension AIAction {
                 let ids = rawIDs.compactMap(UUID.init(uuidString:))
                 guard !ids.isEmpty else { continue }
                 actions.append(.reorderSegments(ids: ids))
+
+            case "insert_source_clip":
+                // composed_insert_at is intentionally required (no
+                // parser-side default) so an omitted argument fails
+                // loudly instead of silently prepending. The validator
+                // surfaces the schema violation back to the LLM.
+                guard let sourceIDString = raw["source_video_id"] as? String,
+                      let sourceVideoID = UUID(uuidString: sourceIDString) else { continue }
+                guard let srcStart = number(raw["source_start"]),
+                      let srcEnd = number(raw["source_end"]),
+                      let insertAt = number(raw["composed_insert_at"]) else { continue }
+                let fadeIn = number(raw["fade_in_seconds"]) ?? 0.15
+                let fadeOut = number(raw["fade_out_seconds"]) ?? 0.30
+                actions.append(.insertSourceClip(
+                    sourceVideoID: sourceVideoID,
+                    sourceStart: srcStart,
+                    sourceEnd: srcEnd,
+                    composedInsertAt: insertAt,
+                    fadeInSeconds: fadeIn,
+                    fadeOutSeconds: fadeOut
+                ))
 
             case "edit_subtitle":
                 let subID = (raw["subtitle_id"] as? String).flatMap(UUID.init(uuidString:))
