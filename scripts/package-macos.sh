@@ -40,8 +40,17 @@ fi
 
 if [[ $SIGN -eq 1 ]]; then
   : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION when --sign}"
-  : "${SPARKLE_PUBLIC_ED_KEY:?Set SPARKLE_PUBLIC_ED_KEY when --sign}"
 fi
+
+# SPARKLE_PUBLIC_ED_KEY is required regardless of --sign: it goes into
+# Info.plist and Sparkle refuses to start with an empty/missing value
+# ("The provided EdDSA key could not be decoded" → fatal alert at every
+# app launch). The key is the *public* half of the EdDSA pair, so it's
+# safe to commit/share — it lives in this repo's GitHub Secrets only
+# for convenience, not secrecy. To recover it: any prior signed Cutti.app
+# has it baked in (`plutil -extract SUPublicEDKey raw <app>/Contents/Info.plist`),
+# or check the value in docs/distributing-macos.md.
+: "${SPARKLE_PUBLIC_ED_KEY:?Set SPARKLE_PUBLIC_ED_KEY (base64 EdDSA public key from generate_keys; see docs/distributing-macos.md)}"
 
 # ---------- Paths ----------
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -52,6 +61,7 @@ APP="$BUILD_DIR/Cutti.app"
 
 INFO_TPL="$SCRIPT_DIR/Info.plist.template"
 ENT="$SCRIPT_DIR/Cutti.entitlements"
+ICON="$SCRIPT_DIR/AppIcon.icns"
 
 # ---------- Build ----------
 echo "==> swift build -c release --arch arm64"
@@ -100,13 +110,25 @@ cp -R "$RES_BUNDLE" "$APP/Contents/MacOS/"
 # Sparkle.framework — preserve symlinks (-R, not -RL).
 cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
 
+# App icon. Info.plist references AppIcon.icns via CFBundleIconFile;
+# macOS resolves the basename to <name>.icns inside Contents/Resources.
+if [[ -f "$ICON" ]]; then
+  cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+else
+  echo "WARN: $ICON not found — bundle will ship without an app icon" >&2
+fi
+
 # Add @executable_path/../Frameworks to the binary's rpath so the
 # dynamic loader can find Sparkle at launch.
 install_name_tool -add_rpath "@executable_path/../Frameworks" \
   "$APP/Contents/MacOS/Cutti" 2>/dev/null || true
 
 # ---------- Render Info.plist ----------
-ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
+if [[ -z "$ED_KEY" ]]; then
+  echo "ERROR: SPARKLE_PUBLIC_ED_KEY is empty after validation — refusing to bake a broken Info.plist." >&2
+  exit 1
+fi
 sed \
   -e "s|{{VERSION}}|$VERSION|g" \
   -e "s|{{BUILD}}|$BUILD_NUMBER|g" \
