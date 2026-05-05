@@ -122,22 +122,35 @@ if [[ $SIGN -eq 1 ]]; then
   echo "==> Codesigning with identity: $IDENTITY"
 
   # Sign nested helpers FIRST. Sparkle ships an Autoupdate.app and an
-  # Updater.app inside Sparkle.framework, plus XPC services. We sign
-  # them bottom-up so each enclosing signature wraps already-signed
-  # content. Sparkle docs explicitly warn against `codesign --deep`.
+  # Updater.app inside Sparkle.framework, plus XPC services. SwiftPM
+  # may also drop a resource bundle next to the executable (e.g.
+  # CuttiMac_CuttiMac.bundle). We sign them bottom-up so each enclosing
+  # signature wraps already-signed content. Sparkle docs explicitly
+  # warn against `codesign --deep`.
   sign() {
     codesign --force --options runtime --timestamp \
       --sign "$IDENTITY" "$@"
   }
 
-  # Inner XPC services and helper apps.
+  # Inner XPC services, helper apps, and SwiftPM resource bundles.
   while IFS= read -r helper; do
     [[ -n "$helper" ]] || continue
     sign "$helper"
-  done < <(find "$APP/Contents/Frameworks/Sparkle.framework" \
-            \( -name '*.xpc' -o -name '*.app' \) -print)
+  done < <({
+    find "$APP/Contents/Frameworks/Sparkle.framework" \
+      \( -name '*.xpc' -o -name '*.app' \) -print
+    find "$APP/Contents/MacOS" "$APP/Contents/Resources" \
+      -maxdepth 2 -name '*.bundle' -print 2>/dev/null
+  })
 
-  # The framework itself.
+  # Any loose dylibs sitting next to the executable.
+  while IFS= read -r dylib; do
+    [[ -n "$dylib" ]] || continue
+    sign "$dylib"
+  done < <(find "$APP/Contents/MacOS" "$APP/Contents/Frameworks" \
+             -maxdepth 2 -name '*.dylib' -print 2>/dev/null)
+
+  # The Sparkle framework itself.
   sign "$APP/Contents/Frameworks/Sparkle.framework"
 
   # Finally the main app, with hardened runtime + entitlements.
