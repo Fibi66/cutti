@@ -114,4 +114,212 @@ enum AgentHook {
             )
         )
     )
+
+    // MARK: - add_hook_teaser orchestrator (PR 5)
+
+    /// Parsed + validated arguments for the `add_hook_teaser` tool.
+    /// Built by `parseHookTeaserArgs` from a raw JSON dict so the
+    /// dispatcher case stays small and the validation is unit-testable
+    /// without instantiating a `MediaCoreViewModel`.
+    struct HookTeaserInputs: Equatable {
+        let sourceVideoID: UUID
+        let sourceName: String?
+        let sourceStart: Double
+        let sourceEnd: Double
+        /// Audio fade-out duration on the inserted clip's tail. Creates
+        /// a soft acoustic transition between the hook and the body.
+        /// NOT a true silence gap — the body's first frame still
+        /// follows immediately. Clamped to [0, 2.0].
+        let audioTailSeconds: Double
+        /// Audio fade-in duration on the clip head. Clamped to [0, 1.0].
+        let fadeInSeconds: Double
+        /// User-facing summary baked into the ProposedBatch card title.
+        let explanation: String
+    }
+
+    enum HookTeaserError: Error, Equatable {
+        case missingArg(String)
+        case invalidUUID(String)
+        case invalidRange(start: Double, end: Double)
+        case sourceNotFound(UUID)
+        case sourceNotVideo(UUID)
+        case sourceRangeOutOfBounds(start: Double, end: Double, sourceDuration: Double)
+
+        var userMessage: String {
+            switch self {
+            case .missingArg(let name):
+                return "Missing required argument: \(name)"
+            case .invalidUUID(let raw):
+                return "Invalid UUID format: \(raw)"
+            case .invalidRange(let s, let e):
+                return "Invalid source range: source_start=\(s) must be < source_end=\(e)"
+            case .sourceNotFound(let id):
+                return "Source video \(id.uuidString) is not in this project."
+            case .sourceNotVideo(let id):
+                return "Source \(id.uuidString) is not a video asset."
+            case .sourceRangeOutOfBounds(let s, let e, let dur):
+                return "Source range [\(s), \(e)] is outside the clip's duration (0 — \(dur)s)."
+            }
+        }
+    }
+
+    /// Pure parser. Extracted so the dispatcher case is thin and the
+    /// validation is unit-testable without a VM. Performs:
+    ///   - argument presence + type checks
+    ///   - UUID parsing
+    ///   - range sanity (start < end, both >= 0)
+    ///   - record lookup (must exist + be a video asset)
+    ///   - bounds check against the source's analyzed duration
+    static func parseHookTeaserArgs(
+        args: [String: Any],
+        records: [MediaAssetRecord]
+    ) -> Swift.Result<HookTeaserInputs, HookTeaserError> {
+        guard let sourceIDStr = args["source_video_id"] as? String, !sourceIDStr.isEmpty else {
+            return .failure(.missingArg("source_video_id"))
+        }
+        guard let sourceID = UUID(uuidString: sourceIDStr) else {
+            return .failure(.invalidUUID(sourceIDStr))
+        }
+        guard let sourceStart = doubleArg(args["source_start"]) else {
+            return .failure(.missingArg("source_start"))
+        }
+        guard let sourceEnd = doubleArg(args["source_end"]) else {
+            return .failure(.missingArg("source_end"))
+        }
+        guard sourceStart >= 0, sourceEnd > sourceStart else {
+            return .failure(.invalidRange(start: sourceStart, end: sourceEnd))
+        }
+        guard let record = records.first(where: { $0.id == sourceID }) else {
+            return .failure(.sourceNotFound(sourceID))
+        }
+        guard record.kind == .video else {
+            return .failure(.sourceNotVideo(sourceID))
+        }
+        if let duration = record.analysis?.durationSeconds, duration > 0 {
+            // Allow tiny epsilon for floating-point rounding from the LLM.
+            guard sourceEnd <= duration + 0.05 else {
+                return .failure(.sourceRangeOutOfBounds(
+                    start: sourceStart,
+                    end: sourceEnd,
+                    sourceDuration: duration
+                ))
+            }
+        }
+        let audioTail = clamp(doubleArg(args["audio_tail_seconds"]) ?? 0.4, low: 0, high: 2.0)
+        let fadeIn = clamp(doubleArg(args["fade_in_seconds"]) ?? 0.15, low: 0, high: 1.0)
+        let sourceName = record.sourcePath.components(separatedBy: "/").last
+        let duration = sourceEnd - sourceStart
+        let defaultExplanation = String(
+            format: "Add opening hook teaser (%.1fs%@)",
+            duration,
+            sourceName.map { " from \($0)" } ?? ""
+        )
+        let explanation: String = {
+            if let raw = args["explanation"] as? String, !raw.isEmpty {
+                return raw
+            }
+            return defaultExplanation
+        }()
+        return .success(HookTeaserInputs(
+            sourceVideoID: sourceID,
+            sourceName: sourceName,
+            sourceStart: sourceStart,
+            sourceEnd: sourceEnd,
+            audioTailSeconds: audioTail,
+            fadeInSeconds: fadeIn,
+            explanation: explanation
+        ))
+    }
+
+    /// Build the single-action `AIActionBatch` that the dispatcher will
+    /// dry-run + wrap in a ProposedBatch. The `composedInsertAt = 0` is
+    /// hardcoded — the orchestrator's whole purpose is "put this at the
+    /// head of the timeline". Audio tail = `fadeOutSeconds` on the
+    /// inserted clip.
+    static func buildHookBatch(_ inputs: HookTeaserInputs) -> AIActionBatch {
+        AIActionBatch(
+            actions: [.insertSourceClip(
+                sourceVideoID: inputs.sourceVideoID,
+                sourceStart: inputs.sourceStart,
+                sourceEnd: inputs.sourceEnd,
+                composedInsertAt: 0,
+                fadeInSeconds: inputs.fadeInSeconds,
+                fadeOutSeconds: inputs.audioTailSeconds
+            )],
+            explanation: inputs.explanation
+        )
+    }
+
+    static let addHookTeaserTool = ToolDefinition(
+        type: "function",
+        function: .init(
+            name: "add_hook_teaser",
+            description: """
+                Add an opening-hook (cold-open teaser) clip at composed time 0. \
+                The selected source span is sliced from its origin recording and \
+                spliced in front of the existing edit; the body that was at 0 \
+                slides right by the hook's duration. Always produces a Pending \
+                proposal that the user must Apply — never auto-applies, even in \
+                auto-apply mode (opening hooks are high-stakes). \
+                Use this AFTER score_hook_candidates returns and the user has \
+                picked a candidate. Pass that candidate's source_video_id, \
+                source_start, source_end. If the user wants a Quote overlay or \
+                SFX punch on the hook, call generate_overlay / SFX tools \
+                AFTER the user clicks Apply on this proposal — those are \
+                separate tool calls, not part of this batch. Do NOT chain \
+                further destructive edits in the same turn; wait for the user \
+                to confirm.
+                """,
+            parameters: .init(
+                type: "object",
+                properties: [
+                    "source_video_id": .init(
+                        type: "string",
+                        description: "UUID of the source media record (from a score_hook_candidates result).",
+                        items: nil
+                    ),
+                    "source_start": .init(
+                        type: "number",
+                        description: "Start of the span to clip from the source, in seconds. Must satisfy 0 ≤ start < end ≤ source_duration.",
+                        items: nil
+                    ),
+                    "source_end": .init(
+                        type: "number",
+                        description: "End of the span to clip from the source, in seconds. Must satisfy 0 ≤ start < end ≤ source_duration.",
+                        items: nil
+                    ),
+                    "audio_tail_seconds": .init(
+                        type: "number",
+                        description: "Audio fade-out duration on the hook's tail (default 0.4, clamped [0, 2]). NOTE: this is an audio fade only — it does NOT insert a silence gap; the body's first frame follows immediately.",
+                        items: nil
+                    ),
+                    "fade_in_seconds": .init(
+                        type: "number",
+                        description: "Audio fade-in on the hook's head (default 0.15, clamped [0, 1]).",
+                        items: nil
+                    ),
+                    "explanation": .init(
+                        type: "string",
+                        description: "Optional human-readable card title. Defaults to 'Add opening hook teaser (Xs from name.mov)'.",
+                        items: nil
+                    )
+                ],
+                required: ["source_video_id", "source_start", "source_end"],
+                items: nil
+            )
+        )
+    )
+
+    // MARK: - Helpers
+
+    private static func doubleArg(_ raw: Any?) -> Double? {
+        if let d = raw as? Double { return d }
+        if let i = raw as? Int { return Double(i) }
+        if let n = raw as? NSNumber { return n.doubleValue }
+        return nil
+    }
+
+    private static func clamp(_ x: Double, low: Double, high: Double) -> Double {
+        max(low, min(high, x))
+    }
 }

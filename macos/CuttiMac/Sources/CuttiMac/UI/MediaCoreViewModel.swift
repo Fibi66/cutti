@@ -9325,7 +9325,8 @@ final class MediaCoreViewModel: ObservableObject {
         - find_by_transcript: 按字幕文本子串搜索
         - get_timeline_summary: 获取整体统计
         - get_segment_detail: 查单个 / 多个 segment 的详细状态（volume, speed, fade, 颜色, speaker …）
-        - score_hook_candidates: 在所有原始素材里给"开场金句 / 冷开 hook"打分排序，返回 top-K 候选（含 length / position / anti-filler / energy 子分数与 1 行理由）。当用户希望 AI 自主挑选而非自己指明那一句时使用（"AI 自己挑句开场金句""帮我挑个 hook""加个开场钩子"）。本工具只读，不会改时间线；要把候选真正放到开头，再用 edit_timeline.insert_source_clip。**用户已经指明了某段（"把 pricing 那段放开头"）就用 find_by_transcript，不要用本工具。** 在选定范围（chat 上方有附件 chip）下被禁用——需要先取消附件。
+        - score_hook_candidates: 在所有原始素材里给"开场金句 / 冷开 hook"打分排序，返回 top-K 候选（含 length / position / anti-filler / energy 子分数与 1 行理由）。当用户希望 AI 自主挑选而非自己指明那一句时使用（"AI 自己挑句开场金句""帮我挑个 hook""加个开场钩子"）。本工具只读，不会改时间线；要把候选真正放到开头，再调 add_hook_teaser。**用户已经指明了某段（"把 pricing 那段放开头"）就用 find_by_transcript，不要用本工具。** 在选定范围（chat 上方有附件 chip）下被禁用——需要先取消附件。
+        - add_hook_teaser: 把 score_hook_candidates 选出的某条候选作为冷开金句插到时间线最前面。参数从用户挑中的那条候选拿（source_video_id / source_start / source_end）。**永远只产生 Pending proposal，从不自动应用**——即便处于 Auto-Apply 模式也一样。生成后必须等用户点 Apply 才能继续；同一轮里不要再发别的破坏性编辑。如果用户接着要 Quote overlay 或 SFX，等他点 Apply 之后再单独调 generate_overlay 等工具。在选定范围下被禁用。
         - find_black_frames: 找画面接近黑屏的时间段（掉帧/盖镜头/渐黑）
         - find_empty_frames: 找没有人脸的时间段（用于 B-roll 替补 / 剪空镜）
         - find_scene_changes: 找画面剧烈变化的切点（建议自然剪辑点）
@@ -9386,7 +9387,7 @@ final class MediaCoreViewModel: ObservableObject {
         - "把所有 uh 删掉" → 1) find_filler_words → 2) edit_timeline.delete_range 多条
         - "把 5:00 到 5:20 调成 1.5 倍速" → set_speed_range(start_time: 300, end_time: 320, rate: 1.5)
         - "把我讲 pricing 那段放到开头做 intro" → 1) find_by_transcript("pricing") 拿到 segment_id → 2) get_timeline_summary 拿到全部 segment_ids → 3) edit_timeline.reorder_segments(segment_ids: [pricing_id, ...其余保持原顺序])
-        - "AI 自己挑一句最有冲击力的开场金句放开头" → 1) score_hook_candidates(top_k: 5) → 2) 用候选清单（含 reason）问用户挑哪一条 → 3) edit_timeline.insert_source_clip(source_video_id, source_start, source_end, composed_insert_at: 0)
+        - "AI 自己挑一句最有冲击力的开场金句放开头" → 1) score_hook_candidates(top_k: 5) → 2) 用候选清单（含 reason）问用户挑哪一条 → 3) add_hook_teaser(source_video_id, source_start, source_end)（始终是 Pending proposal，等用户点 Apply）
         - "撤销上一步" → restore_checkpoint(checkpoint_index: 0)
         - "帮我剪一下 / 给我自动剪个第一版" → run_first_cut()
         - "我又导了几个素材，重新出一版第一刀" → run_first_cut()
@@ -10157,6 +10158,7 @@ final class MediaCoreViewModel: ObservableObject {
             case "get_timeline_summary": return "Reading the timeline…"
             case "get_segment_detail":   return "Inspecting segment…"
             case "score_hook_candidates": return "Scoring hook candidates…"
+            case "add_hook_teaser":       return "Preparing opening hook…"
             case "find_black_frames":    return "Looking for black frames…"
             case "find_empty_frames":    return "Looking for empty shots…"
             case "find_scene_changes":   return "Finding scene cuts…"
@@ -10192,6 +10194,7 @@ final class MediaCoreViewModel: ObservableObject {
         case "get_timeline_summary": return "看下时间线"
         case "get_segment_detail":   return "查下片段"
         case "score_hook_candidates": return "给开场金句打分"
+        case "add_hook_teaser":       return "把开场金句放到开头"
         case "find_black_frames":    return "找黑场"
         case "find_empty_frames":    return "找空镜"
         case "find_scene_changes":   return "找镜头切点"
@@ -10340,6 +10343,25 @@ final class MediaCoreViewModel: ObservableObject {
         let duration: Double
     }
 
+    /// JSON shape returned by the `add_hook_teaser` tool. Encoded via
+    /// `AgentToolJSON.encode` and surfaced to the model as a `tool`
+    /// message. The fields are deliberately verbose so the model
+    /// understands the proposal is *pending* and that it must wait for
+    /// the user to click Apply before chaining more destructive edits.
+    private struct AddHookTeaserToolResult: Codable {
+        let status: String
+        let durationSeconds: Double
+        let requiresUserConfirmation: Bool
+        let nextSteps: String
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case durationSeconds = "duration_seconds"
+            case requiresUserConfirmation = "requires_user_confirmation"
+            case nextSteps = "next_steps"
+        }
+    }
+
     /// Resolve (and cache-if-missing) a VisualIndex per unique
     /// sourceVideoID referenced by the current timeline. First call on a
     /// fresh project runs `VisualAnalysisService.analyze` per source —
@@ -10394,6 +10416,7 @@ final class MediaCoreViewModel: ObservableObject {
             AgentQuery.getTimelineSummaryTool,
             AgentQuery.getSegmentDetailTool,
             AgentHook.scoreHookCandidatesTool,
+            AgentHook.addHookTeaserTool,
             VisualAgentQuery.findBlackFramesTool,
             VisualAgentQuery.findEmptyFramesTool,
             VisualAgentQuery.findSceneChangesTool,
@@ -11862,6 +11885,73 @@ final class MediaCoreViewModel: ObservableObject {
                 checkpointID: nil
             )
 
+        case "add_hook_teaser":
+            // Hook insertion always produces a Pending proposal — even
+            // when the user has Auto-Apply enabled. Cold-open is too
+            // high-stakes to slam in without explicit consent.
+            if !chatAttachmentScope.isEmpty {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError("add_hook_teaser needs the full project — detach the scope chips above the chat box and try again."),
+                    userSummary: "⚠️ 选定范围下不能插入开场金句，先取消上方附件再试。",
+                    checkpointID: nil
+                )
+            }
+            switch AgentHook.parseHookTeaserArgs(args: args, records: records) {
+            case .failure(let err):
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError(err.userMessage),
+                    userSummary: "⚠️ \(err.userMessage)",
+                    checkpointID: nil
+                )
+            case .success(let inputs):
+                let batch = AgentHook.buildHookBatch(inputs)
+                let validation = AIActionValidator.validate(
+                    batch: batch,
+                    segments: timelineSegments,
+                    knownSourceVideoIDs: Set(records.map(\.id))
+                )
+                if validation.hasErrors {
+                    let bullets = validation.errors.prefix(5).map { "• \($0.message)" }.joined(separator: "\n")
+                    return AgentToolOutcome(
+                        resultJSON: AgentToolJSON.encodeError("Pre-flight rejected: \(bullets)"),
+                        userSummary: "⚠️ Pre-flight rejected:\n\(bullets)",
+                        checkpointID: nil
+                    )
+                }
+                let dryRun = AIActionExecutor.apply(
+                    batch: batch,
+                    to: timelineSegments,
+                    baseSubtitleStyle: subtitleStyle,
+                    transcriptLookup: { ranges, sourceID in
+                        self.subtitleEntries(for: ranges, sourceVideoID: sourceID)
+                    }
+                )
+                let proposal = ProposedBatch.make(
+                    toolCallID: toolCall.id,
+                    batch: batch,
+                    before: timelineSegments,
+                    dryRun: dryRun
+                )
+                pendingProposals.insert(proposal, at: 0)
+                let duration = inputs.sourceEnd - inputs.sourceStart
+                let bubble = String(
+                    format: "🎯 Pending opening hook — %.1fs%@",
+                    duration,
+                    inputs.sourceName.map { " from \($0)" } ?? ""
+                )
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encode(AddHookTeaserToolResult(
+                        status: "pending_user_apply",
+                        durationSeconds: duration,
+                        requiresUserConfirmation: true,
+                        nextSteps: "Wait for the user to click Apply on the proposal card before any overlay/SFX follow-up. Do not propose more edits in this turn."
+                    )),
+                    userSummary: bubble,
+                    checkpointID: nil,
+                    proposedBatchID: proposal.id
+                )
+            }
+
         case "run_first_cut":
             let request = RunFirstCutRequest.parse(from: args)
             return await runFirstCutTool(request, userMessageID: userMessageID)
@@ -12126,6 +12216,51 @@ final class MediaCoreViewModel: ObservableObject {
     func applyProposal(id: UUID) {
         guard let idx = pendingProposals.firstIndex(where: { $0.id == id }) else { return }
         let proposal = pendingProposals[idx]
+
+        // Re-validate before apply. The original validation passed at
+        // proposal time, but state may have shifted between the
+        // proposal landing and the user clicking Apply — most notably,
+        // an `insertSourceClip` action's source media record may have
+        // been removed from the project. Without this re-check we'd
+        // silently commit a segment whose source is gone, and only
+        // discover it at render time as missing-media black-frame.
+        //
+        // The validator's `knownSourceVideoIDs` check is permissive
+        // when the set is empty (it serves callers who don't enumerate
+        // sources). At Apply time we definitively know the project's
+        // records — including the empty case — so we run an explicit
+        // pre-check first that surfaces missing sources even when no
+        // records are loaded.
+        let knownSourceIDs = Set(records.map(\.id))
+        var missingSources: [UUID] = []
+        for action in proposal.batch.actions {
+            if case .insertSourceClip(let sourceVideoID, _, _, _, _, _) = action,
+               !knownSourceIDs.contains(sourceVideoID) {
+                missingSources.append(sourceVideoID)
+            }
+        }
+        let revalidation = AIActionValidator.validate(
+            batch: proposal.batch,
+            segments: timelineSegments,
+            knownSourceVideoIDs: knownSourceIDs
+        )
+        if !missingSources.isEmpty || revalidation.hasErrors {
+            pendingProposals[idx].decision = .stale
+            var bullets = revalidation.errors.prefix(3).map { "• \($0.message)" }
+            for missing in missingSources.prefix(max(0, 3 - bullets.count)) {
+                bullets.append("• Source video \(missing.uuidString) is no longer in the project.")
+            }
+            let body = bullets.joined(separator: "\n")
+            let msg = EditorChatMessage(
+                role: .system,
+                content: "Can't apply “\(proposal.batch.explanation)” — project state changed since the proposal was made:\n\(body)",
+                iconSystemName: "exclamationmark.triangle.fill",
+                iconTone: .warning
+            )
+            chatMessages.append(msg)
+            Task { try? await chatStore?.append(msg) }
+            return
+        }
 
         let dryRun = AIActionExecutor.apply(
             batch: proposal.batch,
