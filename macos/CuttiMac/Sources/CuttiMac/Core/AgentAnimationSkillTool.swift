@@ -237,19 +237,24 @@ enum AnimationSkill {
 
     /// The minimum skill content that MUST be in the agent's working
     /// memory before it generates an overlay. Concatenates the
-    /// Cutti-specific template catalog (which template fits which
-    /// intent) and the staging guide (entrance/hold/exit, stagger,
-    /// per-item `atSeconds`). Inlined into `generate_overlay`'s
-    /// description so the agent sees it on every call without having
-    /// to remember to call `read_animation_rule` first.
+    /// top-level skill manual (taxonomy + routing) and the staging
+    /// reference (entrance/hold/exit, stagger, per-item `atSeconds`).
+    /// Inlined into `generate_overlay`'s description so the agent
+    /// sees it on every call without having to remember to call
+    /// `read_animation_rule` first.
     ///
-    /// ~6 KB of markdown / ~1.7K tokens — accepted cost for getting
+    /// For cloud users the relay injects the FULL bundle (12 catalog
+    /// manuals + reference chapters + TSX source); this baked prompt
+    /// is therefore primarily for BYOK users whose chat traffic
+    /// bypasses the relay.
+    ///
+    /// ~12 KB of markdown / ~3K tokens — accepted cost for getting
     /// reliable house-style adherence on the most expensive tool we
-    /// ship. The richer skill (40+ rules, plugins, templates,
-    /// workflows) stays behind `list_animation_rules` /
+    /// ship. The richer skill (catalog + reference + TSX source)
+    /// stays behind `list_animation_rules` /
     /// `read_animation_rule` for the agent to pull on demand.
     static let bakedIntoOverlayPrompt: String = {
-        let parts: [String] = ["rules/cutti-templates", "rules/cutti-staging"]
+        let parts: [String] = ["SKILL", "reference/staging"]
             .compactMap { name in
                 guard let raw = content(for: name) else { return nil }
                 let cleaned = stripFrontMatter(raw)
@@ -263,8 +268,8 @@ enum AnimationSkill {
         The following sections are pulled verbatim from the bundled \
         animation skill (Sources/CuttiMac/Resources/AnimationSkill/). \
         Apply them when picking the template, props, and timing. For \
-        deeper rules (text fitting, fonts, calculateMetadata clamps, \
-        Remotion non-negotiables, ffmpeg, captions, etc.) call \
+        deeper rules (per-template manual with TSX source, fonts, \
+        style guide, hard constraints, pre-emit checklist) call \
         `list_animation_rules` and `read_animation_rule`.
 
         \(parts.joined(separator: "\n\n---\n\n"))

@@ -18,36 +18,45 @@ final class AnimationSkillTests: XCTestCase {
     private func skipIfSkillPackMissing() throws {
         let names = Set(AnimationSkill.allEntries.map { $0.name })
         try XCTSkipUnless(
-            names.contains("rules/cutti-staging"),
+            names.contains("reference/staging"),
             "Skipping: proprietary AnimationSkill pack not present in this build (open-source build ships an empty AnimationSkill directory)."
         )
     }
 
-    func test_listEntries_includesCuttiSpecificRules() throws {
+    func test_listEntries_includesCatalogAndReference() throws {
         try skipIfSkillPackMissing()
         let names = Set(AnimationSkill.allEntries.map { $0.name })
-        XCTAssertTrue(names.contains("rules/cutti-staging"),
-                      "Expected bundled rules/cutti-staging.md")
-        XCTAssertTrue(names.contains("rules/cutti-checklist"),
-                      "Expected bundled rules/cutti-checklist.md")
-        XCTAssertTrue(names.contains("rules/cutti-templates"),
-                      "Expected bundled rules/cutti-templates.md")
-        XCTAssertTrue(names.contains("rules/cutti-constraints"),
-                      "Expected bundled rules/cutti-constraints.md")
-        XCTAssertTrue(names.contains("rules/cutti-fonts"),
-                      "Expected bundled rules/cutti-fonts.md")
-        // The generic skill files should also have been copied.
+        // Top-level taxonomy + routing.
         XCTAssertTrue(names.contains("SKILL"),
-                      "Expected bundled SKILL.md")
-        XCTAssertTrue(names.contains("style-guide/aesthetic"),
-                      "Expected bundled style-guide/aesthetic.md")
-        XCTAssertTrue(names.contains("rules/animations"),
-                      "Expected bundled rules/animations.md")
+                      "Expected bundled SKILL.md (taxonomy + routing table)")
+        // Reference chapters cross-linked from catalog manuals.
+        XCTAssertTrue(names.contains("reference/staging"),
+                      "Expected bundled reference/staging.md")
+        XCTAssertTrue(names.contains("reference/fonts"),
+                      "Expected bundled reference/fonts.md")
+        XCTAssertTrue(names.contains("reference/constraints"),
+                      "Expected bundled reference/constraints.md")
+        XCTAssertTrue(names.contains("reference/style-guide"),
+                      "Expected bundled reference/style-guide.md")
+        XCTAssertTrue(names.contains("reference/checklist"),
+                      "Expected bundled reference/checklist.md")
+        XCTAssertTrue(names.contains("reference/animation-principles"),
+                      "Expected bundled reference/animation-principles.md")
+        // All 12 catalog templates must be present.
+        for templateID in [
+            "ChapterTitle", "TitleCard", "ChatBubble", "PromptTyping",
+            "SkillMeter", "CodeGen", "ContextBar", "GitHubCard",
+            "TripleTap", "SequenceSteps", "Quote", "Comparison",
+        ] {
+            XCTAssertTrue(names.contains("catalog/\(templateID)"),
+                          "Expected bundled catalog/\(templateID).md")
+        }
     }
 
-    func test_listEntries_eachHasNonEmptySummary_forCuttiRules() {
+    func test_listEntries_eachHasNonEmptySummary_forCatalogAndReference() {
         let entries = AnimationSkill.allEntries
-        for entry in entries where entry.name.hasPrefix("rules/cutti-") {
+        for entry in entries
+        where entry.name.hasPrefix("catalog/") || entry.name.hasPrefix("reference/") {
             XCTAssertFalse(entry.summary.isEmpty,
                            "Expected description front matter on \(entry.name)")
         }
@@ -55,8 +64,8 @@ final class AnimationSkillTests: XCTestCase {
 
     func test_content_returnsRawMarkdown_andStripFrontMatterCleansIt() throws {
         try skipIfSkillPackMissing()
-        guard let raw = AnimationSkill.content(for: "rules/cutti-staging") else {
-            XCTFail("Could not load rules/cutti-staging from bundle")
+        guard let raw = AnimationSkill.content(for: "reference/staging") else {
+            XCTFail("Could not load reference/staging from bundle")
             return
         }
         XCTAssertTrue(raw.hasPrefix("---"),
@@ -74,11 +83,11 @@ final class AnimationSkillTests: XCTestCase {
     }
 
     func test_readRequest_normalizesNameAndStripsExtension() {
-        let r1 = AnimationSkill.ReadRequest.parse(from: ["name": "rules/cutti-staging.md"])
-        XCTAssertEqual(r1?.name, "rules/cutti-staging")
+        let r1 = AnimationSkill.ReadRequest.parse(from: ["name": "reference/staging.md"])
+        XCTAssertEqual(r1?.name, "reference/staging")
 
-        let r2 = AnimationSkill.ReadRequest.parse(from: ["name": "/rules/cutti-staging"])
-        XCTAssertEqual(r2?.name, "rules/cutti-staging")
+        let r2 = AnimationSkill.ReadRequest.parse(from: ["name": "/reference/staging"])
+        XCTAssertEqual(r2?.name, "reference/staging")
 
         XCTAssertNil(AnimationSkill.ReadRequest.parse(from: ["name": "   "]))
         XCTAssertNil(AnimationSkill.ReadRequest.parse(from: [:]))
@@ -89,20 +98,25 @@ final class AnimationSkillTests: XCTestCase {
     /// whether it remembered to call `read_animation_rule` first.
     /// If this regresses (empty bake, missing files, broken Bundle
     /// access), the agent silently loses house-style guidance.
+    ///
+    /// For cloud users the relay injects the FULL bundle (catalog
+    /// manuals + reference + TSX source); this baked prompt is the
+    /// BYOK fallback so the agent still has the highest-leverage
+    /// rules in working memory when going direct to Azure.
     func test_bakedIntoOverlayPrompt_containsBothCriticalSections() throws {
         try skipIfSkillPackMissing()
         let baked = AnimationSkill.bakedIntoOverlayPrompt
         XCTAssertFalse(baked.isEmpty,
                        "Baked prompt must not be empty — Bundle resource lookup likely broken")
-        XCTAssertTrue(baked.contains("rules/cutti-templates"))
-        XCTAssertTrue(baked.contains("rules/cutti-staging"))
+        XCTAssertTrue(baked.contains("SKILL"))
+        XCTAssertTrue(baked.contains("reference/staging"))
         // Body markers from each file:
-        XCTAssertTrue(baked.contains("Three house styles"),
-                      "Templates section body must be inlined")
+        XCTAssertTrue(baked.contains("The 12-template catalog"),
+                      "SKILL section body must be inlined")
         XCTAssertTrue(baked.contains("Entrance / hold / exit thirds"),
                       "Staging section body must be inlined")
         // Front matter must be stripped.
-        XCTAssertFalse(baked.contains("description: Cutti's shipped overlay templates"),
+        XCTAssertFalse(baked.contains("description: Operating manual"),
                        "YAML front matter should be stripped from baked prompt")
     }
 
@@ -111,7 +125,7 @@ final class AnimationSkillTests: XCTestCase {
         let description = GenerateOverlayRequest.toolDefinition.function.description
         XCTAssertTrue(description.contains("Required reading: Cutti animation skill"),
                       "generate_overlay description must include the baked skill content")
-        XCTAssertTrue(description.contains("Three house styles"),
-                      "generate_overlay description must include the templates section")
+        XCTAssertTrue(description.contains("The 12-template catalog"),
+                      "generate_overlay description must include the SKILL taxonomy section")
     }
 }
