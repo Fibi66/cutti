@@ -56,10 +56,14 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 90
 
-    env:
-      KEYCHAIN_PATH: ${{ runner.temp }}/cutti-build.keychain-db
-
     steps:
+      - name: Set up environment
+        run: |
+          # Job-level env: cannot reference ${{ runner.temp }}, that context
+          # only exists at step level. Export via $GITHUB_ENV so all later
+          # steps see $KEYCHAIN_PATH.
+          echo "KEYCHAIN_PATH=$RUNNER_TEMP/cutti-build.keychain-db" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -174,7 +178,7 @@ jobs:
         env:
           DEVELOPER_ID_APPLICATION:    ${{ secrets.DEVELOPER_ID_APPLICATION }}
           NOTARYTOOL_KEYCHAIN_PROFILE: cutti-notary
-          NOTARYTOOL_KEYCHAIN:         ${{ runner.temp }}/cutti-build.keychain-db
+          NOTARYTOOL_KEYCHAIN:         ${{ env.KEYCHAIN_PATH }}
           SPARKLE_PUBLIC_ED_KEY:       ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
           GH_TOKEN:                    ${{ secrets.GITHUB_TOKEN }}
         run: |
