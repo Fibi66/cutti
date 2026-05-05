@@ -162,6 +162,16 @@ struct TimelineDock: View {
     /// Which segment (if any) has its alternate-takes popover open.
     @State var alternativesPopoverSegmentID: UUID?
 
+    /// Which overlay segment (if any) is currently showing the
+    /// "Set Start Time…" popover. Kept SEPARATE from
+    /// `selectedOverlaySegmentID` so opening the popover doesn't
+    /// hijack the broader selection state — the user must be able to
+    /// select a V2 pill (so Cmd+B / toolbar Split target it) without
+    /// the popover auto-appearing, stealing focus, and then clearing
+    /// selection on dismiss when they click anywhere else. Only the
+    /// explicit "Set Start Time…" context-menu item opens this popover.
+    @State var overlayStartTimePopoverSegmentID: UUID?
+
     /// Drop-targeting flags driven by `.dropDestination(isTargeted:)` so
     /// the user sees where a MediaBrowser drag will land.
     @State var isMediaDropOnPrimary = false

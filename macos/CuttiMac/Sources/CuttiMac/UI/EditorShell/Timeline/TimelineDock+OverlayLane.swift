@@ -418,7 +418,12 @@ extension TimelineDock {
             }
             Divider()
             Button {
+                // Selecting AND opening the popover here keeps Cmd+B
+                // working on this segment after the user dismisses the
+                // popover — selection is the persistent state that
+                // routes shortcuts; the popover is a transient editor.
                 selectedOverlaySegmentID = seg.id
+                overlayStartTimePopoverSegmentID = seg.id
             } label: { T("Set Start Time…") }
             Divider()
             Button(role: .destructive) {
@@ -444,8 +449,8 @@ extension TimelineDock {
         .gesture(overlayDragGesture(for: seg, pps: pps, totalDuration: totalDuration))
         .popover(
             isPresented: Binding(
-                get: { isSelected && overlayDrag == nil },
-                set: { if !$0 { selectedOverlaySegmentID = nil } }
+                get: { overlayStartTimePopoverSegmentID == seg.id && overlayDrag == nil },
+                set: { if !$0 { overlayStartTimePopoverSegmentID = nil } }
             ),
             arrowEdge: .top
         ) {
@@ -454,10 +459,10 @@ extension TimelineDock {
                 totalDuration: totalDuration,
                 onCommit: { newStart in
                     creativeActions.onMoveOverlaySegment(seg.id, newStart)
-                    selectedOverlaySegmentID = nil
+                    overlayStartTimePopoverSegmentID = nil
                 },
                 onCancel: {
-                    selectedOverlaySegmentID = nil
+                    overlayStartTimePopoverSegmentID = nil
                 }
             )
         }
@@ -562,8 +567,14 @@ extension TimelineDock {
                     snappedComposedStart: snapped,
                     didSnap: didSnap
                 )
-                // Close any open popover while interactively dragging.
-                if selectedOverlaySegmentID == seg.id { selectedOverlaySegmentID = nil }
+                // Close any open Set-Start-Time popover while dragging
+                // (the popover and live drag would visually fight). We
+                // intentionally do NOT clear `selectedOverlaySegmentID`
+                // here — selection must persist across the drag so
+                // Cmd+B / Delete keep targeting this segment.
+                if overlayStartTimePopoverSegmentID == seg.id {
+                    overlayStartTimePopoverSegmentID = nil
+                }
             }
             .onEnded { value in
                 // Classify the gesture at release time. Under the
