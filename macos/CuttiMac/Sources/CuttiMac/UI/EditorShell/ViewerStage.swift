@@ -64,6 +64,11 @@ struct ViewerStage: View {
     @Binding var subtitleStyle: SubtitleStyle
     @Binding var subtitleSelected: Bool
     var onCommitSubtitleText: ((String) -> Void)? = nil
+    /// Bilingual variant of the in-place subtitle editor commit.
+    /// Receives `(primaryText, secondaryText, secondaryLocale)`. The
+    /// locale is the one snapshotted when editing began. Optional so
+    /// callers that don't need bilingual editing can omit it.
+    var onCommitSubtitleBilingualText: ((String, String, String) -> Void)? = nil
     var onBeginSubtitleEdit: (() -> Void)? = nil
     var onEndSubtitleEdit: (() -> Void)? = nil
     var subtitleSpeakerColor: Color? = nil
@@ -154,7 +159,8 @@ struct ViewerStage: View {
                             speakerColor: subtitleSpeakerColor,
                             speakerLabel: subtitleSpeakerLabel,
                             speakerLabelSize: subtitleSpeakerLabelSize,
-                            secondaryText: subtitleSecondaryText
+                            secondaryText: subtitleSecondaryText,
+                            onCommitBilingualText: onCommitSubtitleBilingualText
                         )
                     }
 

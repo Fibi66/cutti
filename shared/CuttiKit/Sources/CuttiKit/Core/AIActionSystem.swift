@@ -303,7 +303,11 @@ public struct AIActionExecutor {
                     id: old.id,
                     relativeStart: old.relativeStart,
                     relativeDuration: old.relativeDuration,
-                    text: trimmed
+                    text: trimmed,
+                    speakerID: old.speakerID,
+                    translations: old.translations,
+                    runs: nil,
+                    wordTimings: nil
                 )
                 applied += 1
 
@@ -321,7 +325,11 @@ public struct AIActionExecutor {
                                 id: old.id,
                                 relativeStart: old.relativeStart,
                                 relativeDuration: old.relativeDuration,
-                                text: new
+                                text: new,
+                                speakerID: old.speakerID,
+                                translations: old.translations,
+                                runs: nil,
+                                wordTimings: nil
                             )
                             changed += 1
                         }

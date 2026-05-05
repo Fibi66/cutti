@@ -72,6 +72,14 @@ struct TimelineDock: View {
     let onSetAudioFade: (Int, Double?, Double?) -> Void
     let onResetEffects: (Int) -> Void
     let onEditSubtitleText: (UUID, String) -> Void
+    /// Bilingual variant of the text editor. When non-nil and the active
+    /// `subtitleStyle.bilingual` had a usable secondary locale at the
+    /// moment editing started, the inline popover renders two stacked
+    /// TextFields (primary + secondary) and routes commits here instead
+    /// of `onEditSubtitleText`. Optional + nil-default so previews and
+    /// tests that constructed `TimelineDock` before the bilingual editor
+    /// landed keep compiling.
+    var onEditSubtitleBilingualText: ((UUID, String, String, String) -> Void)? = nil
     let selectedSubtitleID: UUID?
     let onSelectSubtitle: (UUID?) -> Void
     /// Move a subtitle cue's start to `newComposedStart` seconds.
@@ -115,6 +123,15 @@ struct TimelineDock: View {
     /// popover (triggered by double-click in the subtitle track).
     @State var editingSubtitleID: UUID?
     @State var editingSubtitleDraft: String = ""
+    /// Draft for the secondary (translated) line. Used only when the edit
+    /// was initiated while `subtitleStyle.bilingual` had a valid locale.
+    @State var editingSubtitleSecondaryDraft: String = ""
+    /// Locale snapshot taken at the moment editing started. Non-nil ⇒
+    /// render the bilingual two-field popover and commit through
+    /// `onEditSubtitleBilingualText` keyed by THIS locale, not by whatever
+    /// `subtitleStyle.bilingual.secondaryLocale` happens to be at commit
+    /// time (defends against the user toggling style mid-edit).
+    @State var editingSubtitleSecondaryLocale: String?
 
     /// Live drag state for a subtitle cue. Translation is in points along
     /// x; committed on drag end via `onMoveSubtitle`. `edge` is set when

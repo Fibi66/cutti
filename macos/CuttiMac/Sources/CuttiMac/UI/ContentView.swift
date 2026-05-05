@@ -172,6 +172,16 @@ struct ContentView: View {
                     viewModel.updateSubtitleText(id: id, newText: newText)
                 }
             },
+            onCommitSubtitleBilingualText: { primary, secondary, locale in
+                if let id = viewModel.currentSubtitleID(at: playheadSeconds) {
+                    viewModel.updateSubtitleBilingualText(
+                        id: id,
+                        primaryText: primary,
+                        secondaryText: secondary,
+                        secondaryLocale: locale
+                    )
+                }
+            },
             onBeginSubtitleEdit: {
                 if let id = viewModel.currentSubtitleID(at: playheadSeconds) {
                     viewModel.beginSubtitleEditing(cueID: id)
@@ -908,6 +918,14 @@ struct ContentView: View {
                 },
                 onEditSubtitleText: { id, newText in
                     viewModel.updateSubtitleText(id: id, newText: newText)
+                },
+                onEditSubtitleBilingualText: { id, primary, secondary, locale in
+                    viewModel.updateSubtitleBilingualText(
+                        id: id,
+                        primaryText: primary,
+                        secondaryText: secondary,
+                        secondaryLocale: locale
+                    )
                 },
                 selectedSubtitleID: viewModel.selectedSubtitleID,
                 onSelectSubtitle: { id in

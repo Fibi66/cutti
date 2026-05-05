@@ -49,6 +49,15 @@ struct SubtitleOverlay: View {
     /// placement / size-ratio config. Nil falls back to single-line
     /// rendering (monolingual path).
     var secondaryText: String? = nil
+    /// Bilingual variant of the inline editor. When non-nil AND the
+    /// active `style.bilingual` carries a usable secondary locale at
+    /// the moment editing starts, the overlay renders TWO stacked
+    /// `TextField`s (primary then secondary, regardless of
+    /// `bilingual.placement` — edit-mode uses a fixed source-on-top
+    /// layout) and routes the commit here. The locale captured at
+    /// edit-start is forwarded so a mid-edit style change can't move
+    /// the write to a different locale.
+    var onCommitBilingualText: ((String, String, String) -> Void)? = nil
 
     @State private var dragStartStyle: SubtitleStyle?
     @State private var resizeStartMaxWidth: Double?
@@ -60,7 +69,14 @@ struct SubtitleOverlay: View {
     // the second focus attempt.
     @State private var editSession: Int = 0
     @State private var draftText: String = ""
-    @FocusState private var editorFocused: Bool
+    @State private var draftSecondaryText: String = ""
+    /// Locale snapshot taken at `beginEditing()`. Non-nil ⇒ render the
+    /// two-field bilingual editor; commit routes through
+    /// `onCommitBilingualText` keyed by THIS locale, not by whatever
+    /// the live style happens to be at commit time.
+    @State private var editingSecondaryLocale: String?
+    private enum EditorFocus: Hashable { case primary, secondary }
+    @FocusState private var editorFocus: EditorFocus?
 
     private static let dragSpace = "SubtitleOverlayDragSpace"
 
@@ -148,15 +164,33 @@ struct SubtitleOverlay: View {
     private func subtitleBox(fontSize: CGFloat, padH: CGFloat, padV: CGFloat,
                              corner: CGFloat, maxWidth: CGFloat, scale: CGFloat) -> some View {
         if isEditing {
-            TextField(L("Subtitle"), text: $draftText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: fontSize, weight: .bold))
-                .foregroundStyle(color(style.textColor))
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(1...4)
-                .focused($editorFocused)
-                .onSubmit { commitEditing() }
-                .onExitCommand { cancelEditing() }
+            if let bilingual = style.bilingual, editingSecondaryLocale != nil {
+                // Bilingual edit: two stacked TextFields. Primary on top
+                // regardless of `bilingual.placement` — the user picked
+                // a fixed source-on-top layout for the editor so the
+                // labels don't visually swap mid-edit.
+                let secondaryFontSize = max(10, fontSize * CGFloat(bilingual.clampedSecondarySizeRatio))
+                let spacing = max(0, fontSize * CGFloat(bilingual.clampedLineSpacingFraction))
+                VStack(spacing: spacing) {
+                    TextField(L("Subtitle"), text: $draftText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: fontSize, weight: .bold))
+                        .foregroundStyle(color(style.textColor))
+                        .multilineTextAlignment(textAlignment)
+                        .lineLimit(1...3)
+                        .focused($editorFocus, equals: .primary)
+                        .onSubmit { commitEditing() }
+                        .onExitCommand { cancelEditing() }
+                    TextField(L("Translation"), text: $draftSecondaryText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: secondaryFontSize, weight: .semibold))
+                        .foregroundStyle(color(style.textColor))
+                        .multilineTextAlignment(textAlignment)
+                        .lineLimit(1...3)
+                        .focused($editorFocus, equals: .secondary)
+                        .onSubmit { commitEditing() }
+                        .onExitCommand { cancelEditing() }
+                }
                 .padding(.horizontal, padH)
                 .padding(.vertical, padV)
                 .background(color(style.backgroundColor))
@@ -167,11 +201,34 @@ struct SubtitleOverlay: View {
                 .clipShape(RoundedRectangle(cornerRadius: corner))
                 .frame(maxWidth: maxWidth)
                 .id(editSession)
-                .onAppear { print("📝 TextField onAppear session=\(editSession)") }
-                .onDisappear { print("📝 TextField onDisappear session=\(editSession)") }
-                .onChange(of: editorFocused) { _, v in
-                    print("📝 editorFocused changed → \(v)")
-                }
+                .onAppear { print("📝 BilingualTextField onAppear session=\(editSession)") }
+                .onDisappear { print("📝 BilingualTextField onDisappear session=\(editSession)") }
+            } else {
+                TextField(L("Subtitle"), text: $draftText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: fontSize, weight: .bold))
+                    .foregroundStyle(color(style.textColor))
+                    .multilineTextAlignment(textAlignment)
+                    .lineLimit(1...4)
+                    .focused($editorFocus, equals: .primary)
+                    .onSubmit { commitEditing() }
+                    .onExitCommand { cancelEditing() }
+                    .padding(.horizontal, padH)
+                    .padding(.vertical, padV)
+                    .background(color(style.backgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: corner)
+                            .strokeBorder(EditorShellStyle.accentSolid, lineWidth: 1.5)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: corner))
+                    .frame(maxWidth: maxWidth)
+                    .id(editSession)
+                    .onAppear { print("📝 TextField onAppear session=\(editSession)") }
+                    .onDisappear { print("📝 TextField onDisappear session=\(editSession)") }
+                    .onChange(of: editorFocus) { _, v in
+                        print("📝 editorFocus changed → \(String(describing: v))")
+                    }
+            }
         } else if let secondary = resolvedSecondaryText,
                   let bilingual = style.bilingual {
             // Bilingual path: two stacked lines, primary at full style
@@ -341,11 +398,27 @@ struct SubtitleOverlay: View {
     private func beginEditing() {
         print("📝 SubtitleOverlay.beginEditing start text=\"\(text.prefix(30))\"")
         draftText = text
+        // Capture the bilingual locale at edit-start so a mid-edit
+        // style toggle can't redirect the write to a different locale
+        // (or drop it entirely).
+        if onCommitBilingualText != nil, let bilingual = style.bilingual {
+            let normalized = BilingualDisplayOptions.normalizeLocale(bilingual.secondaryLocale)
+            if !normalized.isEmpty {
+                editingSecondaryLocale = normalized
+                draftSecondaryText = secondaryText ?? ""
+            } else {
+                editingSecondaryLocale = nil
+                draftSecondaryText = ""
+            }
+        } else {
+            editingSecondaryLocale = nil
+            draftSecondaryText = ""
+        }
         editSession &+= 1
         isEditing = true
         isSelected = true
         onBeginEditing?()
-        print("📝 SubtitleOverlay.beginEditing isEditing=true session=\(editSession)")
+        print("📝 SubtitleOverlay.beginEditing isEditing=true session=\(editSession) bilingualLocale=\(editingSecondaryLocale ?? "<none>")")
         // Drop any lingering first responder so AppKit's field editor
         // is fully released before the new TextField asks for focus.
         if let window = NSApp.keyWindow, window.firstResponder !== window {
@@ -356,21 +429,29 @@ struct SubtitleOverlay: View {
             print("📝 SubtitleOverlay.beginEditing no firstResponder to resign")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            print("📝 SubtitleOverlay.beginEditing about to set editorFocused=true (current=\(editorFocused))")
-            editorFocused = true
-            print("📝 SubtitleOverlay.beginEditing assigned editorFocused=true")
+            print("📝 SubtitleOverlay.beginEditing about to set editorFocus=.primary (current=\(String(describing: editorFocus)))")
+            editorFocus = .primary
+            print("📝 SubtitleOverlay.beginEditing assigned editorFocus=.primary")
         }
         print("📝 SubtitleOverlay.beginEditing done")
     }
 
     private func commitEditing() {
         print("📝 SubtitleOverlay.commitEditing start")
-        if let onCommitText {
-            let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { onCommitText(trimmed) }
+        let trimmedPrimary = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPrimary.isEmpty {
+            if let locale = editingSecondaryLocale,
+               let onCommitBilingualText {
+                let trimmedSecondary = draftSecondaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+                onCommitBilingualText(trimmedPrimary, trimmedSecondary, locale)
+            } else if let onCommitText {
+                onCommitText(trimmedPrimary)
+            }
         }
         isEditing = false
-        editorFocused = false
+        editorFocus = nil
+        editingSecondaryLocale = nil
+        draftSecondaryText = ""
         onEndEditing?()
         print("📝 SubtitleOverlay.commitEditing done")
     }
@@ -378,7 +459,9 @@ struct SubtitleOverlay: View {
     private func cancelEditing() {
         print("📝 SubtitleOverlay.cancelEditing")
         isEditing = false
-        editorFocused = false
+        editorFocus = nil
+        editingSecondaryLocale = nil
+        draftSecondaryText = ""
         onEndEditing?()
     }
 

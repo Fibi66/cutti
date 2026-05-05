@@ -297,4 +297,361 @@ final class BilingualSubtitleTests: XCTestCase {
         let secondary = vm.currentSubtitleSecondaryText(at: 0.5)
         XCTAssertEqual(secondary, "你好")
     }
+
+    // MARK: - Edit data-loss regression
+
+    /// `updateSubtitleText` used to construct a fresh `SubtitleEntry`
+    /// with only `text`, silently dropping `translations`, `speakerID`,
+    /// and per-run/word-timing metadata. The user complaint was: edit
+    /// the source line via double-click and the AI translation
+    /// disappears. Lock that behaviour in.
+    func test_updateSubtitleText_preservesTranslationsAndSpeaker() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        speakerID: 2,
+                        translations: ["zh-Hans": "你好", "ja": "こんにちは"]
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleText(id: id, newText: "Hello world")
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Hello world")
+        XCTAssertEqual(updated?.speakerID, 2)
+        XCTAssertEqual(updated?.translations["zh-Hans"], "你好")
+        XCTAssertEqual(updated?.translations["ja"], "こんにちは")
+    }
+
+    /// The runs invariant requires `plainText(runs) == text`. When the
+    /// source text actually changes, `runs` and `wordTimings` must be
+    /// reset to nil — they're tied byte-for-byte to the old text.
+    func test_updateSubtitleText_resetsRunsAndWordTimingsWhenTextChanges() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        let runs: [SubtitleRun] = [
+            SubtitleRun(text: "Hello", style: SubtitleRunStyle())
+        ]
+        let timings: [WordTiming] = [
+            WordTiming(text: "Hello", startSeconds: 0, endSeconds: 1)
+        ]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        runs: runs,
+                        wordTimings: timings
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleText(id: id, newText: "Goodbye")
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Goodbye")
+        XCTAssertNil(updated?.runs)
+        XCTAssertNil(updated?.wordTimings)
+    }
+
+    // MARK: - Bilingual edit method
+
+    func test_updateSubtitleBilingualText_updatesPrimaryAndSecondary() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        translations: ["zh-Hans": "你好"]
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleBilingualText(
+            id: id,
+            primaryText: "Hello world",
+            secondaryText: "你好世界",
+            secondaryLocale: "zh-Hans"
+        )
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Hello world")
+        XCTAssertEqual(updated?.translations["zh-Hans"], "你好世界")
+    }
+
+    /// The bilingual editor lets the user blank the secondary field to
+    /// drop a bad AI translation. Empty trimmed secondary must remove
+    /// THAT locale's key, leaving other locales' translations alone.
+    func test_updateSubtitleBilingualText_emptySecondaryClearsLocaleKey() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        translations: ["zh-Hans": "你好", "ja": "こんにちは"]
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleBilingualText(
+            id: id,
+            primaryText: "Hello",
+            secondaryText: "   ",
+            secondaryLocale: "zh-Hans"
+        )
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Hello")
+        XCTAssertNil(updated?.translations["zh-Hans"])
+        XCTAssertEqual(updated?.translations["ja"], "こんにちは")
+    }
+
+    /// Translation-only edit (primary unchanged) must NOT destroy
+    /// `runs`, `wordTimings`, or `speakerID` — they only depend on the
+    /// source text. This is the behaviour that lets a user fix the AI
+    /// translation without losing emphasis they applied earlier.
+    func test_updateSubtitleBilingualText_translationOnlyEditPreservesMetadata() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        let runs: [SubtitleRun] = [
+            SubtitleRun(text: "Hello", style: SubtitleRunStyle())
+        ]
+        let timings: [WordTiming] = [
+            WordTiming(text: "Hello", startSeconds: 0, endSeconds: 1)
+        ]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        speakerID: 1,
+                        translations: ["zh-Hans": "你好"],
+                        runs: runs,
+                        wordTimings: timings
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleBilingualText(
+            id: id,
+            primaryText: "Hello",
+            secondaryText: "你好啊",
+            secondaryLocale: "zh-Hans"
+        )
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Hello")
+        XCTAssertEqual(updated?.translations["zh-Hans"], "你好啊")
+        XCTAssertEqual(updated?.speakerID, 1)
+        XCTAssertEqual(updated?.runs?.count, 1)
+        XCTAssertEqual(updated?.wordTimings?.count, 1)
+    }
+
+    func test_updateSubtitleBilingualText_emptyPrimaryIsNoop() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        let original = SubtitleEntry(
+            id: id,
+            relativeStart: 0,
+            relativeDuration: 1,
+            text: "Hello",
+            translations: ["zh-Hans": "你好"]
+        )
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [original]
+            )
+        ]
+
+        vm.updateSubtitleBilingualText(
+            id: id,
+            primaryText: "   ",
+            secondaryText: "ignored",
+            secondaryLocale: "zh-Hans"
+        )
+
+        let after = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(after?.text, "Hello")
+        XCTAssertEqual(after?.translations["zh-Hans"], "你好")
+    }
+
+    /// Locale strings flowing in from the editor (snapshotted from
+    /// `style.bilingual.secondaryLocale`) might not be canonicalised.
+    /// The VM normalises with `BilingualDisplayOptions.normalizeLocale`
+    /// before writing so a `zh-hans` editor session lands on the same
+    /// key (`zh-Hans`) the translate tool used.
+    func test_updateSubtitleBilingualText_normalizesLocaleBeforeWriting() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        translations: ["zh-Hans": "你好"]
+                    )
+                ]
+            )
+        ]
+
+        vm.updateSubtitleBilingualText(
+            id: id,
+            primaryText: "Hello",
+            secondaryText: "你好世界",
+            secondaryLocale: "zh-hans"
+        )
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        let canonical = BilingualDisplayOptions.normalizeLocale("zh-hans")
+        XCTAssertEqual(updated?.translations[canonical], "你好世界")
+    }
+
+    /// `replaceSubtitleText` had the same data-loss bug as
+    /// `updateSubtitleText`. Lock the fix in: a find/replace that
+    /// changes the source line must keep translations + speaker.
+    func test_replaceSubtitleText_preservesTranslationsAndSpeaker() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1),
+                text: "Hello world",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello world",
+                        speakerID: 7,
+                        translations: ["zh-Hans": "你好世界"]
+                    )
+                ]
+            )
+        ]
+
+        let count = vm.replaceSubtitleText(find: "world", replace: "earth", caseSensitive: false)
+        XCTAssertEqual(count, 1)
+
+        let updated = vm.timelineSegments[0].subtitles.first { $0.id == id }
+        XCTAssertEqual(updated?.text, "Hello earth")
+        XCTAssertEqual(updated?.speakerID, 7)
+        XCTAssertEqual(updated?.translations["zh-Hans"], "你好世界")
+    }
+
+    /// `moveSubtitle` rewrites the cue with a new start/duration. It
+    /// must NOT drop the translation or speaker tag in the process —
+    /// dragging a bilingual cue 1cm sideways used to wipe the AI
+    /// translation. Same data-loss class as `updateSubtitleText`.
+    func test_moveSubtitle_preservesTranslationsAndSpeaker() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let id = UUID()
+        let videoID = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: videoID,
+                range: TimeRange(startSeconds: 0, endSeconds: 5),
+                text: "Hello",
+                subtitles: [
+                    SubtitleEntry(
+                        id: id,
+                        relativeStart: 0,
+                        relativeDuration: 1,
+                        text: "Hello",
+                        speakerID: 3,
+                        translations: ["zh-Hans": "你好"]
+                    )
+                ]
+            )
+        ]
+        vm.moveSubtitle(id: id, to: 2.0)
+
+        let updated = vm.timelineSegments
+            .flatMap(\.subtitles)
+            .first { $0.id == id }
+        XCTAssertNotNil(updated)
+        XCTAssertEqual(updated?.text, "Hello")
+        XCTAssertEqual(updated?.speakerID, 3)
+        XCTAssertEqual(updated?.translations["zh-Hans"], "你好")
+    }
 }

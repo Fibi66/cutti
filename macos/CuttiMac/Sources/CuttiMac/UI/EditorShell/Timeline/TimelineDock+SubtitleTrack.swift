@@ -28,16 +28,36 @@ extension TimelineDock {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            TextField("", text: $editingSubtitleDraft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3...6)
-                .frame(width: 320)
-                .onSubmit { commitSubtitleEdit(id: subtitleID) }
+            if editingSubtitleSecondaryLocale != nil {
+                T("Primary")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                TextField("", text: $editingSubtitleDraft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...5)
+                    .frame(width: 320)
+                    .onSubmit { commitSubtitleEdit(id: subtitleID) }
+
+                T("Translation")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                TextField("", text: $editingSubtitleSecondaryDraft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...5)
+                    .frame(width: 320)
+                    .onSubmit { commitSubtitleEdit(id: subtitleID) }
+            } else {
+                TextField("", text: $editingSubtitleDraft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...6)
+                    .frame(width: 320)
+                    .onSubmit { commitSubtitleEdit(id: subtitleID) }
+            }
 
             HStack {
                 Spacer()
                 Button {
-                    editingSubtitleID = nil
+                    cancelSubtitleEdit()
                 } label: { T("Cancel") }
                 .keyboardShortcut(.cancelAction)
 
@@ -52,10 +72,50 @@ extension TimelineDock {
     }
 
     func commitSubtitleEdit(id: UUID) {
-        let trimmed = editingSubtitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onEditSubtitleText(id, trimmed)
+        let trimmedPrimary = editingSubtitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrimary.isEmpty else { return }
+        if let locale = editingSubtitleSecondaryLocale,
+           let onEditBilingual = onEditSubtitleBilingualText {
+            onEditBilingual(
+                id,
+                trimmedPrimary,
+                editingSubtitleSecondaryDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                locale
+            )
+        } else {
+            onEditSubtitleText(id, trimmedPrimary)
+        }
+        clearSubtitleEditingState()
+    }
+
+    func cancelSubtitleEdit() {
+        clearSubtitleEditingState()
+    }
+
+    func clearSubtitleEditingState() {
         editingSubtitleID = nil
+        editingSubtitleDraft = ""
+        editingSubtitleSecondaryDraft = ""
+        editingSubtitleSecondaryLocale = nil
+    }
+
+    /// Seed the popover state for `sub`, picking up the active bilingual
+    /// secondary line (if any) so the user can edit both halves of a
+    /// bilingual cue. Routed through one helper so double-click and the
+    /// "Edit Text…" context menu stay in sync.
+    func beginSubtitleEditing(for sub: SubtitleEntry) {
+        editingSubtitleID = sub.id
+        editingSubtitleDraft = sub.text
+        if let bilingual = subtitleStyle.bilingual {
+            let normalized = BilingualDisplayOptions.normalizeLocale(bilingual.secondaryLocale)
+            if !normalized.isEmpty && onEditSubtitleBilingualText != nil {
+                editingSubtitleSecondaryLocale = normalized
+                editingSubtitleSecondaryDraft = sub.translations[normalized] ?? ""
+                return
+            }
+        }
+        editingSubtitleSecondaryLocale = nil
+        editingSubtitleSecondaryDraft = ""
     }
 
     /// One subtitle cue promoted to the flat S1 lane, with its position
@@ -295,7 +355,7 @@ extension TimelineDock {
                 get: { editingSubtitleID == sub.id },
                 set: { newValue in
                     if !newValue && editingSubtitleID == sub.id {
-                        editingSubtitleID = nil
+                        clearSubtitleEditingState()
                     }
                 }
             ),
@@ -306,8 +366,7 @@ extension TimelineDock {
         .contextMenu {
             Button {
                 onSelectSubtitle(sub.id)
-                editingSubtitleID = sub.id
-                editingSubtitleDraft = sub.text
+                beginSubtitleEditing(for: sub)
             } label: { T("Edit Text…") }
             if let onEmphasize = onEmphasizeSubtitle {
                 Button {
@@ -328,8 +387,7 @@ extension TimelineDock {
         // the double-click handler first for each tap sequence.
         .onTapGesture(count: 2) {
             onSelectSubtitle(sub.id)
-            editingSubtitleID = sub.id
-            editingSubtitleDraft = sub.text
+            beginSubtitleEditing(for: sub)
         }
         .onTapGesture {
             onSelectSubtitle(sub.id)
