@@ -212,25 +212,58 @@ struct SpeechTranscriptionService: Sendable {
                 }
             }
 
+        // SFSpeech for Chinese frequently returns PHRASE-sized
+        // segments — a single `SFTranscriptionSegment.substring` like
+        // "我今天去学校" carrying one (timestamp, duration) covering
+        // every character. If we shipped these straight to the cue
+        // builder, `chunkWords` would treat the whole phrase as a
+        // single "word" and emit one cue whose full text is shown the
+        // moment the FIRST character is spoken — so the user sees
+        // "学校" on screen seconds before they hear it, exactly the
+        // "subtitles run faster than reality" symptom users have
+        // reported. Mirror the WhisperKit path by expanding each
+        // multi-character substring into per-token segments via
+        // equal-time interpolation. CJK falls back to per-character
+        // splitting inside `tokenizeTimingText`. Latin substrings
+        // already arrive token-sized; the expansion is a no-op for
+        // single tokens.
+        let langCode = locale.language.languageCode?.identifier ?? "en"
+        var expanded: [TranscriptSegment] = []
+        expanded.reserveCapacity(rawSegments.count)
+        for seg in rawSegments {
+            let end = seg.timestamp + seg.duration
+            guard end > seg.timestamp + 0.01 else { continue }
+            expanded.append(contentsOf: Self.expandTimingText(
+                seg.substring,
+                start: seg.timestamp,
+                end: end,
+                languageCode: langCode
+            ))
+        }
+        print("🎤 SFSpeech: expanded \(rawSegments.count) raw segments into \(expanded.count) timing tokens (lang=\(langCode))")
+
         // SFSpeech for Chinese systematically under-reports per-word
         // `duration`: the reported end often lands mid-way through the
         // final syllable's phoneme, so a cut at that boundary lops off
-        // the last character's audio. Pad each word's end, clamped by
-        // the next word's start (minus a tiny epsilon so the two don't
-        // meet exactly) to avoid bleeding. The clamp means we only
-        // actually consume the full pad at sentence boundaries / long
-        // pauses — which is exactly where the tail truncation is worst.
-        // 500ms preserves most of the Chinese declarative tail without
-        // leaving long trailing dead air in the final cut.
+        // the last character's audio. Pad each token's end, clamped by
+        // the next token's start (minus a tiny epsilon so the two
+        // don't meet exactly) to avoid bleeding. After the per-char
+        // expansion above, intra-phrase tokens are butted up
+        // back-to-back, so the clamp keeps their pad at zero — only
+        // phrase-final tokens before a real silence gap consume the
+        // full pad, which is exactly where the Chinese tail
+        // truncation is worst. 500ms preserves most of the Chinese
+        // declarative tail without leaving long trailing dead air in
+        // the final cut.
         let tailPad: Double = 0.5
         let tailEpsilon: Double = 0.02
         var addedPadTotalMs: Double = 0
         var maxPadMs: Double = 0
-        let padded: [TranscriptSegment] = rawSegments.enumerated().map { index, seg in
-            let rawEnd = seg.timestamp + seg.duration
+        let padded: [TranscriptSegment] = expanded.enumerated().map { index, seg in
+            let rawEnd = seg.endSeconds
             let ceiling: Double
-            if index + 1 < rawSegments.count {
-                ceiling = max(rawEnd, rawSegments[index + 1].timestamp - tailEpsilon)
+            if index + 1 < expanded.count {
+                ceiling = max(rawEnd, expanded[index + 1].startSeconds - tailEpsilon)
             } else {
                 ceiling = .infinity
             }
@@ -239,15 +272,15 @@ struct SpeechTranscriptionService: Sendable {
             addedPadTotalMs += padMs
             maxPadMs = max(maxPadMs, padMs)
             return TranscriptSegment(
-                startSeconds: seg.timestamp,
+                startSeconds: seg.startSeconds,
                 endSeconds: paddedEnd,
-                text: seg.substring
+                text: seg.text
             )
         }
-        let avgPadMs = rawSegments.isEmpty ? 0 : addedPadTotalMs / Double(rawSegments.count)
+        let avgPadMs = expanded.isEmpty ? 0 : addedPadTotalMs / Double(expanded.count)
         print(String(
-            format: "🎤 Chinese tail-pad applied: target=%.0fms, avg added=%.0fms, max added=%.0fms across %d words",
-            tailPad * 1000, avgPadMs, maxPadMs, rawSegments.count
+            format: "🎤 Chinese tail-pad applied: target=%.0fms, avg added=%.0fms, max added=%.0fms across %d tokens",
+            tailPad * 1000, avgPadMs, maxPadMs, expanded.count
         ))
         return padded
     }
