@@ -1833,7 +1833,7 @@ final class MediaCoreViewModel: ObservableObject {
         // without us having to remember to extend this tuple each time
         // a new field lands on the entry type — missing fields here
         // silently blank the preview / burn-in.
-        var raw: [(id: UUID, speakerID: Int?, text: String, start: Double, end: Double, sourceVideoID: UUID, sourceStart: Double, translations: [String: String], runs: [SubtitleRun]?, wordTimings: [CuttiKit.WordTiming]?)] = []
+        var raw: [(id: UUID, speakerID: Int?, text: String, start: Double, end: Double, sourceVideoID: UUID, sourceStart: Double, translations: [String: String], runs: [SubtitleRun]?, wordTimings: [CuttiKit.WordTiming]?, styleOverride: SubtitleCueStyleOverride?)] = []
         var composedOffset: Double = 0
 
         for segment in timelineSegments {
@@ -1892,7 +1892,7 @@ final class MediaCoreViewModel: ObservableObject {
                     clippedTimings = nil
                 }
 
-                raw.append((entry.id, entry.speakerID, entry.text, clampedStart, clampedEnd, segment.sourceVideoID, sourceStart, entry.translations, entry.runs, clippedTimings))
+                raw.append((entry.id, entry.speakerID, entry.text, clampedStart, clampedEnd, segment.sourceVideoID, sourceStart, entry.translations, entry.runs, clippedTimings, entry.styleOverride))
             }
             composedOffset += segment.durationSeconds
         }
@@ -1942,7 +1942,8 @@ final class MediaCoreViewModel: ObservableObject {
                 sourceStart: raw[i].sourceStart,
                 translations: raw[i].translations,
                 runs: raw[i].runs,
-                wordTimings: trimmedTimings
+                wordTimings: trimmedTimings,
+                styleOverride: raw[i].styleOverride
             ))
         }
 
@@ -12095,15 +12096,18 @@ final class MediaCoreViewModel: ObservableObject {
                 summary = "🎯 找到 \(rerankResult.candidates.count) 条开场金句候选\(suffix)"
             }
             // PR 7: persist the latest shortlist as `.highlight` markers
-            // on each source recording's copilot snapshot so the AI
-            // marker lane (`TimelineAIMarkerStrip`) renders gold strips
-            // at the candidate positions. Replacement semantics — prior
-            // highlights from earlier runs are cleared globally; other
-            // marker kinds are preserved. The save path re-loads the
-            // manifest and merges into the *fresh* on-disk snapshot
-            // rather than overwriting with the pre-rerank `records`
-            // capture, so any concurrent analysis writes that landed
-            // while the rerank LLM was running don't get clobbered.
+            // on each source recording's copilot snapshot so downstream
+            // UIs (Highlights panel etc.) can read the candidate set
+            // directly from the manifest. PR 8 narrowed the replacement
+            // semantics to AI-origin markers only — manual-origin
+            // highlights that the user saved by hand are preserved
+            // through every rerun.
+            //
+            // The save path re-loads the manifest and merges into the
+            // *fresh* on-disk snapshot rather than overwriting with the
+            // pre-rerank `records` capture, so any concurrent analysis
+            // writes that landed while the rerank LLM was running don't
+            // get clobbered.
             let markerUpdates = AgentHook.computeHighlightMarkerUpdates(
                 candidates: rerankResult.candidates,
                 records: records
@@ -12114,7 +12118,11 @@ final class MediaCoreViewModel: ObservableObject {
                     for update in markerUpdates {
                         guard let idx = manifest.media.firstIndex(where: { $0.id == update.recordID }) else { continue }
                         guard var snapshot = manifest.media[idx].copilot else { continue }
-                        snapshot.markers = snapshot.markers.filter { $0.kind != .highlight } + update.newHighlights
+                        // Drop only AI-origin `.highlight` markers; keep manual
+                        // user-saved highlights and every other marker kind.
+                        snapshot.markers = snapshot.markers.filter {
+                            !($0.kind == .highlight && $0.origin == .ai)
+                        } + update.newHighlights
                         manifest.media[idx].copilot = snapshot
                     }
                     try store.saveManifest(manifest)

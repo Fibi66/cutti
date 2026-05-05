@@ -82,12 +82,14 @@ enum AgentHook {
                 the user has already pointed at a specific line — for those, \
                 find_by_transcript is the right tool. **The tool does NOT mutate \
                 the timeline**, but as a side effect it does persist the latest \
-                shortlist as `highlight` markers on each source recording's \
-                copilot snapshot — so the timeline marker lane shows gold strips \
-                at the candidate positions. These markers replace any prior \
-                `highlight` markers from earlier runs (latest result wins). \
-                Pair the result with add_hook_teaser to actually splice the \
-                chosen candidate into the cold-open slot.
+                shortlist as `highlight` markers (origin = `ai`) on each source \
+                recording's copilot snapshot, so the Highlights panel and any \
+                future timeline-lane visualization can read them directly. \
+                These markers replace any prior AI-origin `highlight` markers \
+                from earlier runs (latest result wins); manual-origin highlights \
+                that the user saved by hand are always preserved. Pair the \
+                result with add_hook_teaser to actually splice the chosen \
+                candidate into the cold-open slot.
                 """,
             parameters: .init(
                 type: "object",
@@ -135,19 +137,22 @@ enum AgentHook {
     /// Computes the per-record `.highlight`-marker diff that the
     /// dispatcher should persist after `score_hook_candidates` finishes.
     ///
-    /// Replacement semantics: every candidate's `sourceStart` becomes
-    /// one new highlight marker on its source record. Prior `.highlight`
-    /// markers on every record are dropped — the latest tool invocation
-    /// is the source of truth, including for records that *no longer*
-    /// have a candidate (so stale highlights from a previous run are
-    /// cleared globally, not unioned). Other marker kinds (`.scene`,
-    /// `.suggestion`, `.warning`) are never touched.
+    /// Replacement semantics: every candidate's `[sourceStart,
+    /// sourceEnd]` becomes one new highlight marker on its source
+    /// record. Prior **AI-origin** highlights on every record are
+    /// dropped — the latest tool invocation is the source of truth for
+    /// AI-curated highlights, including for records that *no longer*
+    /// have a candidate (so stale AI highlights are cleared globally,
+    /// not unioned). **Manual-origin highlights are never touched** by
+    /// this helper — the user's saved highlights survive any number of
+    /// `score_hook_candidates` reruns. Other marker kinds (`.scene`,
+    /// `.suggestion`, `.warning`) are also never touched.
     ///
     /// Records that lack a copilot snapshot are skipped — we do not
     /// fabricate one just to attach markers. Records whose prior +
-    /// proposed highlight sets match (after sorting) are also skipped,
-    /// so a re-run that produces the same shortlist won't trigger a
-    /// redundant manifest write.
+    /// proposed AI-highlight sets match (after sorting on `seconds`
+    /// and `endSeconds`) are also skipped, so a re-run that produces
+    /// the same shortlist won't trigger a redundant manifest write.
     ///
     /// Pure / synchronous so it's testable without instantiating the
     /// full view model.
@@ -159,16 +164,28 @@ enum AgentHook {
         var out: [HighlightMarkerUpdate] = []
         for record in records {
             guard let snapshot = record.copilot else { continue }
+            // Only the AI-origin highlight subset participates in the
+            // replacement comparison. Manual-origin highlights are
+            // invisible to this helper and the dispatcher's filter
+            // step preserves them as well.
             let prevSorted = snapshot.markers
-                .filter { $0.kind == .highlight }
-                .sorted { $0.seconds < $1.seconds }
+                .filter { $0.kind == .highlight && $0.origin == .ai }
+                .sorted { lhs, rhs in
+                    if lhs.seconds != rhs.seconds { return lhs.seconds < rhs.seconds }
+                    return (lhs.endSeconds ?? 0) < (rhs.endSeconds ?? 0)
+                }
             let newSorted: [AICopilotMarker] = (bySource[record.id] ?? []).map { c in
                 AICopilotMarker(
                     kind: .highlight,
                     seconds: c.sourceStart,
-                    label: makeHighlightLabel(from: c.text)
+                    endSeconds: c.sourceEnd,
+                    label: makeHighlightLabel(from: c.text),
+                    origin: .ai
                 )
-            }.sorted { $0.seconds < $1.seconds }
+            }.sorted { lhs, rhs in
+                if lhs.seconds != rhs.seconds { return lhs.seconds < rhs.seconds }
+                return (lhs.endSeconds ?? 0) < (rhs.endSeconds ?? 0)
+            }
             if prevSorted == newSorted { continue }
             out.append(HighlightMarkerUpdate(
                 recordID: record.id,

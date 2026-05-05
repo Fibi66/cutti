@@ -36,24 +36,59 @@ public struct AICopilotSuggestion: Codable, Equatable, Sendable {
 }
 
 public struct AICopilotMarker: Codable, Equatable, Sendable {
-    public enum Kind: String, Codable {
+    public enum Kind: String, Codable, Sendable {
         case scene
         case suggestion
         case warning
         case highlight
     }
 
+    /// Where this marker came from. AI-produced markers are managed by
+    /// the agent (e.g. wiped + replaced on every `score_hook_candidates`
+    /// rerun); user-saved markers persist until the user removes them.
+    public enum Origin: String, Codable, Sendable {
+        case ai
+        case manual
+    }
+
     public let kind: Kind
     public let seconds: Double
+    /// Optional end time (source-video seconds). Currently set on
+    /// `.highlight` markers persisted by the hook scorer (PR 8) so the
+    /// Highlights panel can show a `start–end` chip and slice-drag
+    /// payload. Legacy markers and other kinds carry `nil`.
+    public let endSeconds: Double?
     public let label: String
+    /// Defaults to `.ai` for back-compat decoding of manifests that
+    /// predate this field. PR 10 adds the `.manual` value via the
+    /// "Save to Highlights" entry-point.
+    public let origin: Origin
+
     public init(
         kind: Kind,
         seconds: Double,
-        label: String
+        endSeconds: Double? = nil,
+        label: String,
+        origin: Origin = .ai
     ) {
         self.kind = kind
         self.seconds = seconds
+        self.endSeconds = endSeconds
         self.label = label
+        self.origin = origin
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, seconds, endSeconds, label, origin
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.kind = try c.decode(Kind.self, forKey: .kind)
+        self.seconds = try c.decode(Double.self, forKey: .seconds)
+        self.endSeconds = try c.decodeIfPresent(Double.self, forKey: .endSeconds)
+        self.label = try c.decode(String.self, forKey: .label)
+        self.origin = (try c.decodeIfPresent(Origin.self, forKey: .origin)) ?? .ai
     }
 
 }
@@ -816,6 +851,12 @@ public struct ComposedSubtitle: Identifiable, Equatable, Sendable {
     /// alongside `entryRelativeTime = playhead - cue.startSeconds`.
     /// Nil when the owning entry had no word timings.
     public let wordTimings: [WordTiming]?
+    /// Per-cue style override mirroring `SubtitleEntry.styleOverride`.
+    /// Nil means "render with the project-wide `SubtitleStyle`" — the
+    /// path every cue takes when the user has not customised this cue
+    /// individually. When non-nil, every set field replaces the
+    /// corresponding global field at render time (viewer + burn-in).
+    public let styleOverride: SubtitleCueStyleOverride?
 
     public init(
         id: UUID,
@@ -827,7 +868,8 @@ public struct ComposedSubtitle: Identifiable, Equatable, Sendable {
         sourceStart: Double? = nil,
         translations: [String: String] = [:],
         runs: [SubtitleRun]? = nil,
-        wordTimings: [WordTiming]? = nil
+        wordTimings: [WordTiming]? = nil,
+        styleOverride: SubtitleCueStyleOverride? = nil
     ) {
         self.id = id
         self.startSeconds = startSeconds
@@ -839,6 +881,7 @@ public struct ComposedSubtitle: Identifiable, Equatable, Sendable {
         self.translations = translations
         self.runs = runs
         self.wordTimings = wordTimings
+        self.styleOverride = styleOverride
     }
 }
 

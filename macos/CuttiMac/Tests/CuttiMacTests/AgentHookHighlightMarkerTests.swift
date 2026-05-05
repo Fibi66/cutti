@@ -108,9 +108,14 @@ final class AgentHookHighlightMarkerTests: XCTestCase {
         XCTAssertEqual(updates.count, 1)
         XCTAssertEqual(updates.first?.recordID, recID)
         XCTAssertEqual(updates.first?.newHighlights.count, 1)
-        XCTAssertEqual(updates.first?.newHighlights.first?.kind, .highlight)
-        XCTAssertEqual(updates.first?.newHighlights.first?.seconds, 5.5)
-        XCTAssertEqual(updates.first?.newHighlights.first?.label, "this is the punchy hook")
+        let first = updates.first?.newHighlights.first
+        XCTAssertEqual(first?.kind, .highlight)
+        XCTAssertEqual(first?.seconds, 5.5)
+        XCTAssertEqual(first?.endSeconds, 10.0,
+                       "PR 8: the candidate's sourceEnd must be persisted on the marker so downstream UIs can render a start–end chip and slice-drag payload")
+        XCTAssertEqual(first?.label, "this is the punchy hook")
+        XCTAssertEqual(first?.origin, .ai,
+                       "AI-produced markers must carry origin=.ai so reruns can find + replace them without touching manual highlights")
     }
 
     func test_multipleCandidatesFromSameRecord_writeMultipleHighlights() {
@@ -223,7 +228,13 @@ final class AgentHookHighlightMarkerTests: XCTestCase {
 
     func test_noUpdate_whenPriorAndProposedHighlightsMatch() {
         let recID = UUID()
-        let existing = AICopilotMarker(kind: .highlight, seconds: 5, label: "same line")
+        let existing = AICopilotMarker(
+            kind: .highlight,
+            seconds: 5,
+            endSeconds: 10,
+            label: "same line",
+            origin: .ai
+        )
         let rec = makeRecord(id: recID, snapshot: makeSnapshot(markers: [existing]))
         let cand = makeCandidate(sourceVideoID: recID, start: 5, end: 10, text: "same line")
         let updates = AgentHook.computeHighlightMarkerUpdates(
@@ -237,8 +248,8 @@ final class AgentHookHighlightMarkerTests: XCTestCase {
     func test_candidateOrderDoesNotCauseSpuriousUpdate() {
         let recID = UUID()
         let existing = [
-            AICopilotMarker(kind: .highlight, seconds: 5, label: "alpha"),
-            AICopilotMarker(kind: .highlight, seconds: 30, label: "beta")
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 10, label: "alpha", origin: .ai),
+            AICopilotMarker(kind: .highlight, seconds: 30, endSeconds: 35, label: "beta", origin: .ai)
         ]
         let rec = makeRecord(id: recID, snapshot: makeSnapshot(markers: existing))
         // Same two candidates but in reversed order.
@@ -275,5 +286,124 @@ final class AgentHookHighlightMarkerTests: XCTestCase {
 
     func test_label_shortTextPreservedExactly() {
         XCTAssertEqual(AgentHook.makeHighlightLabel(from: "quick"), "quick")
+    }
+
+    // MARK: - PR 8: Manual-origin preservation
+
+    func test_manualOriginHighlights_invisibleToReplacementComparison() {
+        // A record has only a manual highlight in store. A new run
+        // produces an AI highlight in the same source. The helper must
+        // emit an update (the AI highlight is new) but the manual
+        // highlight is NOT visible to the comparison — it lives outside
+        // the AI-managed slot.
+        let recID = UUID()
+        let manual = AICopilotMarker(
+            kind: .highlight,
+            seconds: 42,
+            endSeconds: 50,
+            label: "I love this part",
+            origin: .manual
+        )
+        let rec = makeRecord(id: recID, snapshot: makeSnapshot(markers: [manual]))
+        let cand = makeCandidate(sourceVideoID: recID, start: 5, end: 10, text: "AI pick")
+        let updates = AgentHook.computeHighlightMarkerUpdates(
+            candidates: [cand],
+            records: [rec]
+        )
+        XCTAssertEqual(updates.count, 1)
+        let highlights = updates.first?.newHighlights ?? []
+        XCTAssertEqual(highlights.count, 1,
+                       "helper emits only the AI replacement set; manual markers are not in newHighlights")
+        XCTAssertEqual(highlights.first?.origin, .ai)
+        XCTAssertEqual(highlights.first?.label, "AI pick")
+    }
+
+    func test_manualOriginHighlights_doNotCauseAIRerunSpuriousUpdate() {
+        // Sole highlight on the record is manual; a rerun produces no
+        // candidates for this record. Without origin filtering, the
+        // helper would (incorrectly) try to "clear" the manual one. The
+        // new gate makes it a no-op for records with only manual
+        // highlights and no new AI candidates.
+        let recID = UUID()
+        let manual = AICopilotMarker(
+            kind: .highlight,
+            seconds: 42,
+            endSeconds: 50,
+            label: "I love this part",
+            origin: .manual
+        )
+        let rec = makeRecord(id: recID, snapshot: makeSnapshot(markers: [manual]))
+        // No candidates targeting this record.
+        let updates = AgentHook.computeHighlightMarkerUpdates(
+            candidates: [],
+            records: [rec]
+        )
+        XCTAssertTrue(updates.isEmpty,
+                      "manual-only records produce no update when the AI run is empty for them")
+    }
+
+    func test_manualMixed_withMatchingAIHighlights_isStillNoOp() {
+        // A record has 1 manual + 1 AI highlight. The new run produces
+        // the same AI highlight. Should be a no-op — manual is invisible
+        // to comparison and AI matches.
+        let recID = UUID()
+        let manual = AICopilotMarker(
+            kind: .highlight,
+            seconds: 42,
+            endSeconds: 50,
+            label: "I love this part",
+            origin: .manual
+        )
+        let aiPrev = AICopilotMarker(
+            kind: .highlight,
+            seconds: 5,
+            endSeconds: 10,
+            label: "punchy",
+            origin: .ai
+        )
+        let rec = makeRecord(id: recID, snapshot: makeSnapshot(markers: [manual, aiPrev]))
+        let cand = makeCandidate(sourceVideoID: recID, start: 5, end: 10, text: "punchy")
+        let updates = AgentHook.computeHighlightMarkerUpdates(
+            candidates: [cand],
+            records: [rec]
+        )
+        XCTAssertTrue(updates.isEmpty,
+                      "with manual markers in the mix, matching AI highlights still produce no update")
+    }
+
+    // MARK: - PR 8: Back-compat decoding for legacy markers
+
+    func test_legacyMarkerDecodesWithoutEndSecondsOrOrigin() throws {
+        // Manifests written before PR 8 have only kind/seconds/label.
+        // Decoding must succeed with endSeconds = nil and origin = .ai.
+        let legacy = """
+        {
+          "kind": "highlight",
+          "seconds": 12.5,
+          "label": "old line"
+        }
+        """.data(using: .utf8)!
+        let marker = try JSONDecoder().decode(AICopilotMarker.self, from: legacy)
+        XCTAssertEqual(marker.kind, .highlight)
+        XCTAssertEqual(marker.seconds, 12.5)
+        XCTAssertEqual(marker.label, "old line")
+        XCTAssertNil(marker.endSeconds, "legacy markers default endSeconds to nil")
+        XCTAssertEqual(marker.origin, .ai, "legacy markers default origin to .ai for back-compat")
+    }
+
+    func test_modernMarkerRoundTripsThroughCodable() throws {
+        // A marker carrying both new fields must round-trip cleanly.
+        let original = AICopilotMarker(
+            kind: .highlight,
+            seconds: 5,
+            endSeconds: 10,
+            label: "round trip",
+            origin: .manual
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(AICopilotMarker.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.origin, .manual)
+        XCTAssertEqual(decoded.endSeconds, 10)
     }
 }
