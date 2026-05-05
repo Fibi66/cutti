@@ -29,11 +29,23 @@ enum EditorLanguagePreference: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    func resolvedWhisperLanguageCode(fallback: Locale) -> String {
+    /// Two-letter language hint forwarded to the speech engine. Returns
+    /// `en` / `zh` / `yue`. The Qwen3-ASR aligner accepts all three;
+    /// Apple SFSpeech only consumes the parent locale (built from
+    /// `resolvedLocale`), so this code is just a hint for the primary
+    /// engine.
+    func resolvedLanguageCode(fallback: Locale) -> String {
         switch self {
         case .automatic:
-            let languageCode = fallback.language.languageCode?.identifier.prefix(2).lowercased() ?? "en"
-            return languageCode == "zh" ? "zh" : "en"
+            let lang = fallback.language.languageCode?.identifier.lowercased() ?? "en"
+            switch lang {
+            case "zh":
+                return "zh"
+            case "yue":
+                return "yue"
+            default:
+                return "en"
+            }
         case .chinese:
             return "zh"
         case .english:
@@ -41,34 +53,28 @@ enum EditorLanguagePreference: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Primary backend. Always Qwen3-ASR — accuracy + per-character
+    /// timestamps win for both CJK and English. Apple SFSpeech remains
+    /// the fallback when Qwen isn't installed (or fails at runtime).
     func resolvedPrimaryBackend(fallback: Locale) -> SpeechRecognitionBackend {
-        // Whisper is the default for both languages now: Apple SFSpeech
-        // accumulates per-segment timing drift on long Chinese files
-        // (subtitles end up arriving seconds before the audio in the
-        // final cut), and its phrase-level substring grouping forces
-        // multi-character cues that show their full text the instant
-        // the first syllable plays. WhisperKit gives genuine per-word
-        // timestamps that stay aligned with the source audio for the
-        // length of the file, which is what we need for editor-grade
-        // subtitle timing. Apple Speech remains as the fallback when
-        // Whisper isn't yet downloaded or fails.
-        switch self {
-        case .automatic, .chinese, .english:
-            return .whisperKit
-        }
+        return .qwenAsrSidecar
     }
 }
 
 enum SpeechRecognitionBackend: String, Sendable {
     case appleSpeech
-    case whisperKit
+    /// Local Qwen3-ASR + ForcedAligner sidecar (Apple Silicon, direct
+    /// distribution only). Becomes the primary engine for every
+    /// language once installed; falls back to Apple SFSpeech when it
+    /// isn't installed or fails at runtime.
+    case qwenAsrSidecar
 
     var title: String {
         switch self {
         case .appleSpeech:
             return "Apple Speech"
-        case .whisperKit:
-            return "Whisper"
+        case .qwenAsrSidecar:
+            return "Qwen3-ASR (local)"
         }
     }
 }
@@ -76,9 +82,43 @@ enum SpeechRecognitionBackend: String, Sendable {
 struct SpeechRecognitionProfile: Sendable {
     let languagePreference: EditorLanguagePreference
     let locale: Locale
-    let whisperLanguageCode: String
-    let primaryBackend: SpeechRecognitionBackend
-    let fallbackBackend: SpeechRecognitionBackend
+    /// Two-letter ASR language hint (`en` / `zh` / `yue`).
+    let languageCode: String
+    /// Ordered list of backends to try, first → last. Each entry is
+    /// attempted until one returns non-empty results. Always at least
+    /// one entry; usually two when Qwen3-ASR is available.
+    let backendChain: [SpeechRecognitionBackend]
+
+    /// Compatibility shim — most call sites still treat speech-
+    /// recognition as a simple "primary + fallback" pair.
+    var primaryBackend: SpeechRecognitionBackend { backendChain.first ?? .appleSpeech }
+    var fallbackBackend: SpeechRecognitionBackend {
+        backendChain.dropFirst().first ?? primaryBackend
+    }
+}
+
+/// Host capabilities consumed by the pure speech-profile resolver.
+/// Splitting these out lets `SpeechTranscriptionServiceTests` exercise
+/// the resolution matrix without depending on the actual host /
+/// install state.
+struct SpeechResolverCapabilities: Sendable {
+    /// `true` when the running build is the direct-download variant
+    /// (not a Mac App Store build). The Qwen sidecar requires a Python
+    /// runtime + downloaded weights and can't ship through MAS.
+    let isDirectDistribution: Bool
+    /// `true` on Apple Silicon. The Qwen aligner uses MPS fallback
+    /// torch ops and won't run on x86_64.
+    let isAppleSilicon: Bool
+    /// `true` when the on-disk install is present and version-matched.
+    let qwenInstalled: Bool
+
+    static func current() -> SpeechResolverCapabilities {
+        SpeechResolverCapabilities(
+            isDirectDistribution: CuttiDistribution.current == .direct,
+            isAppleSilicon: qwenAsrHostIsAppleSilicon(),
+            qwenInstalled: QwenAsrSidecarInstaller.isInstallUpToDate()
+        )
+    }
 }
 
 enum CuttiSettings {
@@ -109,6 +149,14 @@ enum CuttiSettings {
     /// Keychain account names for BYOK API keys.
     static let customLLMKeychainAccount = "cutti.byok.llm.key"
     static let customImageKeychainAccount = "cutti.byok.image.key"
+
+    /// `@AppStorage` flag for the per-editor "Skip Qwen install for now"
+    /// dismissal. Persisted across launches so a user who explicitly
+    /// dismisses the install prompt isn't nagged again on every editor
+    /// open. Reset whenever the install state transitions away from
+    /// `.notInstalled`/`.failed` (e.g. install succeeds, user
+    /// uninstalls).
+    static let qwenSetupDismissedKey = "cutti.qwenSetupDismissed"
 
     static func ensureDefaults(defaults: UserDefaults = .standard) {
         if defaults.object(forKey: subtitlesVisibleByDefaultKey) == nil {
@@ -160,21 +208,53 @@ enum CuttiSettings {
         return language
     }
 
+    /// Pure resolver. Given a language preference, fallback locale, and
+    /// host capabilities, return the speech profile. Has no side
+    /// effects and reads no globals — kept testable.
+    static func resolveSpeechProfile(
+        language: EditorLanguagePreference,
+        fallbackLocale: Locale,
+        capabilities: SpeechResolverCapabilities
+    ) -> SpeechRecognitionProfile {
+        var chain: [SpeechRecognitionBackend] = []
+        if capabilities.isDirectDistribution,
+           capabilities.isAppleSilicon,
+           capabilities.qwenInstalled {
+            chain.append(.qwenAsrSidecar)
+        }
+        // Apple SFSpeech is always reachable as a baseline — it ships
+        // with macOS, doesn't need a download, and works on every host.
+        chain.append(.appleSpeech)
+
+        return SpeechRecognitionProfile(
+            languagePreference: language,
+            locale: language.resolvedLocale(fallback: fallbackLocale),
+            languageCode: language.resolvedLanguageCode(fallback: fallbackLocale),
+            backendChain: chain
+        )
+    }
+
+    /// Production entry point — fills `SpeechResolverCapabilities` from
+    /// real host state and delegates to the pure resolver.
     static func resolvedSpeechProfile(
         defaults: UserDefaults = .standard,
         fallbackLocale: Locale = .current
     ) -> SpeechRecognitionProfile {
-        let languagePreference = editorLanguage(defaults: defaults)
-        let primaryBackend = languagePreference.resolvedPrimaryBackend(fallback: fallbackLocale)
-        let fallbackBackend: SpeechRecognitionBackend = primaryBackend == .appleSpeech ? .whisperKit : .appleSpeech
-
-        return SpeechRecognitionProfile(
-            languagePreference: languagePreference,
-            locale: languagePreference.resolvedLocale(fallback: fallbackLocale),
-            whisperLanguageCode: languagePreference.resolvedWhisperLanguageCode(fallback: fallbackLocale),
-            primaryBackend: primaryBackend,
-            fallbackBackend: fallbackBackend
+        return resolveSpeechProfile(
+            language: editorLanguage(defaults: defaults),
+            fallbackLocale: fallbackLocale,
+            capabilities: SpeechResolverCapabilities.current()
         )
+    }
+
+    // MARK: - Qwen setup overlay dismissal
+
+    static func qwenSetupDismissed(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: qwenSetupDismissedKey)
+    }
+
+    static func setQwenSetupDismissed(_ dismissed: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(dismissed, forKey: qwenSetupDismissedKey)
     }
 
     // MARK: - AI provider helpers

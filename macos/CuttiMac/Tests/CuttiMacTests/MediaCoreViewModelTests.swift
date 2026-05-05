@@ -2299,6 +2299,127 @@ final class MediaCoreViewModelTests: XCTestCase {
         XCTAssertEqual(entries[1].text, "after gap")
     }
 
+    /// Char-level karaoke: each cue carries `wordTimings` whose
+    /// concatenated text matches the cue text, and whose entry-relative
+    /// times are non-negative and monotone.
+    func test_buildSubtitleEntries_attachesPerCharWordTimings_forCJK() {
+        // "我们今天" — 4 Chinese chars, evenly spaced.
+        let words: [TranscriptSegment] = [
+            TranscriptSegment(startSeconds: 1.0, endSeconds: 1.2, text: "我", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 1.2, endSeconds: 1.4, text: "们", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 1.4, endSeconds: 1.6, text: "今", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 1.6, endSeconds: 1.8, text: "天", sourceVideoID: nil)
+        ]
+        let entries = MediaCoreViewModel.buildSubtitleEntries(
+            for: TimeRange(startSeconds: 0, endSeconds: 3),
+            from: nil,
+            wordTranscript: words
+        )
+        XCTAssertEqual(entries.count, 1)
+        let entry = entries[0]
+        XCTAssertEqual(entry.text, "我们今天")
+        XCTAssertNotNil(entry.wordTimings)
+        guard let timings = entry.wordTimings else { return }
+        XCTAssertEqual(timings.count, 4)
+        XCTAssertEqual(timings.map(\.text), ["我", "们", "今", "天"])
+        // Times should be entry-relative (cue starts at 1.0s absolute,
+        // so the first char is at 0.0 entry-relative).
+        XCTAssertEqual(timings[0].startSeconds, 0.0, accuracy: 0.001)
+        XCTAssertEqual(timings[0].endSeconds, 0.2, accuracy: 0.001)
+        XCTAssertEqual(timings[3].startSeconds, 0.6, accuracy: 0.001)
+        XCTAssertEqual(timings[3].endSeconds, 0.8, accuracy: 0.001)
+        // Monotone non-negative.
+        for t in timings {
+            XCTAssertGreaterThanOrEqual(t.startSeconds, 0)
+            XCTAssertGreaterThanOrEqual(t.endSeconds, t.startSeconds)
+        }
+    }
+
+    /// 0.3s inter-character gap is the configured threshold.
+    /// A gap >= 0.3s should produce a new cue.
+    func test_buildSubtitleEntries_silenceGap03sBreaksCue() {
+        let words: [TranscriptSegment] = [
+            TranscriptSegment(startSeconds: 0.0, endSeconds: 0.2, text: "你", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 0.2, endSeconds: 0.4, text: "好", sourceVideoID: nil),
+            // 0.35s silence here — over threshold (0.3s).
+            TranscriptSegment(startSeconds: 0.75, endSeconds: 0.95, text: "再", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 0.95, endSeconds: 1.15, text: "见", sourceVideoID: nil)
+        ]
+        let entries = MediaCoreViewModel.buildSubtitleEntries(
+            for: TimeRange(startSeconds: 0, endSeconds: 2),
+            from: nil,
+            wordTranscript: words
+        )
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].text, "你好")
+        XCTAssertEqual(entries[1].text, "再见")
+    }
+
+    /// A short gap (under 0.3s threshold) should not break the cue —
+    /// chars stay in the same subtitle.
+    func test_buildSubtitleEntries_shortGapStaysInSameCue() {
+        let words: [TranscriptSegment] = [
+            TranscriptSegment(startSeconds: 0.0, endSeconds: 0.2, text: "你", sourceVideoID: nil),
+            TranscriptSegment(startSeconds: 0.2, endSeconds: 0.4, text: "好", sourceVideoID: nil),
+            // 0.15s gap — under threshold, should stay.
+            TranscriptSegment(startSeconds: 0.55, endSeconds: 0.75, text: "啊", sourceVideoID: nil)
+        ]
+        let entries = MediaCoreViewModel.buildSubtitleEntries(
+            for: TimeRange(startSeconds: 0, endSeconds: 1),
+            from: nil,
+            wordTranscript: words
+        )
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].text, "你好啊")
+    }
+
+    /// Char budget (14 visible CJK chars) must force a flush even when
+    /// inter-char gaps stay under the silence threshold.
+    func test_buildSubtitleEntries_budgetForcesFlush_evenWithoutGap() {
+        // 20 chars at 0.1s each, no real silence — should still split.
+        let words: [TranscriptSegment] = (0..<20).map { i in
+            TranscriptSegment(
+                startSeconds: Double(i) * 0.1,
+                endSeconds: Double(i) * 0.1 + 0.09,
+                text: "字",
+                sourceVideoID: nil
+            )
+        }
+        let entries = MediaCoreViewModel.buildSubtitleEntries(
+            for: TimeRange(startSeconds: 0, endSeconds: 3),
+            from: nil,
+            wordTranscript: words
+        )
+        XCTAssertGreaterThan(entries.count, 1)
+        for entry in entries {
+            let visible = entry.text.unicodeScalars.reduce(0) { $1.properties.isWhitespace ? $0 : $0 + 1 }
+            XCTAssertLessThanOrEqual(visible, 14)
+        }
+    }
+
+    /// 3.5s duration cap must force a flush even when both budget and
+    /// gaps are under threshold.
+    func test_buildSubtitleEntries_durationCapForcesFlush() {
+        // 5 chars spread over 6 seconds with no real silence.
+        let words: [TranscriptSegment] = (0..<5).map { i in
+            TranscriptSegment(
+                startSeconds: Double(i) * 1.2,
+                endSeconds: Double(i) * 1.2 + 1.0,
+                text: "字",
+                sourceVideoID: nil
+            )
+        }
+        let entries = MediaCoreViewModel.buildSubtitleEntries(
+            for: TimeRange(startSeconds: 0, endSeconds: 7),
+            from: nil,
+            wordTranscript: words
+        )
+        XCTAssertGreaterThan(entries.count, 1)
+        for entry in entries {
+            XCTAssertLessThanOrEqual(entry.relativeDuration, 3.5 + 0.001)
+        }
+    }
+
     // MARK: - Subtitle cue manipulation (timeline S1 lane)
 
     private func makeViewModelWithSingleSegment(
@@ -2503,6 +2624,312 @@ final class MediaCoreViewModelTests: XCTestCase {
         let remainingCueIDs = Set(vm.composedSubtitles.map(\.id))
         XCTAssertFalse(remainingCueIDs.contains(cue1))
         XCTAssertFalse(remainingCueIDs.contains(cue3))
+    }
+
+    /// Regression: after `识别说话人` (diarization) has stamped
+    /// `speakerID` on each `SubtitleEntry`, deleting one cue must not
+    /// reset the surviving cues' speakerIDs to nil. The bug was that
+    /// `subtitleEntries(for:sourceVideoID:)` rebuilt entries from the
+    /// copilot snapshot (which never carries speakerID), so every
+    /// AIAction routing through `transcriptLookup` (delete / split /
+    /// trim / setSpeed) silently dropped diarization metadata and
+    /// the transcript collapsed to a single default speaker.
+    func test_deleteSubtitleCue_preservesSpeakerIDsOnSurvivingCues() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let src = UUID()
+        let cue1 = UUID()
+        let cue2 = UUID()
+        let cue3 = UUID()
+        // Copilot snapshot mirrors the live cues' text + timings so
+        // `buildSubtitleEntries` regenerates the same shape on the
+        // surviving slices, letting our text-equality check accept
+        // translations / runs preservation later if added.
+        var record = MediaAssetRecord(
+            id: src,
+            sourcePath: "/tmp/\(src.uuidString).mp4",
+            fingerprint: SourceFingerprint(fileSize: 1000, modifiedAt: Date(), sha256Prefix: "abc"),
+            status: .ready,
+            analysis: AnalysisSummary(durationSeconds: 9, width: 1920, height: 1080, nominalFPS: 30, hasAudio: true),
+            derived: DerivedAssetState(proxyRelativePath: "p.mov", thumbnailsReady: false, waveformsReady: false),
+            errorMessage: nil,
+            usedFallbackTranscoder: false
+        )
+        record.copilot = AICopilotSnapshot(
+            semanticTags: [],
+            issues: [],
+            suggestions: [],
+            markers: [],
+            transcript: [
+                TranscriptSegment(startSeconds: 0.0, endSeconds: 3.0, text: "hello"),
+                TranscriptSegment(startSeconds: 3.0, endSeconds: 6.0, text: "middle"),
+                TranscriptSegment(startSeconds: 6.0, endSeconds: 9.0, text: "world"),
+            ]
+        )
+        vm.records = [record]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: src,
+                range: TimeRange(startSeconds: 0, endSeconds: 9),
+                text: "",
+                subtitles: [
+                    SubtitleEntry(id: cue1, relativeStart: 0.0, relativeDuration: 3.0, text: "hello", speakerID: 0),
+                    SubtitleEntry(id: cue2, relativeStart: 3.0, relativeDuration: 3.0, text: "middle", speakerID: 1),
+                    SubtitleEntry(id: cue3, relativeStart: 6.0, relativeDuration: 3.0, text: "world", speakerID: 0),
+                ]
+            )
+        ]
+        vm.rebuildComposedSubtitles()
+
+        // Delete the middle cue (the one whose speaker should NOT
+        // bleed into the survivors).
+        vm.deleteSubtitleCues(ids: [cue2])
+
+        vm.rebuildComposedSubtitles()
+        let cuesByText = Dictionary(uniqueKeysWithValues: vm.composedSubtitles.map { ($0.text, $0) })
+        XCTAssertEqual(cuesByText["hello"]?.speakerID, 0,
+                       "Surviving 'hello' cue must keep its diarized speakerID after delete")
+        XCTAssertEqual(cuesByText["world"]?.speakerID, 0,
+                       "Surviving 'world' cue must keep its diarized speakerID after delete")
+        XCTAssertNil(cuesByText["middle"], "deleted cue should be gone")
+    }
+
+    /// Regression: deleting a cue must not erase the surviving cues'
+    /// translations either. Same root cause as the speakerID bug.
+    func test_deleteSubtitleCue_preservesTranslationsOnSurvivingCues() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let src = UUID()
+        let cue1 = UUID()
+        let cue2 = UUID()
+        let cue3 = UUID()
+        var record = MediaAssetRecord(
+            id: src,
+            sourcePath: "/tmp/\(src.uuidString).mp4",
+            fingerprint: SourceFingerprint(fileSize: 1000, modifiedAt: Date(), sha256Prefix: "abc"),
+            status: .ready,
+            analysis: AnalysisSummary(durationSeconds: 9, width: 1920, height: 1080, nominalFPS: 30, hasAudio: true),
+            derived: DerivedAssetState(proxyRelativePath: "p.mov", thumbnailsReady: false, waveformsReady: false),
+            errorMessage: nil,
+            usedFallbackTranscoder: false
+        )
+        record.copilot = AICopilotSnapshot(
+            semanticTags: [],
+            issues: [],
+            suggestions: [],
+            markers: [],
+            transcript: [
+                TranscriptSegment(startSeconds: 0.0, endSeconds: 3.0, text: "hello"),
+                TranscriptSegment(startSeconds: 3.0, endSeconds: 6.0, text: "middle"),
+                TranscriptSegment(startSeconds: 6.0, endSeconds: 9.0, text: "world"),
+            ]
+        )
+        vm.records = [record]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: src,
+                range: TimeRange(startSeconds: 0, endSeconds: 9),
+                text: "",
+                subtitles: [
+                    SubtitleEntry(
+                        id: cue1, relativeStart: 0.0, relativeDuration: 3.0, text: "hello",
+                        translations: ["zh-Hans": "你好"]
+                    ),
+                    SubtitleEntry(id: cue2, relativeStart: 3.0, relativeDuration: 3.0, text: "middle"),
+                    SubtitleEntry(
+                        id: cue3, relativeStart: 6.0, relativeDuration: 3.0, text: "world",
+                        translations: ["zh-Hans": "世界"]
+                    ),
+                ]
+            )
+        ]
+        vm.rebuildComposedSubtitles()
+
+        vm.deleteSubtitleCues(ids: [cue2])
+
+        vm.rebuildComposedSubtitles()
+        let cuesByText = Dictionary(uniqueKeysWithValues: vm.composedSubtitles.map { ($0.text, $0) })
+        XCTAssertEqual(cuesByText["hello"]?.translations["zh-Hans"], "你好",
+                       "Surviving 'hello' cue must keep its translations after delete")
+        XCTAssertEqual(cuesByText["world"]?.translations["zh-Hans"], "世界",
+                       "Surviving 'world' cue must keep its translations after delete")
+    }
+
+    /// Regression: closing a project mid-analysis (or after a clean
+    /// exit while a tool was running) used to leave `.working`
+    /// bubbles persisted on disk. Reopening the project re-spun
+    /// them as phantom spinners next to work that actually finished
+    /// long ago — particularly noticeable after `识别说话人`
+    /// because `transcribeForDiarization` posts a persisted
+    /// `.working` bubble that isn't finalized by any of the
+    /// `appendAnalysisAssistantLine` resolution paths. Sanity-check
+    /// that `loadChatHistory` demotes any persisted `.working`
+    /// bubbles to `.success` on load.
+    func test_loadChatHistory_demotesStaleWorkingBubbles() async throws {
+        let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "cutti-load-chat-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempRoot.appending(path: "media"),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        // Pre-seed a persisted chat with one stale `.working` bubble
+        // and one already-finalized `.success` bubble.
+        let stuckBubble = EditorChatMessage(
+            role: .assistant,
+            content: "Transcribing for speaker detection…",
+            iconSystemName: "waveform",
+            iconTone: .working
+        )
+        let okBubble = EditorChatMessage(
+            role: .assistant,
+            content: "🗣 Detected 2 speakers.",
+            iconSystemName: "checkmark.circle.fill",
+            iconTone: .success
+        )
+        let store = ChatStore(projectRoot: tempRoot)
+        try await store.append(stuckBubble)
+        try await store.append(okBubble)
+
+        let vm = await MediaCoreViewModel(
+            playbackCore: SpyPlaybackCore(),
+            projectRoot: tempRoot
+        )
+        await vm.loadChatHistory()
+
+        let messages = await vm.chatMessages
+        XCTAssertEqual(messages.count, 2)
+        let stuck = messages.first { $0.id == stuckBubble.id }
+        XCTAssertEqual(stuck?.iconTone, .success,
+                       "Persisted .working bubble must be demoted to .success on load.")
+        XCTAssertEqual(stuck?.iconSystemName, "checkmark.circle.fill",
+                       "Demoted bubble should switch to the success checkmark icon.")
+        let ok = messages.first { $0.id == okBubble.id }
+        XCTAssertEqual(ok?.iconTone, .success,
+                       "Already-finalized .success bubble must be left alone.")
+
+        // The demoted state must also be persisted, so the *next*
+        // reload sees the same shape (no lingering working bubbles).
+        let vm2 = await MediaCoreViewModel(
+            playbackCore: SpyPlaybackCore(),
+            projectRoot: tempRoot
+        )
+        await vm2.loadChatHistory()
+        let reloaded = await vm2.chatMessages
+        XCTAssertEqual(reloaded.first { $0.id == stuckBubble.id }?.iconTone, .success,
+                       "Demotion should round-trip through disk.")
+    }
+
+    func test_rebuildComposedSubtitles_propagatesWordTimings_speedRate1() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let cueID = UUID()
+        let timings: [WordTiming] = [
+            WordTiming(text: "你", startSeconds: 0.0, endSeconds: 0.4),
+            WordTiming(text: "好", startSeconds: 0.4, endSeconds: 1.0)
+        ]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 1.5),
+                text: "你好",
+                subtitles: [
+                    SubtitleEntry(
+                        id: cueID,
+                        relativeStart: 0.0,
+                        relativeDuration: 1.0,
+                        text: "你好",
+                        wordTimings: timings
+                    )
+                ]
+            )
+        ]
+
+        vm.rebuildComposedSubtitles()
+
+        XCTAssertEqual(vm.composedSubtitles.count, 1)
+        let cue = vm.composedSubtitles[0]
+        XCTAssertEqual(cue.id, cueID)
+        XCTAssertNotNil(cue.wordTimings)
+        XCTAssertEqual(cue.wordTimings?.count, 2)
+        XCTAssertEqual(cue.wordTimings?[0].text, "你")
+        XCTAssertEqual(cue.wordTimings?[0].startSeconds ?? -1, 0.0, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[0].endSeconds ?? -1, 0.4, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[1].startSeconds ?? -1, 0.4, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[1].endSeconds ?? -1, 1.0, accuracy: 0.001)
+    }
+
+    func test_rebuildComposedSubtitles_scalesWordTimings_by_2x_speedRate() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let cueID = UUID()
+        // Pre-speed entry: relativeStart=0, relativeDuration=1.0, words at 0..0.4 and 0.4..1.0.
+        // At 2x speed, composed cue runs 0..0.5 and word timings should
+        // collapse to 0..0.2 and 0.2..0.5 (entry-relative composed seconds).
+        let timings: [WordTiming] = [
+            WordTiming(text: "A", startSeconds: 0.0, endSeconds: 0.4),
+            WordTiming(text: "B", startSeconds: 0.4, endSeconds: 1.0)
+        ]
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 2),
+                text: "AB",
+                subtitles: [
+                    SubtitleEntry(
+                        id: cueID,
+                        relativeStart: 0.0,
+                        relativeDuration: 1.0,
+                        text: "AB",
+                        wordTimings: timings
+                    )
+                ],
+                speedRate: 2.0
+            )
+        ]
+
+        vm.rebuildComposedSubtitles()
+
+        XCTAssertEqual(vm.composedSubtitles.count, 1)
+        let cue = vm.composedSubtitles[0]
+        XCTAssertEqual(cue.endSeconds - cue.startSeconds, 0.5, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?.count, 2)
+        XCTAssertEqual(cue.wordTimings?[0].startSeconds ?? -1, 0.0, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[0].endSeconds ?? -1, 0.2, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[1].startSeconds ?? -1, 0.2, accuracy: 0.001)
+        XCTAssertEqual(cue.wordTimings?[1].endSeconds ?? -1, 0.5, accuracy: 0.001)
+    }
+
+    func test_rebuildComposedSubtitles_nilWordTimings_passesNilThrough() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        let cueID = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: UUID(),
+                sourceVideoID: UUID(),
+                range: TimeRange(startSeconds: 0, endSeconds: 2),
+                text: "hello",
+                subtitles: [
+                    SubtitleEntry(id: cueID, relativeStart: 0, relativeDuration: 1, text: "hello")
+                ]
+            )
+        ]
+
+        vm.rebuildComposedSubtitles()
+
+        XCTAssertEqual(vm.composedSubtitles.count, 1)
+        XCTAssertNil(vm.composedSubtitles[0].wordTimings)
     }
 
     func test_restoreSubtitleTombstone_reAddsSegmentAndClearsTombstone() {

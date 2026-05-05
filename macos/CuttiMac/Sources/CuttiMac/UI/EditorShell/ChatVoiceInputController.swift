@@ -3,11 +3,11 @@ import Combine
 import Foundation
 import CuttiKit
 
-/// Drives the microphone → Whisper flow for the AI chat composer.
+/// Drives the microphone → speech-to-text flow for the AI chat composer.
 ///
 /// Start recording on user click, stop to finalize, then transcribe
 /// the captured audio via the app's existing `SpeechTranscriptionService`
-/// (WhisperKit first for English, Apple Speech first for Chinese — same
+/// (local Qwen3-ASR when installed, Apple Speech otherwise — same
 /// backend selection used everywhere else). The transcribed text is
 /// surfaced to the UI, which drops it into the chat composer so the
 /// user can review/edit before hitting send.
@@ -47,7 +47,7 @@ final class ChatVoiceInputController: NSObject, ObservableObject {
     /// start-recording and stop-and-transcribe.
     ///
     /// - Parameter onTranscript: invoked on the main actor with the final
-    ///   transcript once Whisper finishes. The view typically appends
+    ///   transcript once the speech model finishes. The view typically appends
     ///   this to the composer's `inputText`.
     func toggle(onTranscript: @escaping @MainActor (String) -> Void) {
         switch phase {
@@ -56,7 +56,7 @@ final class ChatVoiceInputController: NSObject, ObservableObject {
         case .recording:
             Task { await stopAndTranscribe(onTranscript: onTranscript) }
         case .transcribing:
-            // Ignore clicks while Whisper is still working — the spinner
+            // Ignore clicks while the speech model is still working — the spinner
             // in the UI tells the user to wait.
             break
         }

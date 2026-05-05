@@ -1,6 +1,6 @@
 import Foundation
 
-/// Cleans Whisper output for the AI chat composer. Currently removes
+/// Cleans the local-ASR transcript for the AI chat composer. Currently removes
 /// common English + Chinese filler words so the user doesn't have to
 /// manually delete "um", "uh", "嗯", "额", "那个", etc. before sending.
 ///

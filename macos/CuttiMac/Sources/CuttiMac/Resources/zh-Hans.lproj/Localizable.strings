@@ -130,18 +130,22 @@
 "Undo Entire Plan" = "撤销整个计划";
 "Copy Trace JSON" = "复制 Trace JSON";
 
-/* ContentView — whisper setup + banners */
+/* ContentView — Qwen3-ASR setup overlay + banners */
 "Looks like a presenter cam — apply Picture-in-Picture?" = "检测到演讲摄像头 — 应用画中画？";
 "Apply" = "应用";
 "Dismiss" = "忽略";
 "Done" = "完成";
 "Speech Recognition Setup" = "语音识别设置";
-"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "当前语音语言默认使用 Whisper 以获得更精准的时间轴。\n下载一次模型，或继续使用 Apple Speech 作为备选。";
-"Download Whisper" = "下载 Whisper";
-"Downloading Whisper model…" = "正在下载 Whisper 模型…";
+"Cutti uses a local Qwen3-ASR model for accurate Chinese, Cantonese and English subtitles. The first install downloads ~6 GB and runs entirely on your Mac.\nYou can skip and continue with Apple Speech as a fallback." = "Cutti 使用本地 Qwen3-ASR 模型生成准确的中文、粤语与英文字幕。首次安装会下载约 6 GB，全部在本机运行。\n你也可以暂时跳过，使用 Apple Speech 作为备选。";
+"Download Speech Model" = "下载语音模型";
+"Hide" = "隐藏";
 "Download failed" = "下载失败";
 "Retry" = "重试";
 "Skip for Now" = "暂时跳过";
+"Qwen3-ASR was unavailable — used Apple Speech for this clip." = "Qwen3-ASR 暂不可用 — 本次转写已切换为 Apple Speech。";
+"Transcribing with Apple Speech…" = "正在用 Apple Speech 转写…";
+"Transcribing with Qwen3-ASR (local)…" = "正在用本地 Qwen3-ASR 转写…";
+"Loading Qwen3-ASR model (first run takes ~10s)…" = "正在加载 Qwen3-ASR 模型（首次运行约 10 秒）…";
 
 /* ContentView — media panel */
 "MEDIA" = "素材";
@@ -651,9 +655,8 @@
 "Subscription" = "订阅";
 "Switch between Manual (review every edit) and Auto-apply" = "在「手动审阅」和「自动应用」之间切换";
 "This segment no longer exists on the timeline" = "该片段已不在时间线上";
-"Transcribing with Whisper…" = "正在用 Whisper 转写…";
+"Transcribing with the local speech model…" = "正在用本地语音模型转写…";
 "Unlabeled" = "未标注";
-"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "你当前的语音语言默认使用 Whisper 以获得更精准的时间轴。\n下载一次模型即可使用，或继续使用 Apple Speech 作为回退方案。";
 "Generate animation" = "生成动画";
 "Experimental" = "实验性";
 "Experimental: animation generation" = "实验性功能：动画生成";
@@ -987,7 +990,7 @@
 "Last 30 days" = "最近 30 天";
 "Last 90 days" = "最近 90 天";
 "No AI calls billed in this window yet." = "此时间段内暂无 AI 计费记录。";
-"Whisper transcription runs locally on your Mac and is not counted." = "Whisper 转写在你的 Mac 本地运行，不计入用量。";
+"Local speech transcription runs on your Mac and is not counted." = "本地语音转写在你的 Mac 上运行，不计入用量。";
 "Total" = "合计";
 "calls_suffix" = "次调用";
 "Refresh" = "刷新";
@@ -1031,7 +1034,7 @@
 "Speech recognition" = "语音识别";
 "Stored in macOS Keychain." = "存储在 macOS 钥匙串中。";
 "Use a different provider for images" = "图像使用不同的服务";
-"Used by local Whisper to generate subtitles." = "本地 Whisper 用于生成字幕。";
+"Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles." = "由本地语音模型生成字幕（已安装 Qwen3-ASR 时使用，否则回退到 Apple Speech）。";
 "Verified" = "已验证";
 "When you create a new clip, the subtitle overlay is visible in preview and timeline." = "新建剪辑时，字幕叠加将在预览和时间线中可见。";
 "Where your credits went, by feature." = "按功能划分的积分使用情况。";

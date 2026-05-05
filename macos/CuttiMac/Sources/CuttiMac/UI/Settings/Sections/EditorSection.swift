@@ -31,7 +31,7 @@ struct EditorSection: View {
             SettingsCard(padding: nil) {
                 SettingsRow(
                     label: "Speech recognition",
-                    sub: "Used by local Whisper to generate subtitles."
+                    sub: "Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles."
                 ) {
                     Menu {
                         ForEach(EditorLanguagePreference.allCases) { language in

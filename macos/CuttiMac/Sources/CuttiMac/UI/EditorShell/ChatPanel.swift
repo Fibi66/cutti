@@ -402,7 +402,7 @@ struct ChatPanel: View {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.mini)
-                    T("Transcribing with Whisper…")
+                    T("Transcribing with the local speech model…")
                         .font(.system(size: 10))
                         .foregroundStyle(EditorShellStyle.textSecondary)
                 }
@@ -507,8 +507,9 @@ struct ChatPanel: View {
     }
 
     /// Mic button for voice-to-text input. Tapping toggles recording;
-    /// when recording stops, Whisper transcribes and the text is
-    /// appended to the composer so the user can review and send.
+    /// when recording stops, the local speech model transcribes and
+    /// the text is appended to the composer so the user can review
+    /// and send.
     private var voiceButton: some View {
         Button {
             voiceInput.toggle { transcript in
@@ -565,7 +566,7 @@ struct ChatPanel: View {
 
     private var voiceButtonHelp: String {
         switch voiceInput.phase {
-        case .idle: return "Dictate with Whisper — or hold Fn to push-to-talk"
+        case .idle: return "Dictate with the local speech model — or hold Fn to push-to-talk"
         case .recording: return "Stop and transcribe"
         case .transcribing: return "Transcribing…"
         }

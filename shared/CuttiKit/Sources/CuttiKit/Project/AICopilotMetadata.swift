@@ -98,6 +98,14 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
     /// anchor, white title, 30pt @ 1080p). Persisted so user edits
     /// survive reopen.
     public var chapterBarStyle: ChapterBarStyle?
+    /// True iff this snapshot was produced by the transcribe-only path
+    /// that backs the `识别说话人` (detect_speakers) tool: it has a
+    /// single full-source `keptRange` and exists only to expose a
+    /// transcript on the timeline, not to express any LLM-driven cut.
+    /// First Cut treats records with this flag as un-analyzed so the
+    /// user can still run a real first cut after diarization. `nil` /
+    /// `false` means a normal First Cut snapshot.
+    public var isTranscribeOnly: Bool?
     public init(
         semanticTags: [String],
         summary: String? = nil,
@@ -115,7 +123,8 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
         editLog: String? = nil,
         bRollSuggestions: [BRollSuggestion]? = nil,
         chapters: [VideoChapter]? = nil,
-        chapterBarStyle: ChapterBarStyle? = nil
+        chapterBarStyle: ChapterBarStyle? = nil,
+        isTranscribeOnly: Bool? = nil
     ) {
         self.semanticTags = semanticTags
         self.summary = summary
@@ -134,6 +143,7 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
         self.bRollSuggestions = bRollSuggestions
         self.chapters = chapters
         self.chapterBarStyle = chapterBarStyle
+        self.isTranscribeOnly = isTranscribeOnly
     }
 
 }
@@ -643,10 +653,13 @@ public struct ComposedSubtitle: Identifiable, Equatable, Sendable {
     /// `SubtitleRunEditor.plainText(runs) == text` holds.
     public let runs: [SubtitleRun]?
     /// Per-word timestamps mirroring `SubtitleEntry.wordTimings` but
-    /// **re-keyed to composed-timeline absolute seconds** so the
-    /// viewer / burn-in renderer can look them up against the
-    /// playhead without re-deriving the segment offset. Nil when the
-    /// owning entry had no word timings.
+    /// **rebased to this cue's `startSeconds`** (and divided by the
+    /// owning segment's speed rate so 1 second of timing = 1 second
+    /// of composed-timeline playback). To convert to absolute composed
+    /// time, add `startSeconds`. The viewer / burn-in renderer can
+    /// pass these straight into `SubtitleKaraokeComposer.activeWordRange`
+    /// alongside `entryRelativeTime = playhead - cue.startSeconds`.
+    /// Nil when the owning entry had no word timings.
     public let wordTimings: [WordTiming]?
 
     public init(

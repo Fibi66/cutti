@@ -65,7 +65,7 @@ struct UsageSection: View {
                 rowsCard
             }
 
-            T("Whisper transcription runs locally on your Mac and is not counted.")
+            T("Local speech transcription runs on your Mac and is not counted.")
                 .font(SettingsTheme.captionFaint)
                 .foregroundStyle(SettingsTheme.textFaint)
                 .padding(.top, 10)

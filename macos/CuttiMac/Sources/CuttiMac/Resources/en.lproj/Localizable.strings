@@ -130,18 +130,22 @@
 "Undo Entire Plan" = "Undo Entire Plan";
 "Copy Trace JSON" = "Copy Trace JSON";
 
-/* ContentView — whisper setup + banners */
+/* ContentView — Qwen3-ASR setup overlay + banners */
 "Looks like a presenter cam — apply Picture-in-Picture?" = "Looks like a presenter cam — apply Picture-in-Picture?";
 "Apply" = "Apply";
 "Dismiss" = "Dismiss";
 "Done" = "Done";
 "Speech Recognition Setup" = "Speech Recognition Setup";
-"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback.";
-"Download Whisper" = "Download Whisper";
-"Downloading Whisper model…" = "Downloading Whisper model…";
+"Cutti uses a local Qwen3-ASR model for accurate Chinese, Cantonese and English subtitles. The first install downloads ~6 GB and runs entirely on your Mac.\nYou can skip and continue with Apple Speech as a fallback." = "Cutti uses a local Qwen3-ASR model for accurate Chinese, Cantonese and English subtitles. The first install downloads ~6 GB and runs entirely on your Mac.\nYou can skip and continue with Apple Speech as a fallback.";
+"Download Speech Model" = "Download Speech Model";
+"Hide" = "Hide";
 "Download failed" = "Download failed";
 "Retry" = "Retry";
 "Skip for Now" = "Skip for Now";
+"Qwen3-ASR was unavailable — used Apple Speech for this clip." = "Qwen3-ASR was unavailable — used Apple Speech for this clip.";
+"Transcribing with Apple Speech…" = "Transcribing with Apple Speech…";
+"Transcribing with Qwen3-ASR (local)…" = "Transcribing with Qwen3-ASR (local)…";
+"Loading Qwen3-ASR model (first run takes ~10s)…" = "Loading Qwen3-ASR model (first run takes ~10s)…";
 
 /* ContentView — media panel */
 "MEDIA" = "MEDIA";
@@ -651,9 +655,8 @@
 "Subscription" = "Subscription";
 "Switch between Manual (review every edit) and Auto-apply" = "Switch between Manual (review every edit) and Auto-apply";
 "This segment no longer exists on the timeline" = "This segment no longer exists on the timeline";
-"Transcribing with Whisper…" = "Transcribing with Whisper…";
+"Transcribing with the local speech model…" = "Transcribing with the local speech model…";
 "Unlabeled" = "Unlabeled";
-"Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback.";
 "Generate animation" = "Generate animation";
 "Experimental" = "Experimental";
 "Experimental: animation generation" = "Experimental: animation generation";
@@ -981,7 +984,7 @@
 "Last 30 days" = "Last 30 days";
 "Last 90 days" = "Last 90 days";
 "No AI calls billed in this window yet." = "No AI calls billed in this window yet.";
-"Whisper transcription runs locally on your Mac and is not counted." = "Whisper transcription runs locally on your Mac and is not counted.";
+"Local speech transcription runs on your Mac and is not counted." = "Local speech transcription runs on your Mac and is not counted.";
 "Total" = "Total";
 "calls_suffix" = "calls";
 "Refresh" = "Refresh";
@@ -1025,7 +1028,7 @@
 "Speech recognition" = "Speech recognition";
 "Stored in macOS Keychain." = "Stored in macOS Keychain.";
 "Use a different provider for images" = "Use a different provider for images";
-"Used by local Whisper to generate subtitles." = "Used by local Whisper to generate subtitles.";
+"Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles." = "Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles.";
 "Verified" = "Verified";
 "When you create a new clip, the subtitle overlay is visible in preview and timeline." = "When you create a new clip, the subtitle overlay is visible in preview and timeline.";
 "Where your credits went, by feature." = "Where your credits went, by feature.";

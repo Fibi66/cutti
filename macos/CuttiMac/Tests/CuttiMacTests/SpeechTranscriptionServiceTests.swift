@@ -2,66 +2,118 @@ import XCTest
 @testable import CuttiMac
 
 final class SpeechTranscriptionServiceTests: XCTestCase {
-    func test_resolvedSpeechProfile_defaultsToWhisper_forChinese() {
-        let defaults = UserDefaults(suiteName: #function)!
-        defaults.removePersistentDomain(forName: #function)
-        defaults.set(EditorLanguagePreference.chinese.rawValue, forKey: CuttiSettings.editorLanguageKey)
+    // MARK: - Pure resolver matrix
+    //
+    // The resolver decides which backends sit in
+    // `SpeechRecognitionProfile.backendChain` based on host
+    // capabilities (direct distribution / Apple Silicon / Qwen
+    // installed). Exercising the pure resolver lets us check every
+    // branch without touching the real disk install state — important
+    // because clean CI hosts will never have the 6 GB Qwen install
+    // and would otherwise always resolve to Apple Speech.
 
-        let profile = CuttiSettings.resolvedSpeechProfile(
-            defaults: defaults,
-            fallbackLocale: Locale(identifier: "en-US")
+    func test_resolveSpeechProfile_directAppleSiliconWithQwen_routesToQwenFirst() {
+        let caps = SpeechResolverCapabilities(
+            isDirectDistribution: true,
+            isAppleSilicon: true,
+            qwenInstalled: true
         )
 
-        // Whisper is now the primary backend for every language —
-        // Apple SFSpeech accumulates per-segment timing drift on long
-        // Chinese files which made the editor's subtitle timing drift
-        // by several seconds in the final cut. See
-        // `EditorLanguagePreference.resolvedPrimaryBackend` for the
-        // full rationale.
-        XCTAssertEqual(profile.primaryBackend, .whisperKit)
+        let profile = CuttiSettings.resolveSpeechProfile(
+            language: .chinese,
+            fallbackLocale: Locale(identifier: "en-US"),
+            capabilities: caps
+        )
+
+        XCTAssertEqual(profile.primaryBackend, .qwenAsrSidecar)
         XCTAssertEqual(profile.fallbackBackend, .appleSpeech)
-        XCTAssertEqual(profile.whisperLanguageCode, "zh")
+        XCTAssertEqual(profile.languageCode, "zh")
     }
 
-    func test_resolvedSpeechProfile_defaultsToWhisper_forEnglish() {
-        let defaults = UserDefaults(suiteName: #function)!
-        defaults.removePersistentDomain(forName: #function)
-        defaults.set(EditorLanguagePreference.english.rawValue, forKey: CuttiSettings.editorLanguageKey)
-
-        let profile = CuttiSettings.resolvedSpeechProfile(
-            defaults: defaults,
-            fallbackLocale: Locale(identifier: "zh-CN")
+    func test_resolveSpeechProfile_directAppleSiliconButQwenNotInstalled_routesToAppleSpeech() {
+        let caps = SpeechResolverCapabilities(
+            isDirectDistribution: true,
+            isAppleSilicon: true,
+            qwenInstalled: false
         )
 
-        XCTAssertEqual(profile.primaryBackend, .whisperKit)
-        XCTAssertEqual(profile.fallbackBackend, .appleSpeech)
-        XCTAssertEqual(profile.whisperLanguageCode, "en")
+        let profile = CuttiSettings.resolveSpeechProfile(
+            language: .english,
+            fallbackLocale: Locale(identifier: "en-US"),
+            capabilities: caps
+        )
+
+        // No Qwen on disk → only fallback in the chain.
+        XCTAssertEqual(profile.backendChain, [.appleSpeech])
+        XCTAssertEqual(profile.languageCode, "en")
     }
 
-    func test_resolvedSpeechProfile_automaticUsesFallbackLocale() {
-        let defaults = UserDefaults(suiteName: #function)!
-        defaults.removePersistentDomain(forName: #function)
-        defaults.set(EditorLanguagePreference.automatic.rawValue, forKey: CuttiSettings.editorLanguageKey)
-
-        // Whisper is now the primary backend regardless of the
-        // fallback locale; both Chinese-leaning and English-leaning
-        // automatic profiles route to WhisperKit first. The locale
-        // still drives `whisperLanguageCode` so Whisper is told which
-        // language to expect.
-        let chineseProfile = CuttiSettings.resolvedSpeechProfile(
-            defaults: defaults,
-            fallbackLocale: Locale(identifier: "zh-CN")
+    func test_resolveSpeechProfile_intelHost_skipsQwenEvenWhenInstalled() {
+        // Intel hosts can't run the MPS-bound aligner, so even if a
+        // stale install hangs around on disk we must not list Qwen
+        // in the chain.
+        let caps = SpeechResolverCapabilities(
+            isDirectDistribution: true,
+            isAppleSilicon: false,
+            qwenInstalled: true
         )
-        XCTAssertEqual(chineseProfile.primaryBackend, .whisperKit)
 
-        let englishProfile = CuttiSettings.resolvedSpeechProfile(
-            defaults: defaults,
-            fallbackLocale: Locale(identifier: "en-US")
+        let profile = CuttiSettings.resolveSpeechProfile(
+            language: .automatic,
+            fallbackLocale: Locale(identifier: "zh-CN"),
+            capabilities: caps
         )
-        XCTAssertEqual(englishProfile.primaryBackend, .whisperKit)
+
+        XCTAssertEqual(profile.backendChain, [.appleSpeech])
+        XCTAssertEqual(profile.languageCode, "zh")
     }
 
-    func test_cleanTranscriptText_removesWhisperControlTokens() {
+    func test_resolveSpeechProfile_masDistribution_skipsQwen() {
+        // Mac App Store builds can't ship the Python sidecar, so the
+        // Qwen entry must never appear regardless of the on-disk
+        // marker. Confirms the gate works even on Apple Silicon.
+        let caps = SpeechResolverCapabilities(
+            isDirectDistribution: false,
+            isAppleSilicon: true,
+            qwenInstalled: true
+        )
+
+        let profile = CuttiSettings.resolveSpeechProfile(
+            language: .english,
+            fallbackLocale: Locale(identifier: "en-US"),
+            capabilities: caps
+        )
+
+        XCTAssertEqual(profile.backendChain, [.appleSpeech])
+    }
+
+    func test_resolveSpeechProfile_automaticPicksCantoneseFromLocale() {
+        let caps = SpeechResolverCapabilities(
+            isDirectDistribution: true,
+            isAppleSilicon: true,
+            qwenInstalled: true
+        )
+
+        let profile = CuttiSettings.resolveSpeechProfile(
+            language: .automatic,
+            fallbackLocale: Locale(identifier: "yue-Hant-HK"),
+            capabilities: caps
+        )
+
+        XCTAssertEqual(profile.languageCode, "yue")
+        XCTAssertEqual(profile.primaryBackend, .qwenAsrSidecar)
+    }
+
+    // MARK: - Transcript helpers
+    //
+    // `cleanTranscriptText` and `expandTimingText` were originally
+    // written for an external ASR's output format but are now also used
+    // by the SFSpeech path to split phrase-sized substrings into
+    // per-character timing tokens. Keeping the behavioural tests
+    // here ensures the helpers stay correct as the surrounding
+    // pipeline evolves.
+
+    func test_cleanTranscriptText_removesWhisperStyleControlTokens() {
         let raw = "<|startoftranscript|><|zh|><|transcribe|><|0.00|>反问面试官问题呢<|6.96|> <|6.96|>也是面试环节中的很大一个<|9.48|>"
 
         let cleaned = SpeechTranscriptionService.cleanTranscriptText(raw)

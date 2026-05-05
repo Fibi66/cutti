@@ -9,7 +9,6 @@ let package = Package(
         .executable(name: "CuttiMac", targets: ["CuttiMac"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.12.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(path: "../../shared/CuttiKit"),
     ],
@@ -40,7 +39,6 @@ let package = Package(
         .executableTarget(
             name: "CuttiMac",
             dependencies: [
-                .product(name: "WhisperKit", package: "argmax-oss-swift"),
                 .product(name: "CuttiKit", package: "CuttiKit"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 "SherpaOnnxC",
@@ -49,6 +47,12 @@ let package = Package(
             path: "Sources/CuttiMac",
             resources: [
                 .copy("Resources/AnimationSkill"),
+                // Qwen3-ASR sidecar payload (server.py + requirements.txt
+                // + VERSION). Copied verbatim — `.process` would mangle
+                // the Python source. The Swift installer copies these
+                // out of Bundle.module into ~/Library/Application Support
+                // /cutti/qwen-asr/ on first install / on version bump.
+                .copy("Resources/QwenAsrSidecar"),
                 .process("Resources/en.lproj"),
                 .process("Resources/zh-Hans.lproj"),
                 // Bundled UI fonts. Inter (UI text) + JetBrains Mono

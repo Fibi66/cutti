@@ -492,6 +492,7 @@ struct TranscriptView: View {
                 FlowingCues(
                     items: para.items,
                     isPlaying: isPlaying,
+                    playheadSeconds: playheadSeconds,
                     selected: selectedCueIDs,
                     editing: editingCueID,
                     editingDraft: $editingDraft,
@@ -720,6 +721,10 @@ struct TranscriptView: View {
 private struct FlowingCues: View {
     let items: [TranscriptView.Item]
     let isPlaying: (ComposedSubtitle) -> Bool
+    /// Composed-timeline playhead in seconds. Used to derive the
+    /// per-character karaoke highlight inside the active cue when
+    /// `cue.wordTimings` is present.
+    let playheadSeconds: Double
     let selected: Set<UUID>
     let editing: UUID?
     @Binding var editingDraft: String
@@ -761,11 +766,10 @@ private struct FlowingCues: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 120)
         } else {
-            Text(cue.text)
+            Text(karaokeText(for: cue))
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .background(background(for: cue))
-                .foregroundStyle(isPlaying(cue) ? EditorShellStyle.accentSolid : .primary)
                 .cornerRadius(3)
                 .contentShape(Rectangle())
                 .modifier(ClickWithModifiers { mods in onClickCue(cue.id, mods) })
@@ -783,6 +787,92 @@ private struct FlowingCues: View {
                     }
                 }
         }
+    }
+
+    /// Build a per-character karaoke `AttributedString` for `cue`:
+    ///
+    /// - When the cue isn't currently playing → entire text in `.primary`
+    ///   so paragraph rendering is unchanged from the pre-karaoke
+    ///   behaviour for inactive cues.
+    /// - When playing AND `cue.wordTimings` is empty → fall back to the
+    ///   classic "whole cue lights up" behaviour (entire text painted in
+    ///   the accent color), which is what every legacy / non-Qwen
+    ///   transcript still does.
+    /// - When playing AND timings are present → walk the timings using
+    ///   the same matching logic as `SubtitleKaraokeComposer.activeWordRange`
+    ///   (cursor-relative substring with a `range(of:)` fallback for
+    ///   leading-space drift) and colour each char region by its karaoke
+    ///   state: already-spoken → accent (slightly dim) so the user sees
+    ///   reading progress; currently-active → accent + bold so the eye
+    ///   tracks it; future → `.primary`.
+    private func karaokeText(for cue: ComposedSubtitle) -> AttributedString {
+        var attr = AttributedString(cue.text)
+
+        guard isPlaying(cue) else {
+            attr.foregroundColor = .primary
+            return attr
+        }
+
+        guard let timings = cue.wordTimings, !timings.isEmpty else {
+            // Whole-cue highlight (legacy behaviour for cues without
+            // word timings — e.g., older transcripts or pre-karaoke
+            // saved projects).
+            attr.foregroundColor = EditorShellStyle.accentSolid
+            return attr
+        }
+
+        let entryRel = playheadSeconds - cue.startSeconds
+        let ns = cue.text as NSString
+        let textLen = ns.length
+        var cursor = 0
+        var pastEndUTF16 = 0
+        var activeRange: NSRange?
+
+        for timing in timings {
+            let slice = timing.text as NSString
+            let sliceLen = slice.length
+            guard sliceLen > 0 else { continue }
+
+            var matchLoc = cursor
+            if cursor + sliceLen <= textLen,
+               ns.substring(with: NSRange(location: cursor, length: sliceLen)) == timing.text {
+                matchLoc = cursor
+            } else {
+                let hit = ns.range(
+                    of: timing.text,
+                    options: [.literal],
+                    range: NSRange(location: cursor, length: textLen - cursor)
+                )
+                if hit.location == NSNotFound { continue }
+                matchLoc = hit.location
+            }
+
+            if entryRel >= timing.endSeconds {
+                pastEndUTF16 = matchLoc + sliceLen
+            } else if entryRel >= timing.startSeconds {
+                activeRange = NSRange(location: matchLoc, length: sliceLen)
+                break
+            } else {
+                break
+            }
+
+            cursor = matchLoc + sliceLen
+        }
+
+        attr.foregroundColor = .primary
+
+        if pastEndUTF16 > 0,
+           let pastRange = Range(NSRange(location: 0, length: pastEndUTF16), in: attr) {
+            attr[pastRange].foregroundColor = EditorShellStyle.accentSolid.opacity(0.7)
+        }
+
+        if let active = activeRange,
+           let r = Range(active, in: attr) {
+            attr[r].foregroundColor = EditorShellStyle.accentSolid
+            attr[r].font = .body.bold()
+        }
+
+        return attr
     }
 
     /// Right-click submenu listing every speaker in the current

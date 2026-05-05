@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import AVFoundation
 import SwiftUI
-import WhisperKit
 import CuttiKit
 
 // MARK: - Protocol for MediaCore importing
@@ -105,16 +104,6 @@ final class MediaCoreViewModel: ObservableObject {
             self.progress = progress
         }
     }
-
-    // MARK: - Whisper Model Setup
-    enum ModelState: Equatable {
-        case unknown
-        case needsDownload
-        case downloading(progress: Double)
-        case ready
-        case failed(String)
-    }
-    @Published var whisperModelState: ModelState = .unknown
 
     // MARK: - AI Chat
     @Published var chatMessages: [EditorChatMessage] = []
@@ -1351,7 +1340,13 @@ final class MediaCoreViewModel: ObservableObject {
     private static let subtitleMaxCJKChars = 14
     private static let subtitleMaxLatinChars = 42
     private static let subtitleMaxDuration: Double = 3.5
-    private static let subtitleWordGapBreak: Double = 0.6
+    /// Inter-token silence threshold that signals a sentence/clause
+    /// boundary. Tuned for Mandarin: typical articulation gap between
+    /// chars is 80–150 ms, real "breath/clause" pauses sit at
+    /// 200–400 ms, sentence-end stops at 500+ ms. 0.3 s is the
+    /// sweet spot — captures real pauses without splitting on
+    /// articulation seams.
+    private static let subtitleWordGapBreak: Double = 0.3
 
     private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
@@ -1536,11 +1531,26 @@ final class MediaCoreViewModel: ObservableObject {
             let relDur = last.endSeconds - first.startSeconds
             let text = joinText(chunkWords).trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty, relDur > 0 {
+                // Build per-word timings (entry-relative seconds) so the
+                // karaoke composer can highlight each char/word as the
+                // playhead crosses it. The composer searches for each
+                // timing.text inside the cue text using a `range(of:)`
+                // fallback when cumulative cursors drift, which makes
+                // this safe even when `joinText` inserts separators
+                // (Latin path joins with spaces).
+                let timings = chunkWords.map { word in
+                    WordTiming(
+                        text: word.text,
+                        startSeconds: word.startSeconds - first.startSeconds,
+                        endSeconds: word.endSeconds - first.startSeconds
+                    )
+                }
                 result.append(SubtitleEntry(
                     id: UUID(),
                     relativeStart: max(0, relStart),
                     relativeDuration: relDur,
-                    text: text
+                    text: text,
+                    wordTimings: timings.isEmpty ? nil : timings
                 ))
             }
             chunkWords.removeAll(keepingCapacity: true)
@@ -1614,6 +1624,37 @@ final class MediaCoreViewModel: ObservableObject {
         return keptLines
     }
 
+    private struct LiveSubtitleMeta {
+        let text: String
+        let speakerID: Int?
+        let translations: [String: String]
+        let runs: [SubtitleRun]?
+        let sourceStart: Double
+        let sourceEnd: Double
+    }
+
+    /// Build derived subtitle entries for one or more source-time
+    /// ranges of `sourceVideoID`, then overlay metadata
+    /// (`speakerID`, `translations`, `runs`) from the pre-edit live
+    /// timeline so AIActions like delete / split / trim / setSpeed
+    /// don't silently strip user-authored data.
+    ///
+    /// **Why the overlay exists.** The copilot snapshot
+    /// (`record.copilot?.transcript` + `wordTranscript`) is the only
+    /// source of subtitle text + word timings. But diarization stamps
+    /// `speakerID` on `timelineSegments[*].subtitles[*]` in place, and
+    /// translations live there too — neither field is ever written back
+    /// into the snapshot. Without this overlay, every AIAction that
+    /// goes through `transcriptLookup` produces fresh entries with
+    /// `speakerID = nil` and empty `translations`, which collapses the
+    /// transcript to a single default speaker (regression seen by the
+    /// user after `识别说话人` followed by deleting a cue).
+    ///
+    /// **Why this is safe to call mid-`apply`.** `AIActionExecutor.apply`
+    /// works on a local copy of `segments` and only writes back to
+    /// `self.timelineSegments` *after* it returns. So this snapshot of
+    /// `self.timelineSegments` always sees the pre-edit state for the
+    /// entire batch.
     private func subtitleEntries(
         for ranges: [TimeRange],
         sourceVideoID: UUID
@@ -1621,12 +1662,80 @@ final class MediaCoreViewModel: ObservableObject {
         guard let record = records.first(where: { $0.id == sourceVideoID }) else { return [] }
         let transcript = record.copilot?.transcript
         let wordTranscript = record.copilot?.wordTranscript
+
+        let liveMeta: [LiveSubtitleMeta] = timelineSegments
+            .filter { $0.sourceVideoID == sourceVideoID }
+            .flatMap { seg -> [LiveSubtitleMeta] in
+                seg.subtitles.map { entry in
+                    let s = seg.range.startSeconds + entry.relativeStart
+                    return LiveSubtitleMeta(
+                        text: entry.text,
+                        speakerID: entry.speakerID,
+                        translations: entry.translations,
+                        runs: entry.runs,
+                        sourceStart: s,
+                        sourceEnd: s + entry.relativeDuration
+                    )
+                }
+            }
+
         return ranges.flatMap { range in
-            Self.buildSubtitleEntries(
+            let derived = Self.buildSubtitleEntries(
                 for: range,
                 from: transcript,
                 wordTranscript: wordTranscript
             )
+            return derived.map { entry -> SubtitleEntry in
+                let derivedStart = range.startSeconds + entry.relativeStart
+                let derivedEnd = derivedStart + entry.relativeDuration
+                // Best-overlap match — robust to floating-point
+                // boundaries and to a derived entry spanning more
+                // than one live entry.
+                let best: LiveSubtitleMeta? = liveMeta
+                    .map { live -> (live: LiveSubtitleMeta, overlap: Double) in
+                        let overlap = max(
+                            0,
+                            min(live.sourceEnd, derivedEnd) - max(live.sourceStart, derivedStart)
+                        )
+                        return (live, overlap)
+                    }
+                    .filter { $0.overlap > 0.001 }
+                    .max(by: { $0.overlap < $1.overlap })?
+                    .live
+                guard let match = best else { return entry }
+
+                // Field-by-field policy:
+                //   • speakerID — preserved whenever a live entry
+                //     overlaps the derived entry. Survives chunkWords
+                //     re-segmenting the new range slightly differently
+                //     than the original.
+                //   • translations / runs — preserved only when the
+                //     matched live entry's text equals the derived
+                //     entry's text, so we never persist a stale
+                //     translation or violate the
+                //     `plainText(runs) == text` invariant.
+                let textMatches = match.text == entry.text
+                let preservedSpeakerID = match.speakerID
+                let preservedTranslations = textMatches ? match.translations : entry.translations
+                let preservedRuns = (textMatches && match.runs != nil) ? match.runs : entry.runs
+
+                if preservedSpeakerID == entry.speakerID
+                    && preservedTranslations == entry.translations
+                    && preservedRuns == entry.runs {
+                    return entry
+                }
+
+                return SubtitleEntry(
+                    id: entry.id,
+                    relativeStart: entry.relativeStart,
+                    relativeDuration: entry.relativeDuration,
+                    text: entry.text,
+                    speakerID: preservedSpeakerID,
+                    translations: preservedTranslations,
+                    runs: preservedRuns,
+                    wordTimings: entry.wordTimings
+                )
+            }
         }
     }
 
@@ -1706,7 +1815,7 @@ final class MediaCoreViewModel: ObservableObject {
         // without us having to remember to extend this tuple each time
         // a new field lands on the entry type — missing fields here
         // silently blank the preview / burn-in.
-        var raw: [(id: UUID, speakerID: Int?, text: String, start: Double, end: Double, sourceVideoID: UUID, sourceStart: Double, translations: [String: String], runs: [SubtitleRun]?)] = []
+        var raw: [(id: UUID, speakerID: Int?, text: String, start: Double, end: Double, sourceVideoID: UUID, sourceStart: Double, translations: [String: String], runs: [SubtitleRun]?, wordTimings: [CuttiKit.WordTiming]?)] = []
         var composedOffset: Double = 0
 
         for segment in timelineSegments {
@@ -1735,7 +1844,37 @@ final class MediaCoreViewModel: ObservableObject {
                 // stay in their original reading position when
                 // surrounding live cues shift due to deletes.
                 let sourceStart = segment.range.startSeconds + entry.relativeStart
-                raw.append((entry.id, entry.speakerID, entry.text, clampedStart, clampedEnd, segment.sourceVideoID, sourceStart, entry.translations, entry.runs))
+
+                // Translate entry-relative pre-speed wordTimings into
+                // entry-relative composed-timeline seconds (divide by
+                // speedRate) and shift back by the front-clip amount
+                // so timing 0 lines up with the cue's startSeconds.
+                // Drop timings that fall outside the clipped window;
+                // the karaoke composer is also robust to extras, but
+                // filtering here keeps `cue.wordTimings` consistent
+                // with `cue.text`/`cue.startSeconds`/`cue.endSeconds`.
+                let clippedTimings: [CuttiKit.WordTiming]?
+                if let original = entry.wordTimings, !original.isEmpty {
+                    let frontClip = clampedStart - rawStart
+                    let cueDuration = clampedEnd - clampedStart
+                    var converted: [CuttiKit.WordTiming] = []
+                    converted.reserveCapacity(original.count)
+                    for t in original {
+                        let s = (t.startSeconds / speedRate) - frontClip
+                        let e = (t.endSeconds / speedRate) - frontClip
+                        guard e > 0, s < cueDuration else { continue }
+                        converted.append(CuttiKit.WordTiming(
+                            text: t.text,
+                            startSeconds: max(0, s),
+                            endSeconds: min(cueDuration, e)
+                        ))
+                    }
+                    clippedTimings = converted.isEmpty ? nil : converted
+                } else {
+                    clippedTimings = nil
+                }
+
+                raw.append((entry.id, entry.speakerID, entry.text, clampedStart, clampedEnd, segment.sourceVideoID, sourceStart, entry.translations, entry.runs, clippedTimings))
             }
             composedOffset += segment.durationSeconds
         }
@@ -1758,6 +1897,23 @@ final class MediaCoreViewModel: ObservableObject {
             }
             guard end - start > 0.001 else { continue }
 
+            // If overlap-clamp shortened this cue, drop trailing
+            // timings whose start is now past the cue end.
+            let cueDuration = end - start
+            let trimmedTimings: [CuttiKit.WordTiming]?
+            if let original = raw[i].wordTimings {
+                let trimmed = original.compactMap { t -> CuttiKit.WordTiming? in
+                    guard t.startSeconds < cueDuration else { return nil }
+                    if t.endSeconds <= cueDuration { return t }
+                    return CuttiKit.WordTiming(text: t.text,
+                                      startSeconds: t.startSeconds,
+                                      endSeconds: cueDuration)
+                }
+                trimmedTimings = trimmed.isEmpty ? nil : trimmed
+            } else {
+                trimmedTimings = nil
+            }
+
             subs.append(ComposedSubtitle(
                 id: raw[i].id,
                 startSeconds: start,
@@ -1767,7 +1923,8 @@ final class MediaCoreViewModel: ObservableObject {
                 sourceVideoID: raw[i].sourceVideoID,
                 sourceStart: raw[i].sourceStart,
                 translations: raw[i].translations,
-                runs: raw[i].runs
+                runs: raw[i].runs,
+                wordTimings: trimmedTimings
             ))
         }
 
@@ -5555,10 +5712,29 @@ final class MediaCoreViewModel: ObservableObject {
         guard let store else { return false }
         guard !isAnalyzing else { return false }
 
-        let pending = videoRecordsOnTimeline.filter {
+        let allOnTimeline = videoRecordsOnTimeline
+        let pending = allOnTimeline.filter {
             $0.status == .ready && $0.copilot == nil && $0.analysis != nil
         }
-        guard !pending.isEmpty else { return false }
+        if pending.isEmpty {
+            // We came in here because composedSubtitles was empty, so
+            // the agent expected a transcript to materialize. Surfacing
+            // *why* `pending` is empty makes the difference between
+            // "no audio" and "import didn't probe yet" obvious from the
+            // console log without needing a debugger.
+            for r in allOnTimeline {
+                let hasAnalysis = r.analysis != nil
+                let hasCopilot = r.copilot != nil
+                let txCount = r.copilot?.transcript?.count ?? 0
+                print("🔴 transcribeForDiarization: pending empty. record=\(r.id) " +
+                      "status=\(r.status) hasAnalysis=\(hasAnalysis) hasCopilot=\(hasCopilot) " +
+                      "transcriptCues=\(txCount)")
+            }
+            if allOnTimeline.isEmpty {
+                print("🔴 transcribeForDiarization: pending empty — no video records on timeline.")
+            }
+            return false
+        }
 
         isAnalyzing = true
         bannerMessage = nil
@@ -5629,7 +5805,8 @@ final class MediaCoreViewModel: ObservableObject {
                     keptRanges: [fullRange],
                     keptTexts: [allText],
                     transcript: localResult.transcript,
-                    wordTranscript: localResult.rawWordTranscript
+                    wordTranscript: localResult.rawWordTranscript,
+                    isTranscribeOnly: true
                 )
 
                 var manifest = try store.loadManifest()
@@ -5688,7 +5865,7 @@ final class MediaCoreViewModel: ObservableObject {
     /// (sherpa-onnx pyannote + 3D-Speaker embeddings). On first use the
     /// required ~47 MB of model weights are downloaded to
     /// `~/Library/Application Support/cutti/models/sherpa/` — mirroring
-    /// how WhisperKit ships. If the download hasn't happened yet or the
+    /// how the Qwen3-ASR sidecar ships. If the download hasn't happened yet or the
     /// real pipeline errors out (no audio track, unreadable file, etc.)
     /// we fall back to the legacy pause-based heuristic so the button
     /// always produces *some* answer.
@@ -6270,7 +6447,8 @@ final class MediaCoreViewModel: ObservableObject {
             // never assemble template-picking instructions on the
             // client anymore — the skill is the sole authority.
             //
-            // WhisperKit already persists word-level timestamps on
+            // The local Qwen3-ASR sidecar (or Apple Speech fallback)
+            // already persists word-level timestamps on
             // `record.copilot?.wordTranscript` (each `TranscriptSegment`
             // is ≈ one spoken word). We bucket those into ~1.5s phrases
             // because sentence-level subtitles are too coarse — a
@@ -6587,7 +6765,7 @@ final class MediaCoreViewModel: ObservableObject {
                         lastEnd: w.endSeconds
                     ))
                 } else {
-                    // WhisperKit per-word segments don't carry trailing
+                    // Per-word segments from local ASR don't carry trailing
                     // spaces, so naive concatenation collapses
                     // "We actually use" into "Weactuallyuse" and the
                     // LLM loses every word boundary. Insert a space
@@ -7653,45 +7831,6 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Whisper Model Setup
-
-    static let whisperModelName = "openai_whisper-large-v3-v20240930_turbo"
-
-    /// Check if the Whisper model is already available locally.
-    func checkWhisperModel() async {
-        do {
-            _ = try await WhisperKit.fetchAvailableModels()
-            // Model is cached if WhisperKit can find it locally
-            // Try to create a WhisperKit instance with download=false
-            let config = WhisperKitConfig(
-                model: Self.whisperModelName,
-                verbose: false,
-                logLevel: .none,
-                load: false,
-                download: false
-            )
-            let _ = try await WhisperKit(config)
-            whisperModelState = .ready
-        } catch {
-            whisperModelState = .needsDownload
-        }
-    }
-
-    /// Download the Whisper model with progress updates.
-    func downloadWhisperModel() async {
-        whisperModelState = .downloading(progress: 0)
-        do {
-            let _ = try await WhisperKit(
-                model: Self.whisperModelName,
-                verbose: false,
-                logLevel: .none
-            )
-            whisperModelState = .ready
-        } catch {
-            whisperModelState = .failed(error.localizedDescription)
-        }
-    }
-
     // MARK: - AI Analysis
 
     /// Run the AI analysis pipeline on a single record.
@@ -7862,12 +8001,12 @@ final class MediaCoreViewModel: ObservableObject {
 
     /// Analyze the currently selected record.
     func analyzeSelectedRecord() async {
-        // Gate every AI entry point on a valid relay session. WhisperKit
-        // transcription is local, so without this check the user could
-        // sit through a slow on-device transcribe before we hit the
-        // relay 401 on the LLM step — confusing ("Why did it start if I
-        // wasn't signed in?"). We'd rather refuse up front with a
-        // friendly chat bubble pointing at Settings.
+        // Gate every AI entry point on a valid relay session. Local
+        // speech transcription runs on-device, so without this check
+        // the user could sit through a slow transcribe before we hit
+        // the relay 401 on the LLM step — confusing ("Why did it
+        // start if I wasn't signed in?"). We'd rather refuse up
+        // front with a friendly chat bubble pointing at Settings.
         guard hasRelayCredentials() else {
             beginAnalysisChatBubble(
                 userAction: L("One-click first cut"),
@@ -8464,14 +8603,18 @@ final class MediaCoreViewModel: ObservableObject {
     }
 
     /// Demote every lingering `.working` assistant bubble (except the
-    /// one we're about to append) into a `.success` checkmark so the
-    /// chat log never shows a spinner on a phase that has visibly
-    /// passed. Also persists the mutation when a chat store is bound.
+    /// one we're about to append, and except the live-narration
+    /// bubble — that one is heartbeat-driven and represents the
+    /// *current* phase, not a stale past one) into a `.success`
+    /// checkmark so the chat log never shows a spinner on a phase
+    /// that has visibly passed. Also persists the mutation when a
+    /// chat store is bound.
     private func resolveStaleWorkingLines(persist: Bool) {
         var didMutate = false
         for i in chatMessages.indices {
             guard chatMessages[i].role == .assistant,
-                  chatMessages[i].iconTone == .working
+                  chatMessages[i].iconTone == .working,
+                  !chatMessages[i].isLiveNarration
             else { continue }
             chatMessages[i].iconTone = .success
             chatMessages[i].iconSystemName = "checkmark.circle.fill"
@@ -8591,9 +8734,13 @@ final class MediaCoreViewModel: ObservableObject {
         // first-occurrence list of source video IDs that need work.
         // A record is a candidate iff it's currently on the timeline
         // (videoRecordsOnTimeline already enforces video-only +
-        // dedup-by-source) AND ready AND not already analyzed.
+        // dedup-by-source) AND ready AND not already analyzed by a
+        // real First Cut. Records whose only `copilot` is the
+        // transcribe-only stub written by `transcribeForDiarization`
+        // (识别说话人) are still candidates — that snapshot exists only
+        // to surface a transcript, not a real cut.
         let orderedRecords = videoRecordsOnTimeline.filter {
-            $0.status == .ready && $0.copilot == nil
+            $0.status == .ready && ($0.copilot == nil || $0.copilot?.isTranscribeOnly == true)
         }
 
         // If everything on the timeline is already analyzed (or there's
@@ -8612,7 +8759,7 @@ final class MediaCoreViewModel: ObservableObject {
         bannerMessage = nil
 
         do {
-            // Step 1: Transcribe each video independently (sequential for Whisper memory)
+            // Step 1: Transcribe each video independently (sequential for the local ASR engine's memory budget)
             var perVideoLocal: [(record: MediaAssetRecord, result: LocalAnalysisResult)] = []
             let totalClips = orderedRecords.count
 
@@ -9438,6 +9585,16 @@ final class MediaCoreViewModel: ObservableObject {
                         chatMessages.append(bubble)
                     }
                     try? await chatStore?.append(bubble)
+                    // Tools that posted their own progress bubbles
+                    // (e.g. transcribeForDiarization → "Transcribing
+                    // for speaker detection…") never get a chance to
+                    // finalize them — the agent loop bypasses
+                    // `appendAnalysisAssistantLine` for the
+                    // userSummary trace. Demote any straggling
+                    // `.working` bubbles here so the user doesn't
+                    // see a phantom spinner sitting next to the
+                    // tool's success line.
+                    resolveStaleWorkingLines(persist: true)
                 }
             }
         }
@@ -9549,7 +9706,7 @@ final class MediaCoreViewModel: ObservableObject {
     /// `liveNarrationCallback` every time the pipeline enters a new
     /// phase. For slow phases (transcribing / scene analysis) this
     /// also kicks off a heartbeat so the text changes every ~2s —
-    /// WhisperKit and AVFoundation don't expose fine-grained progress,
+    /// the local ASR engine and AVFoundation don't expose fine-grained progress,
     /// so the rotation is what keeps the bubble feeling alive.
     static func analysisPhaseNarration(phase: AnalysisPhase, english: Bool) -> String {
         if english {
@@ -11475,7 +11632,9 @@ final class MediaCoreViewModel: ObservableObject {
             )
         }
 
-        let unanalyzedBefore = timelineClips.filter { $0.copilot == nil && $0.status == .ready }.count
+        let unanalyzedBefore = timelineClips.filter {
+            $0.status == .ready && ($0.copilot == nil || $0.copilot?.isTranscribeOnly == true)
+        }.count
         let segmentsBefore = timelineSegments.count
 
         // Snapshot BEFORE the pipeline runs so restore_checkpoint can
@@ -11498,7 +11657,7 @@ final class MediaCoreViewModel: ObservableObject {
             // mutates copilot snapshots in place and our local
             // `timelineClips` array carries pre-analysis copies.
             guard let current = records.first(where: { $0.id == clip.id }) else { return false }
-            return current.copilot == nil && current.status == .ready
+            return current.status == .ready && (current.copilot == nil || current.copilot?.isTranscribeOnly == true)
         }.count)
         // analyzeRecord on a single clip targets exactly one clip; the
         // delta count above can come out 0/1 depending on cache state, so
@@ -11559,6 +11718,18 @@ final class MediaCoreViewModel: ObservableObject {
         do {
             try await store.load()
             self.chatMessages = await store.all()
+            // Defensive: any `.working` assistant bubble that
+            // survived a project close is by definition stale —
+            // whatever the spinner was tracking finished (or got
+            // interrupted) before we relaunched, but the bubble
+            // never had a chance to finalize because the agent
+            // loop's resolution path doesn't run on shutdown.
+            // Without this, reopening a project mid-flight (or
+            // after a clean exit during analysis) shows a phantom
+            // spinner next to a piece of work that's actually
+            // long over. Demote so the user sees the resolved
+            // state, and persist back so the next reopen agrees.
+            resolveStaleWorkingLines(persist: true)
         } catch {
             print("⚠️ Failed to load chat history: \(error)")
         }

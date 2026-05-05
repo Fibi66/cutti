@@ -10,6 +10,7 @@ enum SettingsSection: String, Identifiable, Hashable {
     case usage
     case general
     case editor
+    case qwenAsr
     case updates
     case support
     case developer
@@ -25,6 +26,7 @@ enum SettingsSection: String, Identifiable, Hashable {
         case .usage:        return "Credit Usage"
         case .general:      return "General"
         case .editor:       return "Video Editor"
+        case .qwenAsr:      return "Qwen3-ASR"
         case .updates:      return "Updates"
         case .support:      return "Support"
         case .developer:    return "Developer"
@@ -40,6 +42,7 @@ enum SettingsSection: String, Identifiable, Hashable {
         case .usage:        return "chart.bar.xaxis"
         case .general:      return "slider.horizontal.3"
         case .editor:       return "play.rectangle"
+        case .qwenAsr:      return "waveform"
         case .updates:      return "arrow.triangle.2.circlepath"
         case .support:      return "lifepreserver"
         case .developer:    return "hammer"

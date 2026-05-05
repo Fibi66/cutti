@@ -2,13 +2,15 @@ import AVFoundation
 import Foundation
 import NaturalLanguage
 import Speech
-import WhisperKit
 import CuttiKit
 
 /// Transcribes audio from a video file.
 ///
-/// Chooses the default speech backend from app settings, using Apple Speech
-/// first for Chinese and Whisper first for English by default.
+/// Local Qwen3-ASR + ForcedAligner is the primary engine for every
+/// supported language (Chinese, Cantonese, English). Apple SFSpeech
+/// is the system-provided fallback used when the Qwen sidecar isn't
+/// installed (Intel/MAS hosts, or first-launch before the model has
+/// been downloaded) or fails at runtime.
 struct SpeechTranscriptionService: Sendable {
     struct Result: Sendable {
         /// Cleaned higher-level transcript segments for display/debugging.
@@ -51,8 +53,10 @@ struct SpeechTranscriptionService: Sendable {
             fallbackLocale: locale
         )
         var lastError: Error?
+        var didFallBackFromQwen = false
 
-        for (index, backend) in [profile.primaryBackend, profile.fallbackBackend].enumerated() {
+        let chain = profile.backendChain
+        for (index, backend) in chain.enumerated() {
             do {
                 let result = try await transcribe(
                     url: url,
@@ -61,6 +65,13 @@ struct SpeechTranscriptionService: Sendable {
                     onProgress: onProgress
                 )
                 if !result.displaySegments.isEmpty || !result.wordSegments.isEmpty {
+                    if didFallBackFromQwen, backend == .appleSpeech {
+                        // The user asked for the higher-quality local
+                        // engine, didn't get it, and now sees Apple
+                        // Speech output. Surface that explicitly so
+                        // the perceived quality drop isn't silent.
+                        onProgress?(L("Qwen3-ASR was unavailable — used Apple Speech for this clip."))
+                    }
                     return result
                 }
                 lastError = TranscriptionError.noResult
@@ -70,8 +81,12 @@ struct SpeechTranscriptionService: Sendable {
                 print("🎤 \(backend.title) failed: \(error.localizedDescription)")
             }
 
-            if index == 0 {
-                print("🎤 Falling back to \(profile.fallbackBackend.title)")
+            if backend == .qwenAsrSidecar {
+                didFallBackFromQwen = true
+            }
+
+            if index + 1 < chain.count {
+                print("🎤 Falling back to \(chain[index + 1].title)")
             }
         }
 
@@ -85,95 +100,67 @@ struct SpeechTranscriptionService: Sendable {
         onProgress: (@Sendable (String) -> Void)?
     ) async throws -> Result {
         switch backend {
-        case .whisperKit:
-            onProgress?("Transcribing with Whisper…")
-            return try await transcribeWithWhisperKit(
-                url: url,
-                languageCode: profile.whisperLanguageCode,
-                onProgress: onProgress
-            )
         case .appleSpeech:
-            onProgress?("Transcribing with Apple Speech…")
+            onProgress?(L("Transcribing with Apple Speech…"))
             let segments = try await transcribeWithSFSpeech(url: url, locale: profile.locale)
             return Result(displaySegments: segments, wordSegments: segments)
+        case .qwenAsrSidecar:
+            onProgress?(L("Transcribing with Qwen3-ASR (local)…"))
+            return try await transcribeWithQwenAsrSidecar(
+                url: url,
+                profile: profile,
+                onProgress: onProgress
+            )
         }
     }
 
-    // MARK: - WhisperKit (native Swift, CoreML)
+    // MARK: - Qwen3-ASR (local sidecar)
 
-    private func transcribeWithWhisperKit(
+    /// Bridges the local PyTorch sidecar into the same `Result` shape
+    /// the cue builder consumes for Apple Speech. The sidecar already
+    /// returns per-character timestamps for CJK and per-word for
+    /// Latin languages, so we map its `items` directly into
+    /// `wordSegments` without going through `expandTimingText`
+    /// (which is for backends that emit phrase-sized chunks).
+    private func transcribeWithQwenAsrSidecar(
         url: URL,
-        languageCode lang: String,
+        profile: SpeechRecognitionProfile,
         onProgress: (@Sendable (String) -> Void)?
     ) async throws -> Result {
-        onProgress?("Loading Whisper model (first time downloads ~1.5GB)…")
-        print("🎤 WhisperKit: loading model...")
-
-        let whisper = try await WhisperKit(
-            model: "openai_whisper-large-v3-v20240930_turbo",
-            verbose: false,
-            logLevel: .none
-        )
-
-        onProgress?("Transcribing audio with Whisper…")
-        print("🎤 WhisperKit: transcribing \(url.lastPathComponent) (lang=\(lang))...")
-
-        let results = try await whisper.transcribe(
-            audioPath: url.path,
-            decodeOptions: DecodingOptions(
-                language: lang,
-                wordTimestamps: true
-            )
-        )
-
-        // Collect both timing-level and segment-level transcriptions.
-        // For Chinese, Whisper's "word" timestamps can still be phrase-sized,
-        // so we further expand them into smaller lexical tokens.
-        var wordSegments: [TranscriptSegment] = []
-        var sentenceSegments: [TranscriptSegment] = []
-
-        for result in results {
-            for seg in result.segments {
-                // Collect sentence-level
-                let segText = Self.cleanTranscriptText(seg.text)
-                if !segText.isEmpty && seg.end - seg.start > 0.01 {
-                    sentenceSegments.append(TranscriptSegment(
-                        startSeconds: Double(seg.start),
-                        endSeconds: Double(seg.end),
-                        text: segText
-                    ))
-                }
-
-                // Collect word-level
-                if let words = seg.words {
-                    for timing in words {
-                        wordSegments.append(contentsOf: Self.expandTimingText(
-                            timing.word,
-                            start: Double(timing.start),
-                            end: Double(timing.end),
-                            languageCode: lang
-                        ))
-                    }
-                }
-            }
+        // Map cutti's two-letter language code into the aligner's
+        // English-named language vocabulary.
+        let qwenLanguage: String?
+        switch profile.languageCode {
+        case "zh":
+            qwenLanguage = "Chinese"
+        case "yue":
+            qwenLanguage = "Cantonese"
+        case "en":
+            qwenLanguage = "English"
+        default:
+            qwenLanguage = nil
         }
 
-        let timingSegments = wordSegments.isEmpty ? sentenceSegments : wordSegments
-        let displaySegments = sentenceSegments.isEmpty
-            ? Self.groupTimingSegmentsForDisplay(timingSegments)
-            : sentenceSegments
+        onProgress?(L("Loading Qwen3-ASR model (first run takes ~10s)…"))
+        let response = try await QwenAsrSidecarClient.shared.transcribe(
+            audioPath: url.path,
+            language: qwenLanguage,
+            context: nil
+        )
+        onProgress?(L("Transcribing with Qwen3-ASR (local)…"))
 
-        print("🎤 WhisperKit: using sentence display (\(displaySegments.count)) + timing tokens (\(timingSegments.count))")
-
-        print("🎤 WhisperKit: display=\(displaySegments.count) timing=\(timingSegments.count)")
-        if let first = displaySegments.first {
+        print("🎤 Qwen3-ASR: display=\(response.displaySegments.count) timing=\(response.wordSegments.count) rtf=\(response.realTimeFactor.map { String(format: "%.3f", $0) } ?? "?")")
+        if let first = response.wordSegments.first {
             print("🎤   first: t=\(String(format: "%.2f", first.startSeconds))s end=\(String(format: "%.2f", first.endSeconds))s \"\(first.text)\"")
         }
-        if let last = displaySegments.last {
+        if let last = response.wordSegments.last {
             print("🎤   last:  t=\(String(format: "%.2f", last.startSeconds))s end=\(String(format: "%.2f", last.endSeconds))s \"\(last.text)\"")
         }
 
-        return Result(displaySegments: displaySegments, wordSegments: timingSegments)
+        return Result(
+            displaySegments: response.displaySegments,
+            wordSegments: response.wordSegments
+        )
     }
 
     // MARK: - SFSpeech (fallback)
@@ -221,9 +208,8 @@ struct SpeechTranscriptionService: Sendable {
         // moment the FIRST character is spoken — so the user sees
         // "学校" on screen seconds before they hear it, exactly the
         // "subtitles run faster than reality" symptom users have
-        // reported. Mirror the WhisperKit path by expanding each
-        // multi-character substring into per-token segments via
-        // equal-time interpolation. CJK falls back to per-character
+        // reported. Apply per-token expansion to each multi-character
+        // substring via equal-time interpolation. CJK falls back to per-character
         // splitting inside `tokenizeTimingText`. Latin substrings
         // already arrive token-sized; the expansion is a no-op for
         // single tokens.

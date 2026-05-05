@@ -461,10 +461,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let entries = AnimationSkill.allEntries
         let baked = AnimationSkill.bakedIntoOverlayPrompt
         print("🎨 [animation.skill] entries=\(entries.count) baked_bytes=\(baked.utf8.count) baked_ok=\(!baked.isEmpty && baked.contains("Three house styles") && baked.contains("Entrance / hold / exit thirds"))")
+        // Touching the Qwen3-ASR sidecar manager here arms its
+        // willTerminate observer up front so a quit during an active
+        // transcription always reaches `stopSynchronously()` — even
+        // if the user never opens Settings → Qwen3-ASR. Lazy `init`
+        // is otherwise driven by Settings UI / first transcription,
+        // and either of those could miss the registration window.
+        //
+        // We also kick off a prewarm whenever the Qwen3-ASR sidecar
+        // is installed and the host can run it. Cold model load takes
+        // ~30-90s, which would otherwise be paid by the first
+        // transcription request and frequently exceed the boot
+        // health-check budget. Prewarming at app launch hides that
+        // latency — by the time the user clicks "Generate subtitles"
+        // the sidecar is hot in MPS memory.
+        _ = QwenAsrSidecarManager.shared
+        QwenAsrSidecarManager.shared.prewarmIfReady()
         DispatchQueue.main.async {
             NSApp.windows.first?.makeKeyAndOrderFront(nil)
             self.applyAppDisplayName()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Belt-and-suspenders: the manager already listens for the
+        // same notification, but registering twice is harmless and
+        // protects us if the Notification-center observer was ever
+        // cleaned up (e.g. a future refactor).
+        QwenAsrSidecarManager.shared.stopSynchronously()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

@@ -1,0 +1,27 @@
+# Pinned Python deps for the cutti Qwen3-ASR sidecar.
+#
+# Versions tracked in qwen-asr-bench/.venv as of 2025-05-04.
+# torch comes in transitively as a hard dep of qwen-asr; pinning it here
+# makes the resolution deterministic and lets the installer warn if
+# pip's resolver wants to drift.
+
+qwen-asr==0.0.6
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+pydantic==2.13.3
+
+# Transitive deps we explicitly pin to keep the install reproducible.
+# Bumping torch requires re-testing on Apple Silicon MPS.
+torch==2.11.0
+torchaudio==2.11.0
+torchcodec==0.11.1
+transformers==4.57.6
+huggingface_hub==0.36.2
+
+# Tokenizer / aligner deps (pulled in transitively by qwen-asr).
+# Pinned so a future PyPI release of any of these can't break installs
+# silently, and so an end-user reinstall a year from now is the same
+# bits we benched.
+nagisa==0.2.11
+soynlp==0.0.493
+librosa==0.11.0

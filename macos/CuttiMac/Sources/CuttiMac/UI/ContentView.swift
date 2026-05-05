@@ -441,6 +441,8 @@ struct ContentView: View {
 
     enum LeftPanelTab { case chat, media }  // retained for EditorShellSmokeTests compat
     @AppStorage(CuttiSettings.editorLanguageKey) private var editorLanguageRaw: String = EditorLanguagePreference.automatic.rawValue
+    @AppStorage(CuttiSettings.qwenSetupDismissedKey) private var qwenSetupDismissedRaw: Bool = false
+    @ObservedObject private var qwenManager: QwenAsrSidecarManager = .shared
 
     /// Build the `TimelineCreativeActions` value passed into
     /// `TimelineDock`'s environment. Extracted out of the parent view
@@ -1020,15 +1022,15 @@ struct ContentView: View {
             ActiveEditor.shared.clearIfActive(viewModel)
         }
         .task {
-            await refreshWhisperModelState()
             await viewModel.loadRevisions()
             await viewModel.loadChatHistory()
             await viewModel.loadRecords(validateSources: true)
         }
         .onChange(of: editorLanguageRaw) { _, _ in
-            Task {
-                await refreshWhisperModelState()
-            }
+            // Language preference change has no effect on the Qwen
+            // overlay state (the install state is global), but the
+            // hook is kept as a placeholder for future language-
+            // gated UI.
         }
         .sheet(isPresented: $showAgentTrace) {
             AgentTraceView(
@@ -1103,10 +1105,10 @@ struct ContentView: View {
                 )
             }
         }
-        // Whisper model setup overlay
+        // Qwen3-ASR install overlay
         .overlay {
-            if shouldShowWhisperSetupOverlay {
-                whisperSetupOverlay
+            if shouldShowQwenSetupOverlay {
+                qwenSetupOverlay
             }
         }
         // Floating export progress card (bottom-trailing)
@@ -1232,15 +1234,23 @@ struct ContentView: View {
     /// Whether the Start button should be enabled: selected clip is ready and has no complete AI edit decisions.
     private var canStartAnalysis: Bool {
         guard !viewModel.isAnalyzing else { return false }
-        // Multi-video: allow if any ready record hasn't been analyzed
+        // Multi-video: allow if any ready record hasn't been first-cut yet.
+        // The transcribe-only stub written by `识别说话人` (detect_speakers)
+        // sets `copilot.isTranscribeOnly = true` and a placeholder full-source
+        // keptRange — treat that as "still needs a real first cut" so the
+        // button stays enabled after diarization.
         let hasUnanalyzed = viewModel.records.contains { record in
-            record.status == .ready && (record.copilot == nil || record.copilot?.keptRanges == nil || record.copilot?.keptRanges?.isEmpty == true)
+            guard record.status == .ready else { return false }
+            guard let cop = record.copilot else { return true }
+            if cop.isTranscribeOnly == true { return true }
+            return cop.keptRanges == nil || cop.keptRanges?.isEmpty == true
         }
         if hasUnanalyzed { return true }
         // Single video fallback
         guard let record = viewModel.selectedRecord else { return false }
         guard record.status == .ready else { return false }
         if let copilot = record.copilot {
+            if copilot.isTranscribeOnly == true { return true }
             return copilot.keptRanges == nil || copilot.keptRanges?.isEmpty == true
         }
         return true
@@ -1391,28 +1401,35 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Whisper Model Setup Overlay
+    // MARK: - Qwen3-ASR Setup Overlay
 
-    private var shouldPreferWhisper: Bool {
-        CuttiSettings.resolvedSpeechProfile().primaryBackend == .whisperKit
+    /// True when the Qwen3-ASR sidecar appears at the front of the
+    /// resolved speech-recognition chain. Direct distribution + Apple
+    /// Silicon hosts qualify; MAS or Intel builds skip the overlay
+    /// entirely (no install path on those hosts — they get Apple
+    /// Speech).
+    private var qwenIsSupported: Bool {
+        // Mirror the gating used by `SpeechResolverCapabilities.current()`
+        // so this view's visibility decision matches what
+        // `resolvedSpeechProfile()` would actually pick.
+        guard CuttiDistribution.current == .direct else { return false }
+        guard qwenAsrHostIsAppleSilicon() else { return false }
+        return true
     }
 
-    private var shouldShowWhisperSetupOverlay: Bool {
-        shouldPreferWhisper &&
-        viewModel.whisperModelState != .ready &&
-        viewModel.whisperModelState != .unknown
-    }
-
-    private func refreshWhisperModelState() async {
-        if shouldPreferWhisper {
-            await viewModel.checkWhisperModel()
-        } else {
-            viewModel.whisperModelState = .unknown
+    private var shouldShowQwenSetupOverlay: Bool {
+        guard qwenIsSupported else { return false }
+        if qwenSetupDismissedRaw { return false }
+        switch qwenManager.installState {
+        case .installed, .unsupported:
+            return false
+        case .notInstalled, .installing, .failed:
+            return true
         }
     }
 
     @ViewBuilder
-    private var whisperSetupOverlay: some View {
+    private var qwenSetupOverlay: some View {
         ZStack {
             Color.black.opacity(0.7).ignoresSafeArea()
 
@@ -1424,29 +1441,52 @@ struct ContentView: View {
                 T("Speech Recognition Setup")
                     .font(.title2.bold())
 
-                switch viewModel.whisperModelState {
-                case .needsDownload:
-                    T("Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback.")
+                switch qwenManager.installState {
+                case .notInstalled:
+                    T("Cutti uses a local Qwen3-ASR model for accurate Chinese, Cantonese and English subtitles. The first install downloads ~6 GB and runs entirely on your Mac.\nYou can skip and continue with Apple Speech as a fallback.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: 400)
+                        .frame(maxWidth: 420)
 
-                    Button {
-                        Task { await viewModel.downloadWhisperModel() }
-                    } label: { T("Download Whisper") }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    HStack(spacing: 12) {
+                        Button {
+                            // Reset the dismissed flag so the overlay
+                            // reappears if the user closes-then-reopens
+                            // the editor mid-install.
+                            qwenSetupDismissedRaw = false
+                            qwenManager.install()
+                        } label: { T("Download Speech Model") }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
 
-                case .downloading(let progress):
-                    T("Downloading Whisper model…")
+                        Button {
+                            qwenSetupDismissedRaw = true
+                        } label: { T("Skip for Now") }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                    }
+
+                case .installing:
+                    Text(qwenManager.installPhase.displayLabel)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
 
-                    ProgressView(value: max(progress, 0), total: 1.0)
-                        .frame(width: 300)
+                    ProgressView(value: max(qwenManager.overallProgress, 0), total: 1.0)
+                        .frame(width: 320)
 
-                    Text("\(Int(progress * 100))%")
+                    Text("\(Int(qwenManager.overallProgress * 100))%")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button {
+                        // Skip just hides the overlay — we do NOT cancel
+                        // the in-flight install, so the user can keep
+                        // working while the model finishes downloading
+                        // in the background.
+                        qwenSetupDismissedRaw = true
+                    } label: { T("Hide") }
+                    .buttonStyle(.bordered)
 
                 case .failed(let message):
                     T("Download failed")
@@ -1454,27 +1494,38 @@ struct ContentView: View {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: 400)
+                        .frame(maxWidth: 420)
+                        .multilineTextAlignment(.center)
 
                     HStack(spacing: 12) {
                         Button {
-                            Task { await viewModel.downloadWhisperModel() }
+                            qwenSetupDismissedRaw = false
+                            qwenManager.install()
                         } label: { T("Retry") }
                         .buttonStyle(.borderedProminent)
 
                         Button {
-                            viewModel.whisperModelState = .ready
+                            qwenSetupDismissedRaw = true
                         } label: { T("Skip for Now") }
                         .buttonStyle(.bordered)
                     }
 
-                default:
+                case .installed, .unsupported:
                     EmptyView()
                 }
             }
             .padding(40)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .onChange(of: qwenManager.installState) { _, newValue in
+            // Reset the dismissed flag whenever the install transitions
+            // to .installed so a future uninstall → reinstall round-trip
+            // shows the overlay again. The flag stays sticky across
+            // launches when the user explicitly opted out.
+            if case .installed = newValue {
+                qwenSetupDismissedRaw = false
+            }
         }
     }
 }
