@@ -9,9 +9,12 @@ import Foundation
 ///
 /// SwiftPM executables ship without an `Info.plist`, so the usual
 /// `ATSApplicationFontsPath` declaration isn't available — we have to
-/// register them programmatically. `Bundle.module` resolves to the
-/// SwiftPM-emitted resource bundle next to the executable both in
-/// `swift run` and in production `.app` builds.
+/// register them programmatically. `Bundle.cuttiMacResources` resolves
+/// to the SwiftPM-emitted resource bundle in both `swift run` (via
+/// `Bundle.module`) and production `.app` builds (where the bundle
+/// lives at `Contents/Resources/CuttiMac_CuttiMac.bundle` because
+/// macOS code signing forbids the location SwiftPM's synthesized
+/// `Bundle.module` looks at — see CuttiMacBundleResources.swift).
 ///
 /// Failures to register are non-fatal: `Font.custom(...)` falls back
 /// to the system font silently, and `kCTFontManagerErrorAlreadyRegistered`
@@ -67,7 +70,7 @@ enum SettingsFontRegistrar {
         // SwiftPM's `.process()` rule preserves the original extension.
         // Inter ships as .otf; JetBrains Mono as .ttf.
         for ext in ["otf", "ttf"] {
-            if let url = Bundle.module.url(forResource: stem, withExtension: ext) {
+            if let url = Bundle.cuttiMacResources.url(forResource: stem, withExtension: ext) {
                 return url
             }
         }

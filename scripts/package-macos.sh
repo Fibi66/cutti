@@ -102,10 +102,14 @@ mkdir -p "$APP/Contents/Frameworks"
 cp "$EXEC_PATH" "$APP/Contents/MacOS/Cutti"
 chmod +x "$APP/Contents/MacOS/Cutti"
 
-# SwiftPM-generated resource accessor looks for the bundle next to the
-# main executable (`Bundle.main.bundleURL.appendingPathComponent(...)`),
-# so place it in Contents/MacOS/ — NOT Contents/Resources/.
-cp -R "$RES_BUNDLE" "$APP/Contents/MacOS/"
+# SwiftPM's synthesized `Bundle.module` accessor expects the resource
+# bundle next to `Bundle.main.bundleURL` — for an `.app`, that's
+# `Cutti.app/CuttiMac_CuttiMac.bundle` at the .app's *root*, which
+# `codesign` rejects with "unsealed contents present in the bundle
+# root". CuttiMac's call sites have been migrated to a custom
+# `Bundle.cuttiMacResources` accessor (see CuttiMacBundleResources.swift)
+# that looks for the bundle in the Apple-standard location below.
+cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 
 # Sparkle.framework — preserve symlinks (-R, not -RL).
 cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"

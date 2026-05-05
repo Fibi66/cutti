@@ -40,7 +40,7 @@ private enum LocalizationOverride {
         // SwiftPM lowercases lproj folder names, so try a few variants.
         let candidates = [lang, lang.lowercased()]
         for candidate in candidates {
-            if let path = Bundle.module.path(forResource: candidate, ofType: "lproj"),
+            if let path = Bundle.cuttiMacResources.path(forResource: candidate, ofType: "lproj"),
                let sub = Bundle(path: path) {
                 return sub
             }
@@ -48,7 +48,7 @@ private enum LocalizationOverride {
         // Last resort: hand back the multi-locale module bundle so we
         // at least fall through to development-language strings rather
         // than crashing.
-        return .module
+        return .cuttiMacResources
     }
 
     private static func currentLanguage() -> String {

@@ -128,7 +128,7 @@ enum AnimationSkill {
     private static let skillRoot: URL? = {
         // `subdirectory` for `urls(forResourcesWithExtension:)` accepts
         // a path relative to the bundle root.
-        Bundle.module.url(forResource: "AnimationSkill", withExtension: nil)
+        Bundle.cuttiMacResources.url(forResource: "AnimationSkill", withExtension: nil)
     }()
 
     /// Maps a public `name` (e.g. `rules/cutti-staging`) to a URL
