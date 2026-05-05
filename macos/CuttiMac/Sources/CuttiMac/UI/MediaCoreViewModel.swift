@@ -9325,6 +9325,7 @@ final class MediaCoreViewModel: ObservableObject {
         - find_by_transcript: 按字幕文本子串搜索
         - get_timeline_summary: 获取整体统计
         - get_segment_detail: 查单个 / 多个 segment 的详细状态（volume, speed, fade, 颜色, speaker …）
+        - score_hook_candidates: 在所有原始素材里给"开场金句 / 冷开 hook"打分排序，返回 top-K 候选（含 length / position / anti-filler / energy 子分数与 1 行理由）。当用户希望 AI 自主挑选而非自己指明那一句时使用（"AI 自己挑句开场金句""帮我挑个 hook""加个开场钩子"）。本工具只读，不会改时间线；要把候选真正放到开头，再用 edit_timeline.insert_source_clip。**用户已经指明了某段（"把 pricing 那段放开头"）就用 find_by_transcript，不要用本工具。** 在选定范围（chat 上方有附件 chip）下被禁用——需要先取消附件。
         - find_black_frames: 找画面接近黑屏的时间段（掉帧/盖镜头/渐黑）
         - find_empty_frames: 找没有人脸的时间段（用于 B-roll 替补 / 剪空镜）
         - find_scene_changes: 找画面剧烈变化的切点（建议自然剪辑点）
@@ -9385,6 +9386,7 @@ final class MediaCoreViewModel: ObservableObject {
         - "把所有 uh 删掉" → 1) find_filler_words → 2) edit_timeline.delete_range 多条
         - "把 5:00 到 5:20 调成 1.5 倍速" → set_speed_range(start_time: 300, end_time: 320, rate: 1.5)
         - "把我讲 pricing 那段放到开头做 intro" → 1) find_by_transcript("pricing") 拿到 segment_id → 2) get_timeline_summary 拿到全部 segment_ids → 3) edit_timeline.reorder_segments(segment_ids: [pricing_id, ...其余保持原顺序])
+        - "AI 自己挑一句最有冲击力的开场金句放开头" → 1) score_hook_candidates(top_k: 5) → 2) 用候选清单（含 reason）问用户挑哪一条 → 3) edit_timeline.insert_source_clip(source_video_id, source_start, source_end, composed_insert_at: 0)
         - "撤销上一步" → restore_checkpoint(checkpoint_index: 0)
         - "帮我剪一下 / 给我自动剪个第一版" → run_first_cut()
         - "我又导了几个素材，重新出一版第一刀" → run_first_cut()
@@ -10154,6 +10156,7 @@ final class MediaCoreViewModel: ObservableObject {
             case "find_by_transcript":   return "Searching transcript…"
             case "get_timeline_summary": return "Reading the timeline…"
             case "get_segment_detail":   return "Inspecting segment…"
+            case "score_hook_candidates": return "Scoring hook candidates…"
             case "find_black_frames":    return "Looking for black frames…"
             case "find_empty_frames":    return "Looking for empty shots…"
             case "find_scene_changes":   return "Finding scene cuts…"
@@ -10188,6 +10191,7 @@ final class MediaCoreViewModel: ObservableObject {
         case "find_by_transcript":   return "在字幕里找"
         case "get_timeline_summary": return "看下时间线"
         case "get_segment_detail":   return "查下片段"
+        case "score_hook_candidates": return "给开场金句打分"
         case "find_black_frames":    return "找黑场"
         case "find_empty_frames":    return "找空镜"
         case "find_scene_changes":   return "找镜头切点"
@@ -10389,6 +10393,7 @@ final class MediaCoreViewModel: ObservableObject {
             AgentQuery.findByTranscriptTool,
             AgentQuery.getTimelineSummaryTool,
             AgentQuery.getSegmentDetailTool,
+            AgentHook.scoreHookCandidatesTool,
             VisualAgentQuery.findBlackFramesTool,
             VisualAgentQuery.findEmptyFramesTool,
             VisualAgentQuery.findSceneChangesTool,
@@ -11771,6 +11776,64 @@ final class MediaCoreViewModel: ObservableObject {
             return AgentToolOutcome(
                 resultJSON: out,
                 userSummary: nil,
+                checkpointID: nil
+            )
+
+        case "score_hook_candidates":
+            // Reject in scoped chat: scope means the user has narrowed the
+            // agent to specific segments / ranges, so scanning every source
+            // for an unrelated hook violates that intent and would produce
+            // candidates that `insertSourceClip` (PR 2) will refuse anyway.
+            if !chatAttachmentScope.isEmpty {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError("score_hook_candidates needs the full project — detach the scope chips above the chat box and try again."),
+                    userSummary: "⚠️ 选定范围下不能跨素材找开场金句，先取消上方附件再试。",
+                    checkpointID: nil
+                )
+            }
+            let topKRaw = (args["top_k"] as? Int) ?? Int((args["top_k"] as? Double) ?? 20)
+            let topK = max(1, min(50, topKRaw))
+            let minDuration = (args["min_duration"] as? Double) ?? 2.5
+            let maxDuration = (args["max_duration"] as? Double) ?? 10.0
+            let idealDuration = (args["ideal_duration"] as? Double) ?? 5.0
+            let bounds = HookCandidateScorer.Bounds(
+                minDuration: minDuration,
+                maxDuration: maxDuration,
+                idealDuration: idealDuration
+            )
+            guard bounds.isValid else {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError("Invalid bounds: require 0 < min_duration ≤ ideal_duration ≤ max_duration."),
+                    userSummary: "⚠️ 时长参数不合法（min ≤ ideal ≤ max）",
+                    checkpointID: nil
+                )
+            }
+            let sources = AgentHook.collectSources(from: records)
+            let extraTerms = (args["extra_filler_terms"] as? [String]) ?? []
+            let (candidates, stats) = HookCandidateScorer.scoreSources(
+                sources,
+                fillerTerms: AgentDefaults.fillerWords + extraTerms,
+                bounds: bounds,
+                topK: topK
+            )
+            let summary: String
+            if candidates.isEmpty {
+                if stats.sourcesScanned == 0 {
+                    summary = "🎯 还没有可分析的素材"
+                } else if stats.sourcesWithoutTranscript == stats.sourcesScanned {
+                    summary = "🎯 没有可用转录 — 先 First Cut 或转录后再试"
+                } else {
+                    summary = "🎯 没找到合适的开场金句候选"
+                }
+            } else {
+                summary = "🎯 找到 \(candidates.count) 条开场金句候选"
+            }
+            return AgentToolOutcome(
+                resultJSON: AgentToolJSON.encode(AgentHook.Result(
+                    candidates: candidates,
+                    stats: stats
+                )),
+                userSummary: summary,
                 checkpointID: nil
             )
 

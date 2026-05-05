@@ -216,6 +216,19 @@ public struct AudioEnergyCurve: Codable, Equatable, Sendable {
     public var globalPeak: Double {
         Double(values.max() ?? 0)
     }
+
+    /// Percentile of the energy distribution. `p` is clamped to `[0, 1]`.
+    /// Returns `0` for empty curves. Used as a robust loudness denominator
+    /// for hook scoring — a single freak loud frame (cough, mic bump,
+    /// laughter) won't deflate every other candidate's energy score the
+    /// way `globalPeak` does. Rule of thumb: pass `p = 0.95`.
+    public func percentile(_ p: Double) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let pp = Swift.max(0, Swift.min(1, p))
+        let sorted = values.sorted()
+        let idx = Int((pp * Double(sorted.count - 1)).rounded(.toNearestOrEven))
+        return Double(sorted[idx])
+    }
 }
 
 /// RGBA color in sRGB-ish space, components in 0…1. Codable so it can
