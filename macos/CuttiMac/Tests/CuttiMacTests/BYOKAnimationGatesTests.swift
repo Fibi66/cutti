@@ -257,6 +257,28 @@ final class BYOKAnimationGatesTests: XCTestCase {
         XCTAssertEqual(visible.count, 2)
     }
 
+    // MARK: - 3b. Experimental confirmation gate
+
+    /// Animation-class generations have to pass the experimental
+    /// confirmation dialog because the Remotion compose pipeline can
+    /// still produce broken / unstable output and each attempt burns
+    /// cloud credits.
+    func test_experimentalConfirmation_requiredForAnimationKinds() {
+        XCTAssertTrue(BRollSuggestionStrip.requiresExperimentalConfirmation(.animation),
+                      "Generate animation must pop the experimental confirmation dialog.")
+        XCTAssertTrue(BRollSuggestionStrip.requiresExperimentalConfirmation(.other),
+                      ".other routes through the same Remotion compose path as .animation and must be gated identically.")
+    }
+
+    /// FLUX image generation is the proven path. Forcing a dialog
+    /// there would just train users to click through every confirm.
+    func test_experimentalConfirmation_skippedForImageFamily() {
+        for kind: BRollSuggestion.Kind in [.image, .chart, .mapGraphic, .dataTable, .screenRecording] {
+            XCTAssertFalse(BRollSuggestionStrip.requiresExperimentalConfirmation(kind),
+                           "Image-family kind \(kind) must NOT require experimental confirmation.")
+        }
+    }
+
     // MARK: - 4. Workflow preset filter
 
     func test_presets_byok_excludesGenOverlayTitles() {

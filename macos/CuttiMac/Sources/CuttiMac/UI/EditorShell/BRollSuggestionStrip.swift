@@ -45,6 +45,24 @@ struct BRollSuggestionStrip: View {
     /// clicks don't spawn duplicate renders / image generations.
     @State private var generatingIDs: Set<UUID> = []
 
+    /// In-flight experimental-confirmation request for an animation
+    /// generation. Set when the user clicks "Generate animation"; the
+    /// `confirmationDialog` reads from it and only invokes
+    /// `onGenerate` when the user confirms. Image-family hints
+    /// bypass the dialog entirely (they're a mature path).
+    @State private var pendingAnimationConfirmation: PendingAnimationConfirmation? = nil
+
+    /// Captured hint + the user's edited prompt text at the moment the
+    /// experimental confirmation was raised. We need both because the
+    /// edit textfield isn't owned by the dialog and we don't want a
+    /// late re-edit after the user clicked Generate to silently
+    /// rewrite the request.
+    fileprivate struct PendingAnimationConfirmation: Identifiable {
+        let id: UUID
+        let hint: TimelineCreativeActions.BRollSuggestionHint
+        let editedPrompt: String
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             // Invisible backing so the strip always claims layout
@@ -59,6 +77,30 @@ struct BRollSuggestionStrip: View {
             }
         }
         .frame(width: width, height: BRollSuggestionStrip.stripHeight, alignment: .topLeading)
+        // Experimental gate. Animation generation can produce unstable
+        // / low-quality / unrenderable output today, so every click on
+        // "Generate animation" is wrapped in an explicit confirmation.
+        // Image-family generations bypass this — they're mature and
+        // the warning would just be noise.
+        .confirmationDialog(
+            L("Experimental: animation generation"),
+            isPresented: Binding(
+                get: { pendingAnimationConfirmation != nil },
+                set: { if !$0 { pendingAnimationConfirmation = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingAnimationConfirmation
+        ) { pending in
+            Button(L("Generate anyway")) {
+                triggerGenerate(hint: pending.hint, editedPrompt: pending.editedPrompt)
+                pendingAnimationConfirmation = nil
+            }
+            Button(L("Cancel"), role: .cancel) {
+                pendingAnimationConfirmation = nil
+            }
+        } message: { _ in
+            Text(L("Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?"))
+        }
     }
 
     /// Filters out animation-kind hints when the cloud animation
@@ -86,6 +128,38 @@ struct BRollSuggestionStrip: View {
                 return false
             }
         }
+    }
+
+    /// Whether a given suggestion kind has to pass the "experimental"
+    /// confirmation dialog before generation kicks off. Animation /
+    /// other go through Remotion compose — currently unstable. The
+    /// image-family kinds run through the proven FLUX path and don't
+    /// need the gate. Exposed for tests so the routing stays pinned
+    /// without rendering UI.
+    static func requiresExperimentalConfirmation(_ kind: BRollSuggestion.Kind) -> Bool {
+        switch kind {
+        case .animation, .other:
+            return true
+        case .image, .chart, .mapGraphic, .dataTable, .screenRecording:
+            return false
+        }
+    }
+
+    /// The actual "Generate" call. Lives in its own method because
+    /// both the direct (image) path and the post-confirmation
+    /// (animation) path need to flip `generatingIDs`, fire the
+    /// callback, schedule the auto-release, and dismiss the popover.
+    private func triggerGenerate(
+        hint: TimelineCreativeActions.BRollSuggestionHint,
+        editedPrompt: String
+    ) {
+        guard let onGenerate else { return }
+        generatingIDs.insert(hint.id)
+        onGenerate(hint, editedPrompt)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            generatingIDs.remove(hint.id)
+        }
+        activeID = nil
     }
 
     static let stripHeight: CGFloat = 18
@@ -164,6 +238,22 @@ struct BRollSuggestionStrip: View {
                     .foregroundStyle(EditorShellStyle.agentReady)
                 Text(hint.kind.label)
                     .font(.system(size: 13, weight: .semibold))
+                if Self.requiresExperimentalConfirmation(hint.kind) {
+                    Text(L("Experimental"))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.orange.opacity(0.5), lineWidth: 0.5)
+                        )
+                        .help(L("Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits."))
+                }
             }
             // Editable prompt: the user can tweak the AI's suggestion
             // before kicking off the expensive generation step.
@@ -209,20 +299,23 @@ struct BRollSuggestionStrip: View {
                 let buttonIcon = generateButtonIcon(for: hint.kind)
 
                 Button {
-                    guard let onGenerate else { return }
                     let edited = editedBinding.wrappedValue
-                    generatingIDs.insert(hint.id)
-                    onGenerate(hint, edited)
-                    // Release the "generating" lock after a short delay;
-                    // the actual render/generation is async inside the
-                    // view-model and surfaces its own banner on failure.
-                    // Keeping this timer-based means we don't need to
-                    // thread completion callbacks all the way through
-                    // the timeline bindings.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                        generatingIDs.remove(hint.id)
+                    if Self.requiresExperimentalConfirmation(hint.kind) {
+                        // Stash the click + the prompt the user just
+                        // typed, dismiss the bubble's popover (so the
+                        // dialog isn't stacked behind it), and let the
+                        // confirmationDialog on the strip drive the
+                        // rest. `triggerGenerate` runs only after the
+                        // user confirms.
+                        pendingAnimationConfirmation = PendingAnimationConfirmation(
+                            id: hint.id,
+                            hint: hint,
+                            editedPrompt: edited
+                        )
+                        activeID = nil
+                    } else {
+                        triggerGenerate(hint: hint, editedPrompt: edited)
                     }
-                    activeID = nil
                 } label: {
                     Label(buttonLabel, systemImage: buttonIcon)
                 }

@@ -650,6 +650,11 @@
 "Unlabeled" = "Unlabeled";
 "Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback.";
 "Generate animation" = "Generate animation";
+"Experimental" = "Experimental";
+"Experimental: animation generation" = "Experimental: animation generation";
+"Generate anyway" = "Generate anyway";
+"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?" = "Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?";
+"Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits." = "Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits.";
 "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline" = "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline";
 "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead." = "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead.";
 "e.g. bar chart counting from 30 to 90" = "e.g. bar chart counting from 30 to 90";

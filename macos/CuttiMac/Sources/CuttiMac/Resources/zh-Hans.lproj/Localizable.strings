@@ -649,6 +649,11 @@
 "Unlabeled" = "未标注";
 "Your current speech language defaults to Whisper for tighter timing.\nDownload the model once, or continue with Apple Speech as a fallback." = "你当前的语音语言默认使用 Whisper 以获得更精准的时间轴。\n下载一次模型即可使用，或继续使用 Apple Speech 作为回退方案。";
 "Generate animation" = "生成动画";
+"Experimental" = "实验性";
+"Experimental: animation generation" = "实验性功能：动画生成";
+"Generate anyway" = "继续生成";
+"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?" = "动画生成仍处于实验阶段——AI 生成的动画可能不稳定、质量参差，甚至无法渲染，每次尝试都会消耗云端额度。是否继续？";
+"Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits." = "动画生成可能产出不稳定或质量较差的结果。每次尝试都会消耗云端额度。";
 "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline" = "描述一段动画（例如计数器、柱状图），生成后落到时间线上";
 "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead." = "描述你想要的动画。系统会基于技能包生成一段全新的 Remotion 合成，并在当前播放头位置渲染为透明动画。";
 "e.g. bar chart counting from 30 to 90" = "例如：柱状图从 30 计数到 90";
