@@ -117,76 +117,96 @@ actor ImageGenerationService {
         size: ImageGenerationSize,
         task: String? = nil
     ) async throws -> Data {
-        // `configurationFromDefaults()` is now safe to call from any
-        // actor — credentials live in a lock-protected snapshot — so we
-        // no longer need to bounce through `MainActor.run` here.
-        let config = RelayClient.configurationFromDefaults()
-        guard !config.relayBaseURL.isEmpty else {
-            throw ImageGenerationError.relayNotConfigured
-        }
-
-        let base = config.relayBaseURL.hasSuffix("/")
-            ? String(config.relayBaseURL.dropLast())
-            : config.relayBaseURL
-        guard let url = URL(string: "\(base)/v1/images/generations") else {
-            throw ImageGenerationError.relayNotConfigured
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        // Match OpenAIClient's jwt:/dev: prefix convention so we never
-        // diverge on what header gets set. Kept inline here (instead of
-        // factored out) to avoid coupling ImageGenerationService back
-        // into OpenAIClient's type.
-        let token = config.apiKey
-        if token.hasPrefix("jwt:") {
-            request.setValue("Bearer \(String(token.dropFirst(4)))", forHTTPHeaderField: "Authorization")
-        } else if token.hasPrefix("dev:") {
-            request.setValue(String(token.dropFirst(4)), forHTTPHeaderField: "X-Cutti-Dev-Token")
-        } else if !token.isEmpty {
-            request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
-        }
-
-        let body: [String: Any] = {
-            var b: [String: Any] = [
-                "prompt": prompt,
-                // Send the abstract aspect; the relay owns the mapping to
-                // whatever actual pixel dimensions the current upstream
-                // model supports. Do NOT send width/height — old shipped
-                // .app builds that hardcoded pixel values is exactly what
-                // this refactor avoids.
-                "aspect": size.rawValue,
-            ]
-            if let tag = task, !tag.isEmpty {
-                // Per-feature attribution. Validated against an allowlist
-                // regex on the relay; older backends ignore unknown keys
-                // so this is safe to send unconditionally.
-                b["task"] = tag
+        // Outer loop allows a single transparent JWT rotation when the
+        // first attempt 401s with an expired session token. The user
+        // is signed in — their JWT just aged out — so rather than
+        // surface "Please sign in from Settings.", we ask
+        // RelaySession.rotate() for a fresh token and retry once.
+        // Limited to one rotation per call to avoid loops.
+        var didRotateJWT = false
+        while true {
+            let config = RelayClient.configurationFromDefaults()
+            guard !config.relayBaseURL.isEmpty else {
+                throw ImageGenerationError.relayNotConfigured
             }
-            return b
-        }()
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 120
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ImageGenerationError.fileIOFailed(error.localizedDescription)
-        }
+            let base = config.relayBaseURL.hasSuffix("/")
+                ? String(config.relayBaseURL.dropLast())
+                : config.relayBaseURL
+            guard let url = URL(string: "\(base)/v1/images/generations") else {
+                throw ImageGenerationError.relayNotConfigured
+            }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw ImageGenerationError.invalidResponse
-        }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Forward credit headers to the rest of the app so the quota UI
-        // updates without waiting for /v1/me. Same behavior as OpenAIClient.
-        RelayCreditsNotification.postIfPresent(from: http)
+            // Match OpenAIClient's jwt:/dev: prefix convention so we never
+            // diverge on what header gets set. Kept inline here (instead of
+            // factored out) to avoid coupling ImageGenerationService back
+            // into OpenAIClient's type.
+            let token = config.apiKey
+            if token.hasPrefix("jwt:") {
+                request.setValue("Bearer \(String(token.dropFirst(4)))", forHTTPHeaderField: "Authorization")
+            } else if token.hasPrefix("dev:") {
+                request.setValue(String(token.dropFirst(4)), forHTTPHeaderField: "X-Cutti-Dev-Token")
+            } else if !token.isEmpty {
+                request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
+            }
 
-        guard http.statusCode == 200 else {
+            let body: [String: Any] = {
+                var b: [String: Any] = [
+                    "prompt": prompt,
+                    // Send the abstract aspect; the relay owns the mapping to
+                    // whatever actual pixel dimensions the current upstream
+                    // model supports. Do NOT send width/height — old shipped
+                    // .app builds that hardcoded pixel values is exactly what
+                    // this refactor avoids.
+                    "aspect": size.rawValue,
+                ]
+                if let tag = task, !tag.isEmpty {
+                    // Per-feature attribution. Validated against an allowlist
+                    // regex on the relay; older backends ignore unknown keys
+                    // so this is safe to send unconditionally.
+                    b["task"] = tag
+                }
+                return b
+            }()
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.timeoutInterval = 120
+
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: request)
+            } catch {
+                throw ImageGenerationError.fileIOFailed(error.localizedDescription)
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                throw ImageGenerationError.invalidResponse
+            }
+
+            // Forward credit headers to the rest of the app so the quota UI
+            // updates without waiting for /v1/me. Same behavior as OpenAIClient.
+            RelayCreditsNotification.postIfPresent(from: http)
+
+            if http.statusCode == 200 {
+                return try Self.decodeOpenAIShapeImageResponse(data)
+            }
+
+            // 401 from the cuttiCloud relay → try a one-shot JWT
+            // rotation before giving up. Mirrors OpenAIClient's
+            // chatCompletion auto-rotate path.
+            if !didRotateJWT,
+               http.statusCode == 401,
+               token.hasPrefix("jwt:") {
+                didRotateJWT = true
+                if await OpenAIClient.attemptRelayJWTRotation() {
+                    continue
+                }
+            }
+
             // Map the relay's typed error envelope (quota_exceeded /
             // email_not_verified / unauthorized) to a friendly
             // localized message. We DELIBERATELY never embed the raw
@@ -203,8 +223,6 @@ actor ImageGenerationService {
                 L("Image generation is temporarily unavailable. Please try again in a moment.")
             )
         }
-
-        return try Self.decodeOpenAIShapeImageResponse(data)
     }
 
     // MARK: - Custom (BYOK) path

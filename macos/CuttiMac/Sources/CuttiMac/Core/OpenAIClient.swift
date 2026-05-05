@@ -17,7 +17,10 @@ enum OpenAIClientError: Error, LocalizedError, Sendable {
     case relayEmailNotVerified
     /// Relay rejected the request because the user has used up their
     /// monthly credit allowance. `resetAt` is the server-provided
-    /// epoch when the counter rolls over (1st of next month).
+    /// `period_reset_at` epoch — the next refill anchored to the
+    /// user's subscription `started_at` day, NOT the 1st of the
+    /// calendar month (e.g. signed up on the 17th → resets on the
+    /// 17th of every month). See backend `personalNextResetAt`.
     case relayQuotaExceeded(used: Int?, quota: Int?, resetAt: Date?)
 
     /// True for errors that a short retry might recover from (transient
@@ -96,16 +99,41 @@ enum OpenAIClientError: Error, LocalizedError, Sendable {
         } else {
             quotaText = "—"
         }
-        // We intentionally don't show a concrete reset date. The
-        // server resets on the 1st of each calendar month in its
-        // own timezone, and rendering "Jan 1, 2025" in the user's
-        // locale risks being a day off. A generic sentence is both
-        // simpler and actually correct.
-        _ = resetAt
+        // Render the server-provided `period_reset_at` as a relative
+        // countdown ("Resets in 3 days") rather than an absolute date —
+        // the server's reset anchor is the user's subscription start
+        // day (not necessarily the 1st), and timezone/locale calendar
+        // mismatch would otherwise flip a "Jan 17" into "Jan 16" for
+        // users west of the server. The relative phrase is what
+        // Settings → Subscription already shows next to the progress
+        // bar, so the 402 banner now agrees with it.
+        if let resetAt, let phrase = resetCountdownPhrase(for: resetAt) {
+            let template = L(
+                "You've used your AI credits for this month (%1$@). %2$@. Upgrade to a paid plan for more."
+            )
+            return String(format: template, quotaText, phrase)
+        }
+        // No reset date provided (older relay responses, or pre-auth
+        // callers). Fall back to a date-free sentence — never invent
+        // a reset day.
         let template = L(
-            "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets."
+            "You've used your AI credits for this month (%@). Upgrade to a paid plan for more."
         )
         return String(format: template, quotaText)
+    }
+
+    /// "Resets today" / "Resets in 1 day" / "Resets in N days",
+    /// localized. Mirrors `SubscriptionSection.resetCountdownText` so
+    /// the 402 banner and the Settings countdown agree on wording.
+    /// Returns nil only if the input is so far past that day-count
+    /// arithmetic fails — caller treats nil as "skip the phrase".
+    private static func resetCountdownPhrase(for resetDate: Date) -> String? {
+        let now = Date()
+        if resetDate <= now { return L("Resets today") }
+        let days = Calendar.current.dateComponents([.day], from: now, to: resetDate).day ?? 0
+        if days <= 0 { return L("Resets today") }
+        if days == 1 { return L("Resets in 1 day") }
+        return L("Resets in %d days", days)
     }
 }
 
@@ -341,6 +369,19 @@ struct OpenAIClient: Sendable {
         task: TaskHint? = nil
     ) async throws -> ChatCompletionResponse {
         var lastError: OpenAIClientError?
+        // One-shot JWT rotation budget. Cutti relay 401s carry
+        // `reason: expired` once the user's session JWT has aged out.
+        // Rather than show a still-signed-in user "Please sign in
+        // from Settings.", we silently swap the token via
+        // /v1/auth/refresh and retry the same request. Limited to a
+        // single rotation per call to avoid loops if the refresh
+        // itself succeeds but the next request still 401s for some
+        // unrelated reason.
+        var didRotateJWT = false
+        // Set on the rotation path so the retry uses the fresh token
+        // instead of `self.configuration.apiKey` (which captures the
+        // OLD bearer at OpenAIClient construction time).
+        var rotatedConfig: OpenAIConfiguration?
         for attempt in 0...maxRetries {
             do {
                 return try await performChatCompletion(
@@ -348,10 +389,25 @@ struct OpenAIClient: Sendable {
                     tools: tools,
                     toolChoice: toolChoice,
                     temperature: temperature,
-                    task: task
+                    task: task,
+                    configurationOverride: rotatedConfig
                 )
             } catch let error as OpenAIClientError {
                 lastError = error
+                if !didRotateJWT,
+                   configuration.provider == .cuttiCloud,
+                   case .relayAuthRequired = error {
+                    didRotateJWT = true
+                    if await Self.attemptRelayJWTRotation() {
+                        // Rebuild the config so the retry picks up the
+                        // new JWT from RelaySession's snapshot. Stay on
+                        // the same `attempt` index — rotation isn't an
+                        // exponential-backoff retry, it's a one-shot
+                        // "your token is stale, here's a fresh one".
+                        rotatedConfig = RelayClient.configurationFromDefaults()
+                        continue
+                    }
+                }
                 guard error.isRetryable, attempt < maxRetries else { throw error }
                 let delay = baseRetryDelay * pow(2.0, Double(attempt))
                 let jitter = Double.random(in: 0...(delay * 0.25))
@@ -374,8 +430,10 @@ struct OpenAIClient: Sendable {
         tools: [ToolDefinition]? = nil,
         toolChoice: ToolChoice? = nil,
         temperature: Double = 0.7,
-        task: TaskHint? = nil
+        task: TaskHint? = nil,
+        configurationOverride: OpenAIConfiguration? = nil
     ) async throws -> ChatCompletionResponse {
+        let configuration = configurationOverride ?? self.configuration
         let base = configuration.relayBaseURL.hasSuffix("/")
             ? String(configuration.relayBaseURL.dropLast())
             : configuration.relayBaseURL
@@ -505,6 +563,29 @@ struct OpenAIClient: Sendable {
         }
 
         return try parseResponse(data)
+    }
+
+    /// Attempt one JWT rotation against the relay. Safe to call from
+    /// any actor — `RelaySession.rotate` itself is `@MainActor`-bound,
+    /// but `await` from a non-isolated context just hops over.
+    ///
+    /// Returns true if `RelaySession`'s in-memory snapshot now holds a
+    /// fresh token that the next request will pick up. Returns false if
+    /// there was no token to rotate (signed-out / dev-token mode), or
+    /// if the refresh endpoint itself rejected (>7-day refresh window
+    /// has elapsed, or network is unreachable).
+    ///
+    /// Used by every cuttiCloud relay caller (chat, image-gen,
+    /// remotion) as the first reaction to a 401 — rather than telling
+    /// a still-signed-in user to "Please sign in from Settings.", we
+    /// silently swap the token and retry once. If rotation itself
+    /// fails the original 401 surfaces unchanged.
+    static func attemptRelayJWTRotation() async -> Bool {
+        do {
+            return try await RelaySession.shared.rotate()
+        } catch {
+            return false
+        }
     }
 
     /// Maps a non-200 relay response body (`{"error": "...", ...}`) to
