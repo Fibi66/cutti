@@ -790,6 +790,12 @@ struct ContentView: View {
                     },
                     onResizeSpeakerLabel: { id, size in
                         viewModel.resizeSpeakerLabel(id: id, to: size)
+                    },
+                    onAssignSpeaker: { ids, speakerID in
+                        viewModel.setSpeakerForCues(ids: ids, speakerID: speakerID)
+                    },
+                    onAssignNewSpeaker: { ids in
+                        viewModel.assignNewSpeakerToCues(ids: ids)
                     }
                 )
                 .frame(minHeight: 180)

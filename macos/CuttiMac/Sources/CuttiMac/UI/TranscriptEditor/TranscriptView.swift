@@ -36,6 +36,14 @@ struct TranscriptView: View {
     /// Resize a speaker's on-video name label. Point size or nil to
     /// reset to the renderer default. Persisted by the view model.
     var onResizeSpeakerLabel: (Int, Double?) -> Void = { _, _ in }
+    /// Reassign one or more cues to an existing speaker. Called from
+    /// the cue right-click menu when diarization mislabeled the line.
+    /// IDs are the cues to mutate; `speakerID` is the target.
+    var onAssignSpeaker: ([UUID], Int) -> Void = { _, _ in }
+    /// Reassign one or more cues to a brand-new speaker (next free
+    /// "Speaker N+1") — for cues whose speaker isn't in the current
+    /// registry yet.
+    var onAssignNewSpeaker: ([UUID]) -> Void = { _ in }
 
     @State private var findText: String = ""
     @State private var replaceText: String = ""
@@ -487,6 +495,7 @@ struct TranscriptView: View {
                     selected: selectedCueIDs,
                     editing: editingCueID,
                     editingDraft: $editingDraft,
+                    speakers: speakers,
                     onClickCue: { id, mods in
                         handleCueClick(id: id, modifiers: mods)
                     },
@@ -516,6 +525,29 @@ struct TranscriptView: View {
                             selectedCueIDs.removeAll()
                         }
                         selectionAnchorID = nil
+                    },
+                    onContextAssignSpeaker: { id, speakerID in
+                        // Same selection-snap convention as Delete above —
+                        // right-click on a member of the active selection
+                        // reassigns every selected cue, otherwise just the
+                        // right-clicked cue. Selection is preserved (the
+                        // cues are still alive after a reassignment).
+                        if selectedCueIDs.contains(id) {
+                            onAssignSpeaker(Array(selectedCueIDs), speakerID)
+                        } else {
+                            selectedCueIDs = [id]
+                            selectionAnchorID = id
+                            onAssignSpeaker([id], speakerID)
+                        }
+                    },
+                    onContextAssignNewSpeaker: { id in
+                        if selectedCueIDs.contains(id) {
+                            onAssignNewSpeaker(Array(selectedCueIDs))
+                        } else {
+                            selectedCueIDs = [id]
+                            selectionAnchorID = id
+                            onAssignNewSpeaker([id])
+                        }
                     },
                     onRestoreTombstone: onRestoreTombstone
                 )
@@ -691,10 +723,16 @@ private struct FlowingCues: View {
     let selected: Set<UUID>
     let editing: UUID?
     @Binding var editingDraft: String
+    /// Current speaker registry — used to populate the "Speaker"
+    /// submenu in a cue's right-click menu so users can reassign a
+    /// mislabeled line.
+    let speakers: [Speaker]
     var onClickCue: (UUID, EventModifiers) -> Void
     var onBeginEdit: (UUID) -> Void
     var onCommit: (UUID) -> Void
     var onContextDelete: (UUID) -> Void
+    var onContextAssignSpeaker: (UUID, Int) -> Void
+    var onContextAssignNewSpeaker: (UUID) -> Void
     var onRestoreTombstone: (UUID) -> Void
 
     var body: some View {
@@ -735,6 +773,8 @@ private struct FlowingCues: View {
                 .contextMenu {
                     Button { onBeginEdit(cue.id) } label: { T("Edit") }
                     Divider()
+                    speakerMenu(for: cue)
+                    Divider()
                     Button(selected.contains(cue.id) && selected.count > 1
                            ? String(format: L("Delete %d cues"), selected.count)
                            : L("Delete"),
@@ -742,6 +782,35 @@ private struct FlowingCues: View {
                         onContextDelete(cue.id)
                     }
                 }
+        }
+    }
+
+    /// Right-click submenu listing every speaker in the current
+    /// registry plus a "New speaker" escape hatch. Selecting an entry
+    /// reassigns the right-clicked cue (or, if the cue is part of the
+    /// active multi-selection, every selected cue) to that speaker.
+    /// The current assignment is shown with a leading checkmark.
+    @ViewBuilder
+    private func speakerMenu(for cue: ComposedSubtitle) -> some View {
+        Menu(L("Speaker")) {
+            ForEach(speakers, id: \.id) { sp in
+                Button {
+                    onContextAssignSpeaker(cue.id, sp.id)
+                } label: {
+                    if cue.speakerID == sp.id {
+                        Label(sp.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(sp.displayName)
+                    }
+                }
+            }
+            if !speakers.isEmpty { Divider() }
+            Button {
+                onContextAssignNewSpeaker(cue.id)
+            } label: {
+                let nextID = (speakers.map(\.id).max() ?? -1) + 1
+                Text(String(format: L("New speaker (Speaker %d)"), nextID + 1))
+            }
         }
     }
 

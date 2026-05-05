@@ -1020,3 +1020,4 @@
 "Cutti checks for new versions in the background once per day." = "Cutti 每天在后台检查一次新版本。";
 "Automatically install updates" = "自动安装更新";
 "Download and install new versions on quit, without asking. Off by default." = "退出 Cutti 时无需确认即可下载并安装新版本。默认关闭。";
+"New speaker (Speaker %d)" = "新建说话人（说话人 %d）";

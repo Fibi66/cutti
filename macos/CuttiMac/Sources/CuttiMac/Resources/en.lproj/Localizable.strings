@@ -1019,3 +1019,4 @@
 "Cutti checks for new versions in the background once per day." = "Cutti checks for new versions in the background once per day.";
 "Automatically install updates" = "Automatically install updates";
 "Download and install new versions on quit, without asking. Off by default." = "Download and install new versions on quit, without asking. Off by default.";
+"New speaker (Speaker %d)" = "New speaker (Speaker %d)";

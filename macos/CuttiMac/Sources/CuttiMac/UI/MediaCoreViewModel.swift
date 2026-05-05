@@ -6057,6 +6057,48 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
+    /// Reassign the speaker label of one or more transcript cues. Used
+    /// by the transcript right-click menu when diarization mislabeled a
+    /// segment (or didn't run at all). All matching cues are mutated in
+    /// a single revision so undo treats the reassignment as one step.
+    /// Pass `speakerID = nil` to clear the assignment.
+    func setSpeakerForCues(ids: [UUID], speakerID: Int?) {
+        guard !ids.isEmpty else { return }
+        let idSet = Set(ids)
+        var didChange = false
+        for segIndex in timelineSegments.indices {
+            for subIndex in timelineSegments[segIndex].subtitles.indices {
+                let entry = timelineSegments[segIndex].subtitles[subIndex]
+                guard idSet.contains(entry.id) else { continue }
+                guard entry.speakerID != speakerID else { continue }
+                if !didChange {
+                    pushRevision(
+                        label: "Reassign speaker",
+                        trigger: .userEdit(description: "reassign-speaker")
+                    )
+                    didChange = true
+                }
+                timelineSegments[segIndex].subtitles[subIndex].speakerID = speakerID
+            }
+        }
+        if didChange {
+            rebuildComposedSubtitles()
+        }
+    }
+
+    /// Allocate the next free speaker ID and assign it to the given
+    /// cues. The new ID is `(max existing speakerID across cues) + 1`,
+    /// so the registry rebuild surfaces it as the next "Speaker N+1".
+    /// Returns the assigned ID for callers that want to log it.
+    @discardableResult
+    func assignNewSpeakerToCues(ids: [UUID]) -> Int? {
+        guard !ids.isEmpty else { return nil }
+        let existing = composedSubtitles.compactMap(\.speakerID)
+        let newID = (existing.max() ?? -1) + 1
+        setSpeakerForCues(ids: ids, speakerID: newID)
+        return newID
+    }
+
     /// Build the speaker registry for a set of cues, layering user
     /// renames on top. When cues exist but none have a speakerID
     /// (diarization hasn't been run), synthesize a single default
