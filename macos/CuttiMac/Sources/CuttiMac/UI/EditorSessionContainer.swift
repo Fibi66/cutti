@@ -127,7 +127,8 @@ private struct EditorWithBackButton: View {
                 )
                 .disabled(!viewModel.canExport || viewModel.isExporting)
             }
-            .padding(.horizontal, EditorShellStyle.panelPadding)
+            .padding(.leading, EditorShellStyle.trafficLightInset)
+            .padding(.trailing, EditorShellStyle.panelPadding)
             .padding(.vertical, 8)
             .background(EditorShellStyle.backgroundApp)
             .overlay(alignment: .bottom) {

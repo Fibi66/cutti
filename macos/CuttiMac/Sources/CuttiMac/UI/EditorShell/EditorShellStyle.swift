@@ -200,6 +200,14 @@ enum EditorShellStyle {
     static let accent                = accentSolid
     static let panelRadius: CGFloat  = radiusLarge
     static let panelPadding: CGFloat = space4
+    /// Leading inset reserved for the macOS traffic-light buttons
+    /// (close / minimize / zoom) when running with
+    /// `.windowStyle(.hiddenTitleBar)`. Three 14×14 buttons + their
+    /// inter-button gaps live in the top-left of the window content
+    /// area; topbars that sit at y=0 must shift their content right
+    /// by this amount so the back / project / brand chips don't slide
+    /// underneath the buttons.
+    static let trafficLightInset: CGFloat = 80
 
     // MARK: - Agent tone colours
     // Kept as distinct "status" hues — these are semantic (working /

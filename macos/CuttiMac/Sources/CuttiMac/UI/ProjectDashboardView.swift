@@ -40,7 +40,8 @@ struct ProjectDashboardView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                 }
-                .padding(.horizontal, 40)
+                .padding(.leading, max(40, EditorShellStyle.trafficLightInset))
+                .padding(.trailing, 40)
                 .padding(.vertical, 24)
                 .background(EditorShellStyle.chromeBackground)
 

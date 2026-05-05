@@ -338,6 +338,13 @@ struct CuttiMacApp: App {
         }
         .defaultSize(width: 1440, height: 900)
         .commands { EditCommands() }
+        // Hide the system title bar so the project / dashboard topbar
+        // sits flush at the top of the window — Figma / 剪映 style.
+        // Traffic-light buttons remain at their default top-left
+        // position; the topbars below add explicit leading padding
+        // to leave room for them, see `EditorWithBackButton` and
+        // `ProjectDashboardView`.
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             SettingsView()
