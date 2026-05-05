@@ -42,13 +42,18 @@ enum EditorLanguagePreference: String, CaseIterable, Identifiable, Sendable {
     }
 
     func resolvedPrimaryBackend(fallback: Locale) -> SpeechRecognitionBackend {
+        // Whisper is the default for both languages now: Apple SFSpeech
+        // accumulates per-segment timing drift on long Chinese files
+        // (subtitles end up arriving seconds before the audio in the
+        // final cut), and its phrase-level substring grouping forces
+        // multi-character cues that show their full text the instant
+        // the first syllable plays. WhisperKit gives genuine per-word
+        // timestamps that stay aligned with the source audio for the
+        // length of the file, which is what we need for editor-grade
+        // subtitle timing. Apple Speech remains as the fallback when
+        // Whisper isn't yet downloaded or fails.
         switch self {
-        case .automatic:
-            let languageCode = fallback.language.languageCode?.identifier.prefix(2).lowercased() ?? "en"
-            return languageCode == "zh" ? .appleSpeech : .whisperKit
-        case .chinese:
-            return .appleSpeech
-        case .english:
+        case .automatic, .chinese, .english:
             return .whisperKit
         }
     }
