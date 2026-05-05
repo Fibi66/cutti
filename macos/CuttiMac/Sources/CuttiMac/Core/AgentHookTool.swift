@@ -80,9 +80,13 @@ enum AgentHook {
                 the user asks the AI to CHOOSE a punchy line for the cold open \
                 (e.g. "AI 自己挑一句开场金句", "帮我挑个 hook"). Don't use it when \
                 the user has already pointed at a specific line — for those, \
-                find_by_transcript is the right tool. The tool only inspects raw \
-                recordings; it does NOT mutate the timeline. Pair the result \
-                with insertSourceClip (via edit_timeline) to actually splice the \
+                find_by_transcript is the right tool. **The tool does NOT mutate \
+                the timeline**, but as a side effect it does persist the latest \
+                shortlist as `highlight` markers on each source recording's \
+                copilot snapshot — so the timeline marker lane shows gold strips \
+                at the candidate positions. These markers replace any prior \
+                `highlight` markers from earlier runs (latest result wins). \
+                Pair the result with add_hook_teaser to actually splice the \
                 chosen candidate into the cold-open slot.
                 """,
             parameters: .init(
@@ -114,6 +118,77 @@ enum AgentHook {
             )
         )
     )
+
+    // MARK: - Highlight markers (PR 7)
+
+    /// Per-record diff produced by `computeHighlightMarkerUpdates`. The
+    /// dispatcher loads a fresh manifest at save time and applies these
+    /// updates on top — never persisting a stale full snapshot.
+    struct HighlightMarkerUpdate: Equatable, Sendable {
+        let recordID: UUID
+        /// Replacement set for the record's `.highlight` markers.
+        /// Sorted by `seconds` ascending so equality comparison is
+        /// stable regardless of candidate input order.
+        let newHighlights: [AICopilotMarker]
+    }
+
+    /// Computes the per-record `.highlight`-marker diff that the
+    /// dispatcher should persist after `score_hook_candidates` finishes.
+    ///
+    /// Replacement semantics: every candidate's `sourceStart` becomes
+    /// one new highlight marker on its source record. Prior `.highlight`
+    /// markers on every record are dropped — the latest tool invocation
+    /// is the source of truth, including for records that *no longer*
+    /// have a candidate (so stale highlights from a previous run are
+    /// cleared globally, not unioned). Other marker kinds (`.scene`,
+    /// `.suggestion`, `.warning`) are never touched.
+    ///
+    /// Records that lack a copilot snapshot are skipped — we do not
+    /// fabricate one just to attach markers. Records whose prior +
+    /// proposed highlight sets match (after sorting) are also skipped,
+    /// so a re-run that produces the same shortlist won't trigger a
+    /// redundant manifest write.
+    ///
+    /// Pure / synchronous so it's testable without instantiating the
+    /// full view model.
+    static func computeHighlightMarkerUpdates(
+        candidates: [HookCandidate],
+        records: [MediaAssetRecord]
+    ) -> [HighlightMarkerUpdate] {
+        let bySource = Dictionary(grouping: candidates, by: \.sourceVideoID)
+        var out: [HighlightMarkerUpdate] = []
+        for record in records {
+            guard let snapshot = record.copilot else { continue }
+            let prevSorted = snapshot.markers
+                .filter { $0.kind == .highlight }
+                .sorted { $0.seconds < $1.seconds }
+            let newSorted: [AICopilotMarker] = (bySource[record.id] ?? []).map { c in
+                AICopilotMarker(
+                    kind: .highlight,
+                    seconds: c.sourceStart,
+                    label: makeHighlightLabel(from: c.text)
+                )
+            }.sorted { $0.seconds < $1.seconds }
+            if prevSorted == newSorted { continue }
+            out.append(HighlightMarkerUpdate(
+                recordID: record.id,
+                newHighlights: newSorted
+            ))
+        }
+        return out
+    }
+
+    /// Normalises a candidate's transcript text into a single-line,
+    /// length-capped marker label. Keeps the persisted manifest readable
+    /// (no embedded newlines/tabs) and bounded (avoids manifest bloat
+    /// when a candidate is unusually long).
+    static func makeHighlightLabel(from text: String) -> String {
+        let collapsed = text
+            .split(whereSeparator: { $0.isNewline || $0 == "\t" })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return String(collapsed.prefix(60))
+    }
 
     // MARK: - add_hook_teaser orchestrator (PR 5)
 
