@@ -706,6 +706,8 @@
 "Analyzing audio" = "分析音频";
 "Asking AI to plan cuts" = "AI 正在规划剪辑";
 "Local analysis complete" = "本地分析完成";
+"Identifying speakers" = "识别说话人";
+"Downloading speaker model…" = "正在下载说话人识别模型…";
 "Analysis failed" = "分析失败";
 "One-click first cut" = "一键第一刀";
 "Trim pauses only" = "只去除停顿";

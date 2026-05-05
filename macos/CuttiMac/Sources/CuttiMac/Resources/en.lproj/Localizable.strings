@@ -707,6 +707,8 @@
 "Analyzing audio" = "Analyzing audio";
 "Asking AI to plan cuts" = "Asking AI to plan cuts";
 "Local analysis complete" = "Local analysis complete";
+"Identifying speakers" = "Identifying speakers";
+"Downloading speaker model…" = "Downloading speaker model…";
 "Analysis failed" = "Analysis failed";
 "One-click first cut" = "One-click first cut";
 "Trim pauses only" = "Trim pauses only";

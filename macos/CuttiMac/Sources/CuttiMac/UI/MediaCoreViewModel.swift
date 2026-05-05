@@ -5166,8 +5166,17 @@ final class MediaCoreViewModel: ObservableObject {
 
     /// Commit `[sourceID: diarization]` onto timeline segments and
     /// composed cues. Runs on MainActor.
+    ///
+    /// - Parameter pushCheckpoint: when `true` (the default, used by the
+    ///   manual "Auto-detect speakers" menu), pushes a dedicated undo
+    ///   checkpoint. When called inline as part of an enclosing
+    ///   pipeline (One-click first cut already pushes its own
+    ///   checkpoint up-front), pass `false` so the diarization step
+    ///   doesn't add a redundant entry the user would have to undo
+    ///   twice to roll back.
     private func applyRealDiarization(
-        _ segMap: [UUID: [SherpaSpeakerSegment]]
+        _ segMap: [UUID: [SherpaSpeakerSegment]],
+        pushCheckpoint: Bool = true
     ) {
         // Global speaker IDs across sources: base offset per source so
         // different sources don't collide. 16 is plenty of headroom.
@@ -5177,7 +5186,9 @@ final class MediaCoreViewModel: ObservableObject {
             baseOffsets[sid] = i * 16
         }
 
-        pushRevision(label: "Auto-detect speakers", trigger: .userEdit(description: "diarize"))
+        if pushCheckpoint {
+            pushRevision(label: "Auto-detect speakers", trigger: .userEdit(description: "diarize"))
+        }
 
         for segIdx in timelineSegments.indices {
             let seg = timelineSegments[segIdx]
@@ -5200,6 +5211,63 @@ final class MediaCoreViewModel: ObservableObject {
 
         rebuildComposedSubtitles()
         speakers = applyNameOverrides(to: SpeakerDiarizer.registry(forCues: composedSubtitles))
+    }
+
+    /// One-click first cut hook: run real-model diarization on every
+    /// timeline source and stamp speaker IDs onto the cues, so the
+    /// transcript view shows distinct speakers as soon as analysis
+    /// finishes (instead of forcing the user to find the manual
+    /// "Auto-detect speakers" menu item afterwards).
+    ///
+    /// Best-effort: any failure (model not yet downloaded, network
+    /// down, audio extraction fails) is logged and swallowed — the
+    /// first cut still completes successfully without speaker labels,
+    /// matching the legacy behavior.
+    ///
+    /// Does NOT push its own undo checkpoint: the enclosing first-cut
+    /// flow already pushed one up-front, and a second checkpoint would
+    /// force the user to undo twice to roll back.
+    private func runDiarizationDuringFirstCut() async {
+        guard !composedSubtitles.isEmpty else {
+            print("🗣 [first-cut diarize] skipped: no composed subtitles yet")
+            return
+        }
+
+        let modelStore = SherpaModelStore.shared
+        if !modelStore.isReady {
+            appendAnalysisAssistantLine(
+                L("Downloading speaker model…"),
+                icon: "person.2.wave.2",
+                tone: .working,
+                persist: true
+            )
+            do {
+                try await modelStore.ensureReady()
+            } catch {
+                print("🗣 [first-cut diarize] skipped: model not ready (\(error))")
+                return
+            }
+        }
+
+        appendAnalysisAssistantLine(
+            L("Identifying speakers"),
+            icon: "person.2.wave.2",
+            tone: .working,
+            persist: true
+        )
+
+        let segMap = await runRealDiarizationForAllSources()
+        guard !segMap.isEmpty else {
+            print("🗣 [first-cut diarize] no segments produced; leaving cues unlabelled")
+            return
+        }
+
+        applyRealDiarization(segMap, pushCheckpoint: false)
+
+        let distinctSpeakers = Set(timelineSegments.flatMap { seg in
+            seg.subtitles.compactMap(\.speakerID)
+        }).count
+        print("🗣 [first-cut diarize] applied — \(distinctSpeakers) distinct speaker(s) on \(timelineSegments.count) segment(s)")
     }
 
     /// Legacy pause-based heuristic, kept as a fallback when the real
@@ -6891,6 +6959,11 @@ final class MediaCoreViewModel: ObservableObject {
                 select(recordID: id)
             }
 
+            // Auto-detect speakers as part of the first cut so the
+            // transcript shows distinct speakers immediately. Best-
+            // effort and silent on failure.
+            await runDiarizationDuringFirstCut()
+
             // Final agent pass: ask the LLM where visual B-roll would
             // reinforce the spoken content. Best-effort — if it fails
             // or the OpenAI config isn't present, we simply skip and
@@ -7859,6 +7932,13 @@ final class MediaCoreViewModel: ObservableObject {
 
             await loadRecords()
             rebuildTimelineSegments()
+
+            // Auto-detect speakers as part of the first cut so the
+            // transcript shows distinct speakers immediately. Best-
+            // effort and silent on failure; happens before the
+            // success bubble so the line "Identifying speakers"
+            // appears in the chat trail above the final summary.
+            await runDiarizationDuringFirstCut()
 
             isAnalyzing = false
             analysisProgress = nil
