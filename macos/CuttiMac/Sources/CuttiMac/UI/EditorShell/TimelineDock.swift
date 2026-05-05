@@ -923,8 +923,21 @@ struct TimelineDock: View {
                                     )
                                     .dropDestination(for: String.self) { items, _ in
                                         defer { primaryInsertionIndex = nil }
-                                        guard let dragged = items.first,
-                                              dragged.hasPrefix("media:"),
+                                        guard let dragged = items.first else { return false }
+                                        // Highlights panel drop on the
+                                        // V1 row background → append a
+                                        // slice at the end of the
+                                        // primary track.
+                                        if let parsed = AICopilotPresentation.parseHighlightPayload(dragged) {
+                                            creativeActions.onInsertSourceSliceAtPrimaryIndex(
+                                                parsed.recordID,
+                                                parsed.start,
+                                                parsed.end,
+                                                segments.count
+                                            )
+                                            return true
+                                        }
+                                        guard dragged.hasPrefix("media:"),
                                               let uuid = UUID(uuidString: String(dragged.dropFirst("media:".count)))
                                         else { return false }
                                         // Dropped on the V1 row background

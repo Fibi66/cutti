@@ -161,6 +161,117 @@ enum AICopilotPresentation {
         return snapshot.markers.sorted { $0.seconds < $1.seconds }
     }
 
+    // MARK: - Highlights aggregation
+
+    /// One highlight marker pinned to its source record. The Highlights
+    /// panel renders these as draggable rows.
+    struct HighlightRow: Equatable, Hashable, Identifiable {
+        let sourceVideoID: UUID
+        let seconds: Double
+        let endSeconds: Double?
+        let label: String
+        let origin: AICopilotMarker.Origin
+        /// Position of the marker within its source record's sorted
+        /// highlights list. Used solely as a tiebreaker for the
+        /// SwiftUI `id` so that two pathological markers with the
+        /// same (record, time, label) still produce distinct row
+        /// identities — duplicate ForEach IDs are undefined in
+        /// SwiftUI even when "shouldn't happen in practice".
+        let sequence: Int
+
+        /// Stable identity across re-renders. We don't have a server-
+        /// assigned marker ID, so we composite the load-bearing fields
+        /// plus the in-snapshot sequence as a tiebreaker.
+        var id: String {
+            let endText = endSeconds.map { String(format: "%.6f", $0) } ?? "nil"
+            return "\(sourceVideoID.uuidString)|\(String(format: "%.6f", seconds))|\(endText)|\(sequence)|\(label)"
+        }
+
+        var isDraggable: Bool { endSeconds != nil }
+    }
+
+    /// All highlights from one source record, sorted by start time.
+    struct HighlightGroup: Equatable, Identifiable {
+        let recordID: UUID
+        let recordTitle: String
+        let highlights: [HighlightRow]
+
+        var id: UUID { recordID }
+        var count: Int { highlights.count }
+    }
+
+    /// Aggregates `.highlight` markers across records, sorted by start
+    /// time within each group. Records without highlights are omitted.
+    /// Group ordering follows the input `records` array so the panel
+    /// matches the Media list above it.
+    static func highlightGroups(records: [MediaAssetRecord]) -> [HighlightGroup] {
+        var result: [HighlightGroup] = []
+        for record in records {
+            guard let snapshot = record.copilot else { continue }
+            let sortedMarkers = snapshot.markers
+                .filter { $0.kind == .highlight }
+                .sorted { lhs, rhs in
+                    if lhs.seconds != rhs.seconds { return lhs.seconds < rhs.seconds }
+                    return (lhs.endSeconds ?? 0) < (rhs.endSeconds ?? 0)
+                }
+            let rows = sortedMarkers.enumerated().map { (index, marker) in
+                HighlightRow(
+                    sourceVideoID: record.id,
+                    seconds: marker.seconds,
+                    endSeconds: marker.endSeconds,
+                    label: marker.label,
+                    origin: marker.origin,
+                    sequence: index
+                )
+            }
+            guard !rows.isEmpty else { continue }
+            result.append(HighlightGroup(
+                recordID: record.id,
+                recordTitle: MediaRecordPresentation.title(for: record),
+                highlights: rows
+            ))
+        }
+        return result
+    }
+
+    /// Total highlight count across all records — drives the section's
+    /// header count chip.
+    static func highlightCount(records: [MediaAssetRecord]) -> Int {
+        records.reduce(0) { sum, record in
+            sum + (record.copilot?.markers.filter { $0.kind == .highlight }.count ?? 0)
+        }
+    }
+
+    /// Drag-and-drop payload format for a highlight row. The Highlights
+    /// panel emits this when the user drags a row onto the timeline;
+    /// the timeline drop handlers parse it via `parseHighlightPayload`.
+    /// Format: `"highlight:<recordID>:<startSeconds>:<endSeconds>"`.
+    /// Both times are seconds in source-video coordinates.
+    static func highlightDragPayload(recordID: UUID, start: Double, end: Double) -> String {
+        "highlight:\(recordID.uuidString):\(String(format: "%.6f", start)):\(String(format: "%.6f", end))"
+    }
+
+    /// Parses a `highlight:` payload back into its components, or
+    /// returns `nil` if the payload is malformed, has non-finite
+    /// coordinates, has a negative start, or has a non-positive span.
+    /// Drop handlers route a nil result back to the existing `media:`
+    /// parser so a malformed payload doesn't shadow the legitimate
+    /// paths.
+    static func parseHighlightPayload(_ payload: String) -> (recordID: UUID, start: Double, end: Double)? {
+        guard payload.hasPrefix("highlight:") else { return nil }
+        let body = String(payload.dropFirst("highlight:".count))
+        let parts = body.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let uuid = UUID(uuidString: String(parts[0])),
+              let start = Double(parts[1]),
+              let end = Double(parts[2]),
+              start.isFinite, end.isFinite,
+              start >= 0, end > start else {
+            return nil
+        }
+        return (uuid, start, end)
+    }
+
     // MARK: - Suggested trim text
 
     /// Formats the snapshot's suggested trim range as `"HH:MM:SS:FF - HH:MM:SS:FF"` at 30 fps,

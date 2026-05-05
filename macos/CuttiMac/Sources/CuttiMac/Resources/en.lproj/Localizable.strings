@@ -243,6 +243,20 @@
 "CURRENT" = "CURRENT";
 "Restore" = "Restore";
 
+/* HighlightsPanel */
+"HIGHLIGHTS" = "HIGHLIGHTS";
+"Collapse highlights" = "Collapse highlights";
+"Expand highlights" = "Expand highlights";
+"No highlights yet" = "No highlights yet";
+"Run ⌘⇧3 to find hook candidates" = "Run ⌘⇧3 to find hook candidates";
+"Highlight" = "Highlight";
+"Drag onto the timeline to insert this highlight as a new clip" = "Drag onto the timeline to insert this highlight as a new clip";
+"Click to reveal in source" = "Click to reveal in source";
+"Can't add highlight — media not found." = "Can't add highlight — media not found.";
+"Can't add highlight — analysis not ready." = "Can't add highlight — analysis not ready.";
+"Can't add highlight — selection is out of range." = "Can't add highlight — selection is out of range.";
+"Insert highlight" = "Insert highlight";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI workflows";
 "No matching workflow" = "No matching workflow";

@@ -243,6 +243,20 @@
 "CURRENT" = "当前";
 "Restore" = "恢复";
 
+/* HighlightsPanel */
+"HIGHLIGHTS" = "精选片段";
+"Collapse highlights" = "收起精选";
+"Expand highlights" = "展开精选";
+"No highlights yet" = "暂无精选片段";
+"Run ⌘⇧3 to find hook candidates" = "按 ⌘⇧3 让 AI 挑出开场金句";
+"Highlight" = "精选";
+"Drag onto the timeline to insert this highlight as a new clip" = "拖到时间轴可作为新片段插入";
+"Click to reveal in source" = "点击跳转到源片段";
+"Can't add highlight — media not found." = "无法添加精选片段 —— 未找到媒体。";
+"Can't add highlight — analysis not ready." = "无法添加精选片段 —— 分析未就绪。";
+"Can't add highlight — selection is out of range." = "无法添加精选片段 —— 时间区间越界。";
+"Insert highlight" = "插入精选片段";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI 工作流";
 "No matching workflow" = "无匹配工作流";

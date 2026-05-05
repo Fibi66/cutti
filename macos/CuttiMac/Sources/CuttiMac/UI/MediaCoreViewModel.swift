@@ -4156,6 +4156,47 @@ final class MediaCoreViewModel: ObservableObject {
         )
     }
 
+    /// Insert a slice of `mediaID`'s source range — `[sourceStart,
+    /// sourceEnd]` in source-video coordinates — as a new V1 segment
+    /// at `insertIndex`. Used by the Highlights panel drag-onto-
+    /// timeline path: each highlight row carries a span and the user
+    /// drops it into a position on the primary track.
+    ///
+    /// Range is clamped to `[0, sourceDuration]`; clamped span less
+    /// than 0.2s emits an "out of range" banner instead of inserting
+    /// a degenerate clip.
+    func insertSourceSlice(
+        mediaID: UUID,
+        sourceStart: Double,
+        sourceEnd: Double,
+        at insertIndex: Int,
+        revisionTrigger: RevisionTrigger = .userEdit(description: "insert highlight"),
+        revisionLabel: String = "Insert highlight"
+    ) {
+        guard let record = records.first(where: { $0.id == mediaID }) else {
+            bannerMessage = L("Can't add highlight — media not found.")
+            return
+        }
+        guard let analysis = record.analysis, analysis.durationSeconds > 0.1 else {
+            bannerMessage = L("Can't add highlight — analysis not ready.")
+            return
+        }
+        let clampedStart = max(0, min(sourceStart, analysis.durationSeconds))
+        let clampedEnd = max(clampedStart, min(sourceEnd, analysis.durationSeconds))
+        guard clampedEnd - clampedStart >= 0.2 else {
+            bannerMessage = L("Can't add highlight — selection is out of range.")
+            return
+        }
+        let range = TimeRange(startSeconds: clampedStart, endSeconds: clampedEnd)
+        insertManualSegment(
+            range: range,
+            at: insertIndex,
+            sourceVideoID: mediaID,
+            revisionTrigger: revisionTrigger,
+            revisionLabel: revisionLabel
+        )
+    }
+
     /// Append a new overlay segment carrying `mediaID` to the existing
     /// overlay track identified by `trackID`, anchored at
     /// `composedStart` seconds. Invoked by the drop-on-lane path so

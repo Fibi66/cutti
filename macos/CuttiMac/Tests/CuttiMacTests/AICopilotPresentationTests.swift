@@ -414,4 +414,193 @@ final class AICopilotPresentationTests: XCTestCase {
         )
         XCTAssertNil(AICopilotPresentation.suggestedTrimText(for: snapshot))
     }
+
+    // MARK: - highlightGroups(records:)
+
+    private func makeHighlightSnapshot(
+        markers: [AICopilotMarker]
+    ) -> AICopilotSnapshot {
+        AICopilotSnapshot(
+            semanticTags: [],
+            summary: nil,
+            transcriptPreview: nil,
+            suggestedInSeconds: nil,
+            suggestedOutSeconds: nil,
+            issues: [],
+            suggestions: [],
+            markers: markers
+        )
+    }
+
+    func test_highlightGroups_emptyInputProducesEmptyResult() {
+        XCTAssertEqual(AICopilotPresentation.highlightGroups(records: []).count, 0)
+    }
+
+    func test_highlightGroups_skipsRecordsWithoutSnapshot() {
+        let r1 = makeRecord()
+        let r2 = makeRecord(snapshot: makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 1, endSeconds: 4, label: "Hook 1")
+        ]))
+        let groups = AICopilotPresentation.highlightGroups(records: [r1, r2])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.recordID, r2.id)
+    }
+
+    func test_highlightGroups_filtersToHighlightKindOnly() {
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .scene, seconds: 0, label: "Scene"),
+            AICopilotMarker(kind: .suggestion, seconds: 1, label: "Suggestion"),
+            AICopilotMarker(kind: .highlight, seconds: 2, endSeconds: 5, label: "Hook"),
+            AICopilotMarker(kind: .warning, seconds: 3, label: "Warning")
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let groups = AICopilotPresentation.highlightGroups(records: [record])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].highlights.count, 1)
+        XCTAssertEqual(groups[0].highlights[0].label, "Hook")
+    }
+
+    func test_highlightGroups_sortsRowsByStartTime() {
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 12, endSeconds: 14, label: "Third"),
+            AICopilotMarker(kind: .highlight, seconds: 3, endSeconds: 5, label: "First"),
+            AICopilotMarker(kind: .highlight, seconds: 7, endSeconds: 9, label: "Second")
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let groups = AICopilotPresentation.highlightGroups(records: [record])
+        XCTAssertEqual(groups[0].highlights.map(\.label), ["First", "Second", "Third"])
+    }
+
+    func test_highlightGroups_preservesRecordOrderingFromInput() {
+        let r1 = makeRecord(
+            snapshot: makeHighlightSnapshot(markers: [
+                AICopilotMarker(kind: .highlight, seconds: 0, endSeconds: 2, label: "A1")
+            ]),
+            sourcePath: "/tmp/a.mp4"
+        )
+        let r2 = makeRecord(
+            snapshot: makeHighlightSnapshot(markers: [
+                AICopilotMarker(kind: .highlight, seconds: 0, endSeconds: 2, label: "B1")
+            ]),
+            sourcePath: "/tmp/b.mp4"
+        )
+        let groups = AICopilotPresentation.highlightGroups(records: [r1, r2])
+        XCTAssertEqual(groups.map(\.recordID), [r1.id, r2.id])
+        let reversed = AICopilotPresentation.highlightGroups(records: [r2, r1])
+        XCTAssertEqual(reversed.map(\.recordID), [r2.id, r1.id])
+    }
+
+    func test_highlightGroups_omitsRecordsWithEmptyHighlightArray() {
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .scene, seconds: 0, label: "Scene only")
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        XCTAssertEqual(AICopilotPresentation.highlightGroups(records: [record]).count, 0)
+    }
+
+    func test_highlightGroups_carriesOriginThroughToRow() {
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 1, endSeconds: 3, label: "AI", origin: .ai),
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "User", origin: .manual)
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let rows = AICopilotPresentation.highlightGroups(records: [record])[0].highlights
+        XCTAssertEqual(rows[0].origin, .ai)
+        XCTAssertEqual(rows[1].origin, .manual)
+    }
+
+    func test_highlightRow_isDraggableOnlyWhenEndSecondsPresent() {
+        let modern = AICopilotPresentation.HighlightRow(
+            sourceVideoID: UUID(), seconds: 1, endSeconds: 3,
+            label: "x", origin: .ai, sequence: 0
+        )
+        let legacy = AICopilotPresentation.HighlightRow(
+            sourceVideoID: UUID(), seconds: 1, endSeconds: nil,
+            label: "x", origin: .ai, sequence: 0
+        )
+        XCTAssertTrue(modern.isDraggable)
+        XCTAssertFalse(legacy.isDraggable)
+    }
+
+    // MARK: - highlightCount(records:)
+
+    func test_highlightCount_zeroWhenNoSnapshots() {
+        XCTAssertEqual(AICopilotPresentation.highlightCount(records: [makeRecord()]), 0)
+    }
+
+    func test_highlightCount_aggregatesAcrossAllRecords() {
+        let r1 = makeRecord(snapshot: makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 0, endSeconds: 1, label: "x"),
+            AICopilotMarker(kind: .highlight, seconds: 2, endSeconds: 3, label: "y")
+        ]))
+        let r2 = makeRecord(snapshot: makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 0, endSeconds: 1, label: "z"),
+            AICopilotMarker(kind: .scene, seconds: 5, label: "scene"),
+        ]))
+        XCTAssertEqual(AICopilotPresentation.highlightCount(records: [r1, r2]), 3)
+    }
+
+    // MARK: - drag payload round-trip
+
+    func test_highlightDragPayload_roundTripsThroughParser() {
+        let id = UUID()
+        let payload = AICopilotPresentation.highlightDragPayload(recordID: id, start: 1.5, end: 4.75)
+        let parsed = AICopilotPresentation.parseHighlightPayload(payload)
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?.recordID, id)
+        XCTAssertEqual(parsed?.start ?? 0, 1.5, accuracy: 1e-4)
+        XCTAssertEqual(parsed?.end ?? 0, 4.75, accuracy: 1e-4)
+    }
+
+    func test_highlightDragPayload_carriesPrefix() {
+        let payload = AICopilotPresentation.highlightDragPayload(
+            recordID: UUID(), start: 0, end: 1
+        )
+        XCTAssertTrue(payload.hasPrefix("highlight:"))
+    }
+
+    func test_parseHighlightPayload_returnsNilForUnrelatedPayload() {
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("media:\(UUID().uuidString)"))
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("not a payload"))
+    }
+
+    func test_parseHighlightPayload_returnsNilForMalformedFields() {
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:not-a-uuid:0:1"))
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(UUID().uuidString):oops:1"))
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(UUID().uuidString):1"))
+    }
+
+    func test_parseHighlightPayload_returnsNilForNonPositiveSpan() {
+        let id = UUID().uuidString
+        // Equal endpoints (zero-length span) should be rejected so the
+        // drop handler doesn't try to insert a degenerate clip.
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):2.0:2.0"))
+        // Inverted endpoints likewise.
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):3.0:1.0"))
+    }
+
+    func test_parseHighlightPayload_returnsNilForNegativeStart() {
+        let id = UUID().uuidString
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):-1.0:2.0"))
+    }
+
+    func test_parseHighlightPayload_returnsNilForNonFiniteCoords() {
+        let id = UUID().uuidString
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):nan:1.0"))
+        XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):0.0:inf"))
+    }
+
+    func test_highlightGroups_assignsUniqueSequenceTiebreaker() {
+        // Pathological case: two markers with identical (start, end,
+        // label) on the same record. Without the sequence tiebreaker
+        // these would collide as ForEach IDs.
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Same"),
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Same")
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let rows = AICopilotPresentation.highlightGroups(records: [record])[0].highlights
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertNotEqual(rows[0].id, rows[1].id)
+    }
 }

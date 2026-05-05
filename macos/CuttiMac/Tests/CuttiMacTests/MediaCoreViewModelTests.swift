@@ -1015,6 +1015,90 @@ final class MediaCoreViewModelTests: XCTestCase {
         XCTAssertTrue(vm.timelineSegments.isEmpty)
     }
 
+    // MARK: - insertSourceSlice (Highlights panel drop path)
+
+    func test_insertSourceSlice_addsClampedSegmentAndSelectsIt() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+        let record = makeRecord()
+        vm.records = [record]
+        vm.select(recordID: record.id)
+
+        vm.timelineSegments = []
+        vm.insertSourceSlice(mediaID: record.id, sourceStart: 12, sourceEnd: 18, at: 0)
+
+        XCTAssertEqual(vm.timelineSegments.count, 1)
+        XCTAssertEqual(vm.timelineSegments[0].sourceVideoID, record.id)
+        XCTAssertEqual(vm.timelineSegments[0].range.startSeconds, 12, accuracy: 0.001)
+        XCTAssertEqual(vm.timelineSegments[0].range.endSeconds, 18, accuracy: 0.001)
+        XCTAssertEqual(vm.selectedSegmentID, vm.timelineSegments[0].id)
+        XCTAssertTrue(vm.canUndo)
+    }
+
+    func test_insertSourceSlice_clampsToSourceDuration() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+        let record = makeRecord() // analysis.durationSeconds = 300
+        vm.records = [record]
+
+        // Request a slice that runs past the source's end — clamp to
+        // [start, sourceDuration] so the dropped clip never points at
+        // missing video data.
+        vm.insertSourceSlice(mediaID: record.id, sourceStart: 295, sourceEnd: 600, at: 0)
+
+        XCTAssertEqual(vm.timelineSegments.count, 1)
+        XCTAssertEqual(vm.timelineSegments[0].range.startSeconds, 295, accuracy: 0.001)
+        XCTAssertEqual(vm.timelineSegments[0].range.endSeconds, 300, accuracy: 0.001)
+    }
+
+    func test_insertSourceSlice_rejectsSpanShorterThanMinimum() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+        let record = makeRecord()
+        vm.records = [record]
+
+        // 0.05s span — shorter than the 0.2s floor — must be rejected
+        // with a banner; no segment inserted.
+        vm.insertSourceSlice(mediaID: record.id, sourceStart: 10, sourceEnd: 10.05, at: 0)
+        XCTAssertTrue(vm.timelineSegments.isEmpty)
+        XCTAssertEqual(vm.bannerMessage, L("Can't add highlight — selection is out of range."))
+    }
+
+    func test_insertSourceSlice_rejectsMissingMedia() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+        vm.records = []
+
+        vm.insertSourceSlice(mediaID: UUID(), sourceStart: 0, sourceEnd: 1, at: 0)
+        XCTAssertTrue(vm.timelineSegments.isEmpty)
+        XCTAssertEqual(vm.bannerMessage, L("Can't add highlight — media not found."))
+    }
+
+    func test_insertSourceSlice_rejectsRecordWithoutAnalysis() {
+        let spy = SpyPlaybackCore()
+        let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
+
+        // Record without analysis — represents a freshly-imported clip
+        // whose pipeline hasn't finished yet. Highlights drop should
+        // refuse instead of inserting a degenerate segment.
+        let id = UUID()
+        let unanalyzed = MediaAssetRecord(
+            id: id,
+            sourcePath: "/tmp/\(id.uuidString).mp4",
+            fingerprint: SourceFingerprint(fileSize: 1000, modifiedAt: Date(), sha256Prefix: "abc"),
+            status: .analyzing,
+            analysis: nil,
+            derived: DerivedAssetState(proxyRelativePath: nil, thumbnailsReady: false, waveformsReady: false),
+            errorMessage: nil,
+            usedFallbackTranscoder: false
+        )
+        vm.records = [unanalyzed]
+
+        vm.insertSourceSlice(mediaID: id, sourceStart: 0, sourceEnd: 5, at: 0)
+        XCTAssertTrue(vm.timelineSegments.isEmpty)
+        XCTAssertEqual(vm.bannerMessage, L("Can't add highlight — analysis not ready."))
+    }
+
     func test_setSegmentVolume_clampsAndUpdates() {
         let spy = SpyPlaybackCore()
         let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))

@@ -44,6 +44,7 @@ struct ContentView: View {
     @State private var emphasisCueID: UUID? = nil
     @AppStorage("rightColumn.mediaHeight") private var savedMediaHeight: Double = 260
     @AppStorage("rightColumn.aiLogHeight") private var savedAILogHeight: Double = 240
+    @AppStorage("rightColumn.highlightsHeight") private var savedHighlightsHeight: Double = 220
     @AppStorage("editor.aiEditorPanelWidth") private var savedAIEditorPanelWidth: Double = 240
     @AppStorage("editor.rightPanelWidth") private var savedRightPanelWidth: Double = 260
     @AppStorage("editor.timelinePaneHeight") private var savedTimelinePaneHeight: Double = 260
@@ -58,20 +59,23 @@ struct ContentView: View {
     /// panel to judder while resizing).
     @State private var mediaHeight: Double = 260
     @State private var aiLogHeight: Double = 240
+    @State private var highlightsHeight: Double = 220
     @State private var mediaExpanded: Bool = true
     @State private var historyExpanded: Bool = true
+    @State private var highlightsExpanded: Bool = true
     @State private var aiLogExpanded: Bool = true
 
     /// Which expanded section should soak up the remaining vertical
     /// space in the right column. Priority: History (middle) → Media
-    /// (top) → AI Log (bottom). Whoever is expanded and highest on
-    /// that list becomes flex; the rest keep their fixed user-set
-    /// heights. If all three are collapsed, the column only shows
-    /// headers and a Spacer absorbs the rest.
-    private enum FlexSection { case media, history, aiLog, none }
+    /// (top) → Highlights → AI Log (bottom). Whoever is expanded and
+    /// highest on that list becomes flex; the rest keep their fixed
+    /// user-set heights. If all four are collapsed, the column only
+    /// shows headers and a Spacer absorbs the rest.
+    private enum FlexSection { case media, history, highlights, aiLog, none }
     private var flexSection: FlexSection {
         if historyExpanded { return .history }
         if mediaExpanded { return .media }
+        if highlightsExpanded { return .highlights }
         if aiLogExpanded { return .aiLog }
         return .none
     }
@@ -338,6 +342,8 @@ struct ContentView: View {
             mediaBrowserView
             mediaDividerView
             workflowPanelView
+            highlightsDividerView
+            highlightsPanelView
             aiLogDividerView
             inspectorSidebarView
 
@@ -415,8 +421,59 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private var highlightsDividerView: some View {
+        // Sits between History (top) and Highlights (bottom). The
+        // resize handle drives `highlightsHeight` so the bottom-
+        // anchored section grows/shrinks against whichever flex
+        // section is above it. Hidden when Highlights is the flex
+        // (its height is auto) or when nothing is expanded
+        // (`.none` — Spacer absorbs and the divider would have no
+        // anchor section to push against).
+        if highlightsExpanded && flexSection != .highlights && flexSection != .none {
+            ResizableDivider(
+                value: $highlightsHeight,
+                minValue: 44,
+                maxValue: 600,
+                inverted: true,
+                onCommit: { savedHighlightsHeight = highlightsHeight }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var highlightsPanelView: some View {
+        let groups = AICopilotPresentation.highlightGroups(records: viewModel.records)
+        let total = AICopilotPresentation.highlightCount(records: viewModel.records)
+        let panel = HighlightsPanel(
+            groups: groups,
+            totalCount: total,
+            records: viewModel.records,
+            projectRoot: viewModel.projectRoot,
+            isExpanded: $highlightsExpanded,
+            onSelectRecord: { id in
+                playheadSeconds = 0
+                durationSeconds = 0
+                viewModel.select(recordID: id)
+            }
+        )
+        if flexSection == .highlights {
+            panel.frame(maxHeight: .infinity).clipped()
+        } else if highlightsExpanded {
+            panel.frame(height: CGFloat(highlightsHeight)).clipped()
+        } else {
+            panel.clipped()
+        }
+    }
+
+    @ViewBuilder
     private var aiLogDividerView: some View {
-        if aiLogExpanded && historyExpanded && flexSection != .aiLog {
+        // Bottom-most divider — resizes AI Log against whichever
+        // section is currently flex above it. Hidden when AI Log is
+        // itself the flex (its height is auto) or when nothing is
+        // expanded (no anchor section to push against). Decoupled
+        // from any specific neighbour-expanded flag so collapsing
+        // Highlights doesn't accidentally lock the AI Log handle.
+        if aiLogExpanded && flexSection != .aiLog && flexSection != .none {
             ResizableDivider(
                 value: $aiLogHeight,
                 minValue: 44,
@@ -540,6 +597,14 @@ struct ContentView: View {
             },
             onInsertMediaAtPrimaryIndex: { [weak viewModel] mediaID, index in
                 viewModel?.insertMediaAsPrimary(mediaID: mediaID, at: index)
+            },
+            onInsertSourceSliceAtPrimaryIndex: { [weak viewModel] mediaID, start, end, index in
+                viewModel?.insertSourceSlice(
+                    mediaID: mediaID,
+                    sourceStart: start,
+                    sourceEnd: end,
+                    at: index
+                )
             },
             onInsertMediaIntoOverlayTrack: { [weak viewModel] mediaID, trackID, composedStart in
                 viewModel?.insertMediaIntoOverlayTrack(mediaID: mediaID, trackID: trackID, composedStart: composedStart)
@@ -668,8 +733,10 @@ struct ContentView: View {
         let defaults = UserDefaults.standard
         let initialMedia = defaults.object(forKey: "rightColumn.mediaHeight") as? Double ?? 260
         let initialAILog = defaults.object(forKey: "rightColumn.aiLogHeight") as? Double ?? 240
+        let initialHighlights = defaults.object(forKey: "rightColumn.highlightsHeight") as? Double ?? 220
         _mediaHeight = State(initialValue: initialMedia)
         _aiLogHeight = State(initialValue: initialAILog)
+        _highlightsHeight = State(initialValue: initialHighlights)
     }
 
     /// Prefer the relay-backed `CloudRemotionRenderer` when we have

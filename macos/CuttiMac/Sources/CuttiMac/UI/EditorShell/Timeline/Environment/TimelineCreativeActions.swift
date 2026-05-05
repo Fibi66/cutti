@@ -142,6 +142,12 @@ struct TimelineCreativeActions {
     /// video track. `index` is the primary-segment index to insert
     /// before (clamped to `[0, segments.count]`).
     var onInsertMediaAtPrimaryIndex: (UUID, Int) -> Void = { _, _ in }
+    /// Called when the user drops a Highlights-panel row onto the
+    /// primary video track. The slice `[sourceStart, sourceEnd]` is in
+    /// source-video coordinates; `index` is the primary-segment index
+    /// to insert before. Mirrors `onInsertMediaAtPrimaryIndex` but
+    /// inserts a slice of the source instead of the full clip.
+    var onInsertSourceSliceAtPrimaryIndex: (UUID, Double, Double, Int) -> Void = { _, _, _, _ in }
     /// Called when the user drops a MediaBrowser record onto an existing
     /// overlay (V2+) lane. `trackID` identifies the target overlay lane;
     /// `composedStart` is the drop x-coordinate translated into composed

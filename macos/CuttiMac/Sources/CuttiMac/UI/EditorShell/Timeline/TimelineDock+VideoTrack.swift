@@ -419,6 +419,21 @@ extension TimelineDock {
                         .dropDestination(for: String.self) { items, _ in
                             defer { primaryInsertionIndex = nil }
                             guard let dragged = items.first else { return false }
+                            // Highlights panel drag → insert a slice of
+                            // the source clip BEFORE the segment we
+                            // dropped on. Use the dedicated
+                            // `highlight:` namespace so the slice path
+                            // stays distinct from the whole-clip
+                            // `media:` path below.
+                            if let parsed = AICopilotPresentation.parseHighlightPayload(dragged) {
+                                creativeActions.onInsertSourceSliceAtPrimaryIndex(
+                                    parsed.recordID,
+                                    parsed.start,
+                                    parsed.end,
+                                    index
+                                )
+                                return true
+                            }
                             // MediaBrowser drag payload → insert a new
                             // primary segment BEFORE the segment we
                             // dropped on. Prefix keeps media drops from
