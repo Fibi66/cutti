@@ -132,11 +132,6 @@ struct SubtitleOverlay: View {
                         .allowsHitTesting(false)
                 }
             }
-            .overlay(alignment: .topLeading) {
-                speakerBadge(scale: scale)
-                    .offset(x: padH, y: -18 * scale)
-                    .allowsHitTesting(false)
-            }
             .overlay(alignment: .bottomTrailing) {
                 if isSelected && !isEditing {
                     resizeHandle(videoRect: videoRect)
