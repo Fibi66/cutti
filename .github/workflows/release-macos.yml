@@ -53,7 +53,7 @@ concurrency:
 jobs:
   release:
     name: Build, sign, notarize, publish
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
@@ -85,11 +85,18 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # Pin a known Xcode so notarytool/codesign behaviour is stable.
-          # Adjust if the runner image bumps to a newer default.
-          sudo xcode-select -s /Applications/Xcode_16.app || \
-            sudo xcode-select -s /Applications/Xcode.app
+          set -euo pipefail
+          # Project requires swift-tools-version 6.0 → Xcode 16+.
+          # Pick the highest Xcode_16.* available on the runner.
+          XCODE_PATH=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [[ -z "$XCODE_PATH" ]]; then
+            echo "No Xcode 16+ found on this runner. Available:" >&2
+            ls /Applications | grep -i xcode >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH"
           xcodebuild -version
+          swift --version
 
       - name: Create build keychain + import Developer ID cert
         env:
