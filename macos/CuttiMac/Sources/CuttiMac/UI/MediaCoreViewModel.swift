@@ -412,7 +412,8 @@ final class MediaCoreViewModel: ObservableObject {
             playheadSeconds: 0,
             trigger: trigger,
             tracks: project.tracks.map { EditorRevision.PersistableTrack(from: $0) },
-            subtitleTombstones: subtitleTombstones
+            subtitleTombstones: subtitleTombstones,
+            subtitleStyle: subtitleStyle
         )
         revisions.append(revision)
         currentRevisionIndex = revisions.count - 1
@@ -684,6 +685,19 @@ final class MediaCoreViewModel: ObservableObject {
         // predate the field); nil means "no tombstones at this
         // point", which is the correct pre-feature history.
         subtitleTombstones = revision.subtitleTombstones ?? []
+        // Subtitle style is optional on the revision (pre-V1-per-cue
+        // revisions don't carry it); nil means "leave the current
+        // style alone" — that matches pre-feature undo behaviour for
+        // revisions written before this field existed. When present,
+        // restore via `isApplyingStyleHistory` so the assignment
+        // doesn't double-record into the lightweight style undo
+        // stack (which already maintains its own history for the
+        // global slider).
+        if let restoredStyle = revision.subtitleStyle, restoredStyle != subtitleStyle {
+            isApplyingStyleHistory = true
+            subtitleStyle = restoredStyle
+            isApplyingStyleHistory = false
+        }
     }
 
     /// Restore timeline to a specific revision by ID (non-destructive).
@@ -2608,6 +2622,224 @@ final class MediaCoreViewModel: ObservableObject {
             return true
         }
         return false
+    }
+
+    // MARK: - Per-cue style override
+
+    /// Resolve the rendered style for the cue with `id`:
+    /// `cue.styleOverride?.applied(to: subtitleStyle) ?? subtitleStyle`.
+    /// The renderer (viewer overlay + burn-in) calls this for every
+    /// composed cue so per-cue overrides land correctly. Falls back to
+    /// the project-wide style when the cue is unknown (e.g. composed
+    /// cue that doesn't map back to a `SubtitleEntry`, which shouldn't
+    /// happen but keeps the renderer side robust).
+    func effectiveSubtitleStyle(forCueID id: UUID) -> SubtitleStyle {
+        guard let cue = subtitleEntry(forID: id) else { return subtitleStyle }
+        return cue.styleOverride?.applied(to: subtitleStyle) ?? subtitleStyle
+    }
+
+    /// Locate a `SubtitleEntry` by id across all timeline segments.
+    /// O(N) but the cue counts here are tiny in practice; if it ever
+    /// becomes hot, fold into a derived dictionary on
+    /// `rebuildComposedSubtitles`.
+    func subtitleEntry(forID id: UUID) -> SubtitleEntry? {
+        for seg in timelineSegments {
+            if let cue = seg.subtitles.first(where: { $0.id == id }) {
+                return cue
+            }
+        }
+        return nil
+    }
+
+    /// Apply a `SubtitleStylePatch` to a single cue's per-cue override.
+    /// The patch is layered on top of the cue's *effective* style
+    /// (override-or-global), then diffed against the project-wide
+    /// `subtitleStyle` to extract just the override fields. A field
+    /// dragged back to its project-wide value naturally clears from
+    /// the override (because diff sees no delta), and an override
+    /// that ends up with no fields collapses to nil so the cue stops
+    /// being marked "Customized".
+    ///
+    /// `commit` controls revision behavior:
+    /// - `false` — write to `timelineSegments` silently. Use during
+    ///   slider drag (`Slider.onEditingChanged: editing == true`) so
+    ///   the viewer overlay updates live without spamming the undo
+    ///   stack with intermediate values.
+    /// - `true` — write **and** `pushRevision`. Use on mouse-up
+    ///   (`editing == false`) and for non-slider controls so Cmd+Z
+    ///   reverts the whole interaction in one step.
+    ///
+    /// Bilingual locale and karaoke fields stay project-wide by
+    /// construction — `SubtitleCueStyleOverride` doesn't carry them,
+    /// so they are silently dropped from the patch on this path.
+    /// Callers that want to set bilingual/karaoke must use the global
+    /// `applySubtitleStylePatch(_:commit:)` path instead.
+    func applySubtitleStylePatch(
+        _ patch: SubtitleStylePatch,
+        toCueID cueID: UUID,
+        commit: Bool
+    ) {
+        guard !patch.isEmpty else { return }
+        guard let segIdx = timelineSegments.firstIndex(where: { seg in
+            seg.subtitles.contains { $0.id == cueID }
+        }) else { return }
+        guard let subIdx = timelineSegments[segIdx].subtitles
+            .firstIndex(where: { $0.id == cueID }) else { return }
+
+        let old = timelineSegments[segIdx].subtitles[subIdx]
+        let baseEffective = old.styleOverride?.applied(to: subtitleStyle) ?? subtitleStyle
+        let report = patch.applyReporting(to: baseEffective)
+        let newEffective = report.style
+        let diffedOverride = SubtitleCueStyleOverride.diff(
+            effective: newEffective, base: subtitleStyle
+        )
+        let nextOverride: SubtitleCueStyleOverride? =
+            diffedOverride.hasAnyField ? diffedOverride : nil
+        if nextOverride == old.styleOverride { return }
+
+        if commit {
+            pushRevision(
+                label: "Edit subtitle style",
+                trigger: .userEdit(description: "edit-cue-style")
+            )
+        }
+        timelineSegments[segIdx].subtitles[subIdx] = SubtitleEntry(
+            id: old.id,
+            relativeStart: old.relativeStart,
+            relativeDuration: old.relativeDuration,
+            text: old.text,
+            speakerID: old.speakerID,
+            translations: old.translations,
+            runs: old.runs,
+            wordTimings: old.wordTimings,
+            styleOverride: nextOverride
+        )
+        rebuildComposedSubtitles()
+    }
+
+    /// Apply a patch to the project-wide `subtitleStyle` (global
+    /// scope). Equivalent to `subtitleStyle = patch.applied(to:
+    /// subtitleStyle)` — written as a method so the Inspector can use
+    /// the same `(SubtitleStylePatch, commit) -> Void` callback shape
+    /// for both scopes. The `commit` flag is informational here
+    /// because the existing `subtitleStyle.willSet` already coalesces
+    /// rapid changes onto one undo step via
+    /// `styleUndoCoalesceWindow`.
+    func applySubtitleStylePatch(_ patch: SubtitleStylePatch, commit: Bool) {
+        guard !patch.isEmpty else { return }
+        let report = patch.applyReporting(to: subtitleStyle)
+        let next = report.style
+        if next == subtitleStyle { return }
+        subtitleStyle = next
+    }
+
+    /// True when the cue with `id` has a non-empty per-cue style
+    /// override (i.e. renders differently from the project-wide
+    /// `subtitleStyle`). Drives the "Customized" badge in the
+    /// transcript and the "Reset to default" button's enabled state.
+    func cueHasStyleOverride(_ id: UUID) -> Bool {
+        subtitleEntry(forID: id)?.styleOverride?.hasAnyField == true
+    }
+
+    /// "Apply to all cues" — promote the currently-selected cue's
+    /// effective style to `subtitleStyle`, then wipe per-cue
+    /// overrides project-wide so every cue renders identical to the
+    /// one the user was editing. Matches the 剪映 escape-hatch
+    /// semantics: one click makes "this look" the new baseline.
+    ///
+    /// V1 only handles single-cue selection. Returns false when no
+    /// cue is selected or the selected cue has no override (the
+    /// button shouldn't be enabled in those states; the guard is
+    /// belt-and-braces).
+    @discardableResult
+    func applySelectedCueStyleToAllCues() -> Bool {
+        guard let id = selectedSubtitleID else { return false }
+        guard let cue = subtitleEntry(forID: id) else { return false }
+        guard let override = cue.styleOverride, override.hasAnyField else { return false }
+        let promoted = override.applied(to: subtitleStyle)
+        if promoted == subtitleStyle && !anyCueHasStyleOverride() {
+            return false
+        }
+        pushRevision(
+            label: "Apply cue style to all",
+            trigger: .userEdit(description: "apply-cue-style-globally")
+        )
+        // Silently set the global without re-recording on the
+        // lightweight style undo stack — the timeline pushRevision
+        // above is already the single undo entry for this whole
+        // operation; layering style-undo on top would make Cmd+Z
+        // take two presses to reverse one click.
+        isApplyingStyleHistory = true
+        subtitleStyle = promoted
+        isApplyingStyleHistory = false
+        // Wipe every cue's override project-wide.
+        for segIdx in timelineSegments.indices {
+            for subIdx in timelineSegments[segIdx].subtitles.indices {
+                let old = timelineSegments[segIdx].subtitles[subIdx]
+                guard old.styleOverride != nil else { continue }
+                timelineSegments[segIdx].subtitles[subIdx] = SubtitleEntry(
+                    id: old.id,
+                    relativeStart: old.relativeStart,
+                    relativeDuration: old.relativeDuration,
+                    text: old.text,
+                    speakerID: old.speakerID,
+                    translations: old.translations,
+                    runs: old.runs,
+                    wordTimings: old.wordTimings,
+                    styleOverride: nil
+                )
+            }
+        }
+        rebuildComposedSubtitles()
+        return true
+    }
+
+    /// True when ANY cue carries a non-empty style override. Used by
+    /// `applySelectedCueStyleToAllCues` to short-circuit the no-op
+    /// case (selected cue's override would-be-promoted equals current
+    /// global AND no other cue has an override to wipe).
+    private func anyCueHasStyleOverride() -> Bool {
+        for seg in timelineSegments {
+            for cue in seg.subtitles {
+                if cue.styleOverride?.hasAnyField == true { return true }
+            }
+        }
+        return false
+    }
+
+    /// Clear the currently-selected cue's per-cue style override so
+    /// it inherits `subtitleStyle` again. The Inspector "Reset to
+    /// default" footer button calls this. Returns false when no cue
+    /// is selected or the selected cue has no override (button
+    /// shouldn't be enabled in those states).
+    @discardableResult
+    func resetSelectedCueStyleOverride() -> Bool {
+        guard let id = selectedSubtitleID else { return false }
+        guard let segIdx = timelineSegments.firstIndex(where: { seg in
+            seg.subtitles.contains { $0.id == id }
+        }) else { return false }
+        guard let subIdx = timelineSegments[segIdx].subtitles
+            .firstIndex(where: { $0.id == id }) else { return false }
+        let old = timelineSegments[segIdx].subtitles[subIdx]
+        guard old.styleOverride != nil else { return false }
+
+        pushRevision(
+            label: "Reset cue style",
+            trigger: .userEdit(description: "reset-cue-style")
+        )
+        timelineSegments[segIdx].subtitles[subIdx] = SubtitleEntry(
+            id: old.id,
+            relativeStart: old.relativeStart,
+            relativeDuration: old.relativeDuration,
+            text: old.text,
+            speakerID: old.speakerID,
+            translations: old.translations,
+            runs: old.runs,
+            wordTimings: old.wordTimings,
+            styleOverride: nil
+        )
+        rebuildComposedSubtitles()
+        return true
     }
 
     // MARK: - Subtitle cue manipulation (timeline S1 lane)

@@ -27,6 +27,14 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
     /// predating transcript-driven delete won't have the field and
     /// decode to `nil`, which restore treats as "no tombstones".
     public let subtitleTombstones: [SubtitleTombstone]?
+    /// Project-wide subtitle style at the moment this revision was
+    /// snapshotted. Optional for backward compatibility — revisions
+    /// predating this field decode to nil, which `restore` treats as
+    /// "do not touch the current style". Captured so revision-driven
+    /// edits that mutate the global style (notably the Inspector's
+    /// "Apply to all cues" button, and AI `setSubtitleStyle` actions)
+    /// round-trip correctly through Cmd+Z.
+    public let subtitleStyle: SubtitleStyle?
 
     public init(
         id: UUID,
@@ -37,7 +45,8 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
         playheadSeconds: Double,
         trigger: RevisionTrigger,
         tracks: [PersistableTrack]? = nil,
-        subtitleTombstones: [SubtitleTombstone]? = nil
+        subtitleTombstones: [SubtitleTombstone]? = nil,
+        subtitleStyle: SubtitleStyle? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -48,10 +57,11 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
         self.trigger = trigger
         self.tracks = tracks
         self.subtitleTombstones = subtitleTombstones
+        self.subtitleStyle = subtitleStyle
     }
 
     public enum CodingKeys: String, CodingKey {
-        case id, timestamp, label, segments, selectedSegmentID, playheadSeconds, trigger, tracks, subtitleTombstones
+        case id, timestamp, label, segments, selectedSegmentID, playheadSeconds, trigger, tracks, subtitleTombstones, subtitleStyle
     }
 
     public init(from decoder: any Decoder) throws {
@@ -65,6 +75,7 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
         trigger = try c.decode(RevisionTrigger.self, forKey: .trigger)
         tracks = try c.decodeIfPresent([PersistableTrack].self, forKey: .tracks)
         subtitleTombstones = try c.decodeIfPresent([SubtitleTombstone].self, forKey: .subtitleTombstones)
+        subtitleStyle = try c.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle)
     }
 
     /// Lightweight segment representation for persistence.
