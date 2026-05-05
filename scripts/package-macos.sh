@@ -133,12 +133,16 @@ if [[ $SIGN -eq 1 ]]; then
   }
 
   # Inner XPC services, helper apps, and SwiftPM resource bundles.
+  # Note: Sparkle ships a bare Autoupdate Mach-O binary directly inside
+  # Versions/B/ (not wrapped in an .app), so we match it by name too.
   while IFS= read -r helper; do
     [[ -n "$helper" ]] || continue
     sign "$helper"
   done < <({
     find "$APP/Contents/Frameworks/Sparkle.framework" \
       \( -name '*.xpc' -o -name '*.app' \) -print
+    find "$APP/Contents/Frameworks/Sparkle.framework" \
+      -type f -name 'Autoupdate' -print
     find "$APP/Contents/MacOS" "$APP/Contents/Resources" \
       -maxdepth 2 -name '*.bundle' -print 2>/dev/null
   })
