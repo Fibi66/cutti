@@ -8828,6 +8828,7 @@ final class MediaCoreViewModel: ObservableObject {
         - 要改某个 segment 的属性前，先用 get_segment_detail 查当前值，避免盲改。
         - 画面类问题（构图 / 画质 / 是否空镜）用 get_frame_at 抽帧再判断，不要靠想象。
         - 涉及说话人（某人说的 / 谁在发言）先 detect_speakers 再 find_by_speaker / mute_speaker。
+        - **诊断 / 查询工具返回空或 not-ready 时，不要自动升级到更重的工具去满足它**。例：detect_speakers 报 no_transcript，**不要**自动跑 run_first_cut；find_by_transcript / find_by_speaker / find_filler_words 无结果，不要自动转录或重剪；mute_speaker 找不到目标 segment 也是同样道理。这种情况下停止 tool 循环，用自然语言告诉用户为什么做不了、并询问是否愿意运行那个更重的步骤（比如先做 First Cut）。**用户没明确点头之前一律不能调 run_first_cut / run_full_analysis 这类会重写整个时间线的工具。**
         - 用户要求"删掉所有 uh / 嗯 / 啊"这类按内容批量操作时，先调用 find_filler_words 拿到具体 cue 列表，再用 delete_range 按 composed_start..composed_end 一条条删除（或合并临近的）。
         - 用户用"我说到 X 的那段"指代时，先 find_by_transcript 找到 cue。
         - 用户问"我现在的剪辑多长 / 哪段最啰嗦"等粗略问题，先 get_timeline_summary。
@@ -10950,6 +10951,27 @@ final class MediaCoreViewModel: ObservableObject {
 
         case "detect_speakers":
             let request = DetectSpeakersRequest.parse(from: args)
+            // Hard stop when there's nothing to diarize. autoDetectSpeakers
+            // bails silently in that case (just sets a banner), and the old
+            // wrapper went on to claim ok=true detected_speakers=0 — which
+            // the LLM read as "no speakers found, I should make some" and
+            // promptly escalated to run_first_cut, recutting the user's
+            // video without permission. Return a real error and tell the
+            // agent in no uncertain terms not to climb the tool ladder on
+            // its own.
+            if composedSubtitles.isEmpty {
+                return AgentToolOutcome(
+                    resultJSON: AgentToolJSON.encodeError(
+                        "no_transcript: cannot detect speakers because the timeline has no transcribed cues yet. "
+                        + "DO NOT call run_first_cut, run_full_analysis, or any other transcription/cutting tool "
+                        + "to satisfy this — that would re-edit the user's video without their consent. "
+                        + "Stop the tool loop, reply in natural language explaining that detection needs a transcript, "
+                        + "and ask the user whether they'd like to run analysis first."
+                    ),
+                    userSummary: "⚠️ 还没有转录文本，无法识别说话人。先运行 First Cut 或 Transcript cleanup。",
+                    checkpointID: nil
+                )
+            }
             await autoDetectSpeakers(
                 pauseThreshold: request.pauseThreshold,
                 speakerCount: request.speakerCount
