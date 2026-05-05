@@ -1054,3 +1054,8 @@
 "Automatically install updates" = "Automatically install updates";
 "Download and install new versions on quit, without asking. Off by default." = "Download and install new versions on quit, without asking. Off by default.";
 "New speaker (Speaker %d)" = "New speaker (Speaker %d)";
+"Editing this cue" = "Editing this cue";
+"Editing all cues" = "Editing all cues";
+"Apply to all cues" = "Apply to all cues";
+"Reset to default" = "Reset to default";
+"Customized" = "Customized";

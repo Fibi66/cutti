@@ -63,6 +63,16 @@ struct ViewerStage: View {
     let showSubtitles: Bool
     @Binding var subtitleStyle: SubtitleStyle
     @Binding var subtitleSelected: Bool
+    /// ID of the cue currently rendered by the overlay. Plumbed
+    /// through to `SubtitleOverlay` so single-tap selection can scope
+    /// per-cue style edits to the clicked cue at the tap source
+    /// (instead of inferring later from a Bool state).
+    var subtitleCueID: UUID? = nil
+    /// Called when the user single-taps the on-canvas subtitle to
+    /// enter (or leave, with `nil`) per-cue scope. Owners route this
+    /// to `MediaCoreViewModel.selectedSubtitleID` so the inspector
+    /// and the style binding wrapper agree on which cue is active.
+    var onSelectSubtitleCue: ((UUID?) -> Void)? = nil
     var onCommitSubtitleText: ((String) -> Void)? = nil
     /// Bilingual variant of the in-place subtitle editor commit.
     /// Receives `(primaryText, secondaryText, secondaryLocale)`. The
@@ -153,6 +163,8 @@ struct ViewerStage: View {
                             videoAspectRatio: videoAspectRatio,
                             containerInset: 0,
                             isSelected: $subtitleSelected,
+                            cueID: subtitleCueID,
+                            onSelect: onSelectSubtitleCue,
                             onCommitText: onCommitSubtitleText,
                             onBeginEditing: onBeginSubtitleEdit,
                             onEndEditing: onEndSubtitleEdit,

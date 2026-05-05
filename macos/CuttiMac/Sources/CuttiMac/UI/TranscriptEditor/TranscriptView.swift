@@ -868,6 +868,15 @@ private struct FlowingCues: View {
                 .padding(.vertical, 2)
                 .background(background(for: cue))
                 .cornerRadius(3)
+                .overlay(alignment: .topTrailing) {
+                    if cue.styleOverride != nil {
+                        Image(systemName: "diamond.fill")
+                            .font(.system(size: 5, weight: .bold))
+                            .foregroundStyle(EditorShellStyle.accentSolid)
+                            .padding(2)
+                            .help(L("Customized"))
+                    }
+                }
                 .contentShape(Rectangle())
                 .modifier(ClickWithModifiers { mods in onClickCue(cue.id, mods) })
                 .onTapGesture(count: 2) { onBeginEdit(cue.id) }

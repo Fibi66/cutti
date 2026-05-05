@@ -22,6 +22,17 @@ struct SubtitleOverlay: View {
     /// Selection toggled by clicking the overlay. When false, interactions
     /// are disabled and the chrome is hidden.
     @Binding var isSelected: Bool
+    /// ID of the cue currently rendered inside the overlay (resolved by
+    /// the parent at the playhead). Plumbed in so single-tap can scope
+    /// per-cue style edits to *this* cue. Optional because some
+    /// non-cue overlay paths (e.g. preview without a backing
+    /// SubtitleEntry) don't have a stable identity yet.
+    var cueID: UUID? = nil
+    /// Called when the user single-taps the overlay to select it. The
+    /// payload is `cueID` so the parent can route per-cue selection
+    /// (e.g. set `selectedSubtitleID`) at the tap source — instead of
+    /// inferring from a Bool toggle later.
+    var onSelect: ((UUID?) -> Void)? = nil
     /// Called when the user commits an edit via double-click → TextField.
     /// `nil` disables inline editing.
     var onCommitText: ((String) -> Void)? = nil
@@ -92,6 +103,7 @@ struct SubtitleOverlay: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             isSelected = false
+                            onSelect?(nil)
                         }
                 }
 
@@ -145,7 +157,10 @@ struct SubtitleOverlay: View {
                 }
             }
             .onTapGesture(count: 1) {
-                if !isEditing { isSelected = true }
+                if !isEditing {
+                    isSelected = true
+                    onSelect?(cueID)
+                }
             }
             // Parent uses a normal `.gesture` so the child resize handle's
             // `.highPriorityGesture` can preempt it. Reversing these (parent
@@ -412,6 +427,7 @@ struct SubtitleOverlay: View {
         editSession &+= 1
         isEditing = true
         isSelected = true
+        onSelect?(cueID)
         onBeginEditing?()
         print("📝 SubtitleOverlay.beginEditing isEditing=true session=\(editSession) bilingualLocale=\(editingSecondaryLocale ?? "<none>")")
         // Drop any lingering first responder so AppKit's field editor

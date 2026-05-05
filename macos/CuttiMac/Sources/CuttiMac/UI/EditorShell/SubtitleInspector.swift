@@ -12,6 +12,23 @@ import CuttiKit
 struct SubtitleInspector: View {
     @Binding var style: SubtitleStyle
     var onClose: () -> Void
+    /// Human-readable scope label rendered in the inspector header
+    /// (e.g. "Editing this cue" / "Editing all cues"). Optional —
+    /// callers that don't pass one fall back to the legacy "Subtitle"
+    /// label.
+    var scopeLabel: String? = nil
+    /// True when the active cue carries a non-empty per-cue style
+    /// override. Drives footer button visibility — the "Apply to all
+    /// cues" + "Reset to default" actions only make sense when the
+    /// scope is per-cue and the cue has actually been customized.
+    var hasCueOverride: Bool = false
+    /// "Apply this cue's style to every cue project-wide", clearing
+    /// every other cue's per-cue override so the project becomes
+    /// visually consistent. Nil hides the button.
+    var onApplyToAllCues: (() -> Void)? = nil
+    /// Drop the active cue's per-cue override so it inherits the
+    /// project-wide `subtitleStyle` again. Nil hides the button.
+    var onResetToDefault: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,6 +37,11 @@ struct SubtitleInspector: View {
             fontSizeRow
             fontColorRow
             backgroundRow
+
+            if hasCueOverride && (onApplyToAllCues != nil || onResetToDefault != nil) {
+                Divider()
+                footer
+            }
         }
         .padding(14)
         .frame(width: 240)
@@ -39,7 +61,7 @@ struct SubtitleInspector: View {
 
     private var header: some View {
         HStack {
-            T("Subtitle")
+            Text(scopeLabel ?? L("Subtitle"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -50,6 +72,39 @@ struct SubtitleInspector: View {
             }
             .buttonStyle(.plain)
             .help(L("Close"))
+        }
+    }
+
+    // MARK: - Footer (per-cue scope only)
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let onApplyToAllCues {
+                Button(action: onApplyToAllCues) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "rectangle.stack.badge.plus")
+                            .font(.system(size: 10))
+                        Text(L("Apply to all cues"))
+                            .font(.system(size: 11))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+            }
+            if let onResetToDefault {
+                Button(action: onResetToDefault) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 10))
+                        Text(L("Reset to default"))
+                            .font(.system(size: 11))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 

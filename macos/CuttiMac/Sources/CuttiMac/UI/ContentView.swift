@@ -167,6 +167,10 @@ struct ContentView: View {
             showSubtitles: viewModel.showSubtitles && !viewModel.subtitlesPreviewHidden,
             subtitleStyle: viewModel.subtitleStyleEffectiveBinding,
             subtitleSelected: $viewModel.isSubtitleSelected,
+            subtitleCueID: viewModel.currentSubtitleID(at: playheadSeconds),
+            onSelectSubtitleCue: { cueID in
+                viewModel.selectedSubtitleID = cueID
+            },
             onCommitSubtitleText: { newText in
                 if let id = viewModel.currentSubtitleID(at: playheadSeconds) {
                     viewModel.updateSubtitleText(id: id, newText: newText)
@@ -271,7 +275,21 @@ struct ContentView: View {
         if viewModel.isSubtitleSelected && viewModel.showSubtitles {
             SubtitleInspector(
                 style: viewModel.subtitleStyleEffectiveBinding,
-                onClose: { viewModel.isSubtitleSelected = false }
+                onClose: {
+                    viewModel.isSubtitleSelected = false
+                    viewModel.selectedSubtitleID = nil
+                },
+                scopeLabel: viewModel.selectedSubtitleID != nil
+                    ? L("Editing this cue")
+                    : L("Editing all cues"),
+                hasCueOverride: viewModel.selectedSubtitleID
+                    .map { viewModel.cueHasStyleOverride($0) } ?? false,
+                onApplyToAllCues: viewModel.selectedSubtitleID != nil
+                    ? { _ = viewModel.applySelectedCueStyleToAllCues() }
+                    : nil,
+                onResetToDefault: viewModel.selectedSubtitleID != nil
+                    ? { _ = viewModel.resetSelectedCueStyleOverride() }
+                    : nil
             )
             .padding(12)
             .transition(.move(edge: .trailing).combined(with: .opacity))
