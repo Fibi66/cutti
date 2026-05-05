@@ -671,6 +671,16 @@ public struct SubtitleEntry: Identifiable, Equatable, Sendable {
     /// composer tolerates Whisper's leading-whitespace habit but will
     /// skip timings whose text can't be located.
     public var wordTimings: [WordTiming]? = nil
+    /// Per-cue visual override layered on top of the project-wide
+    /// `SubtitleStyle`. Nil means "render this cue identically to
+    /// every other cue in the project" — the back-compat path for
+    /// every cue authored before per-cue style overrides landed.
+    /// When present, the renderer applies it via
+    /// `styleOverride.applied(to: globalStyle)` for both viewer
+    /// preview and burn-in export, so preview is WYSIWYG.
+    /// Bilingual locale and karaoke options stay project-wide and
+    /// are intentionally absent from `SubtitleCueStyleOverride`.
+    public var styleOverride: SubtitleCueStyleOverride? = nil
 
     public init(
         id: UUID,
@@ -680,7 +690,8 @@ public struct SubtitleEntry: Identifiable, Equatable, Sendable {
         speakerID: Int? = nil,
         translations: [String: String] = [:],
         runs: [SubtitleRun]? = nil,
-        wordTimings: [WordTiming]? = nil
+        wordTimings: [WordTiming]? = nil,
+        styleOverride: SubtitleCueStyleOverride? = nil
     ) {
         self.id = id
         self.relativeStart = relativeStart
@@ -690,6 +701,67 @@ public struct SubtitleEntry: Identifiable, Equatable, Sendable {
         self.translations = translations
         self.runs = runs
         self.wordTimings = wordTimings
+        self.styleOverride = styleOverride
+    }
+
+    /// Returns a copy of this entry with the supplied fields
+    /// replaced and every other field preserved. This is the
+    /// canonical "tweak an existing cue without forgetting newly
+    /// added fields" surface — direct `SubtitleEntry(...)` calls in
+    /// transform paths silently drop fields when the struct gains
+    /// one (e.g. `runs`, `translations`, now `styleOverride`).
+    /// `with(...)` makes the preserve-by-default posture explicit
+    /// and survives future field additions.
+    ///
+    /// Note: nil arguments mean "preserve" (not "clear"). To clear
+    /// optional fields like `runs` or `wordTimings` after a text
+    /// edit, prefer `withTextChanged(_:)` which encodes that
+    /// invariant by name. For other clear scenarios, fall back to
+    /// the direct initializer.
+    public func with(
+        relativeStart: Double? = nil,
+        relativeDuration: Double? = nil,
+        text: String? = nil,
+        speakerID: Int? = nil,
+        translations: [String: String]? = nil,
+        runs: [SubtitleRun]? = nil,
+        wordTimings: [WordTiming]? = nil,
+        styleOverride: SubtitleCueStyleOverride? = nil
+    ) -> SubtitleEntry {
+        SubtitleEntry(
+            id: id,
+            relativeStart: relativeStart ?? self.relativeStart,
+            relativeDuration: relativeDuration ?? self.relativeDuration,
+            text: text ?? self.text,
+            speakerID: speakerID ?? self.speakerID,
+            translations: translations ?? self.translations,
+            runs: runs ?? self.runs,
+            wordTimings: wordTimings ?? self.wordTimings,
+            styleOverride: styleOverride ?? self.styleOverride
+        )
+    }
+
+    /// Convenience for the common "user rewrote the cue text" path.
+    /// Replaces `text`, drops `runs` and `wordTimings` (since both
+    /// invariants — runs concatenate to text, timings cover text —
+    /// no longer hold once the user typed a different sentence),
+    /// and **preserves everything else** including `styleOverride`,
+    /// `translations`, and `speakerID`. The caller can still drop
+    /// translations afterwards if desired (e.g. translation tool
+    /// posture: stale translations get cleared by the translate
+    /// agent on its next pass).
+    public func withTextChanged(_ newText: String) -> SubtitleEntry {
+        SubtitleEntry(
+            id: id,
+            relativeStart: relativeStart,
+            relativeDuration: relativeDuration,
+            text: newText,
+            speakerID: speakerID,
+            translations: translations,
+            runs: nil,
+            wordTimings: nil,
+            styleOverride: styleOverride
+        )
     }
 
     /// True when `runs` is nil or its concatenated plain text matches

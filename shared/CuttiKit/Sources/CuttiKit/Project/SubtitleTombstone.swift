@@ -31,6 +31,13 @@ public struct SubtitleTombstone: Codable, Equatable, Identifiable, Sendable {
     /// into timeline math.
     public let originalComposedStart: Double
     public let originalComposedEnd: Double
+    /// Per-cue style override carried across delete/restore so a
+    /// resurrected cue comes back wearing the same custom font/colour
+    /// the user set on it. Optional → nil round-trips for tombstones
+    /// authored before this field existed; back-compat is safe
+    /// because Swift's synthesized Codable uses `decodeIfPresent`
+    /// for optional properties.
+    public let styleOverride: SubtitleCueStyleOverride?
 
     public init(
         id: UUID,
@@ -41,7 +48,8 @@ public struct SubtitleTombstone: Codable, Equatable, Identifiable, Sendable {
         sourceEnd: Double,
         speedRate: Double,
         originalComposedStart: Double,
-        originalComposedEnd: Double
+        originalComposedEnd: Double,
+        styleOverride: SubtitleCueStyleOverride? = nil
     ) {
         self.id = id
         self.text = text
@@ -52,5 +60,6 @@ public struct SubtitleTombstone: Codable, Equatable, Identifiable, Sendable {
         self.speedRate = speedRate
         self.originalComposedStart = originalComposedStart
         self.originalComposedEnd = originalComposedEnd
+        self.styleOverride = styleOverride
     }
 }

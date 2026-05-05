@@ -72,6 +72,14 @@ extension SubtitleEntry {
             atLocalBoundary: safeBoundary
         )
 
+        // Per-cue style override propagates to **both halves** —
+        // splitting one visually-customized cue should yield two
+        // visually-identical halves; the user can later reset one if
+        // they want to differentiate. Translations and runs are still
+        // dropped (see header comment) — preserving styleOverride is
+        // safe because it's whole-cue formatting, independent of the
+        // text-range invariants that make runs/translations unsafe to
+        // split.
         let left = SubtitleEntry(
             id: id,
             relativeStart: relativeStart,
@@ -80,7 +88,8 @@ extension SubtitleEntry {
             speakerID: speakerID,
             translations: [:],
             runs: nil,
-            wordTimings: leftTimings
+            wordTimings: leftTimings,
+            styleOverride: styleOverride
         )
         let right = SubtitleEntry(
             id: UUID(),
@@ -90,7 +99,8 @@ extension SubtitleEntry {
             speakerID: speakerID,
             translations: [:],
             runs: nil,
-            wordTimings: rightTimings
+            wordTimings: rightTimings,
+            styleOverride: styleOverride
         )
         return (left, right)
     }
@@ -228,6 +238,11 @@ extension SubtitleEntry {
             }
         }
 
+        // Per-cue style override merge policy: keep **left**'s
+        // override silently. If right carries a different override,
+        // it is dropped — the merged cue inherits the left's visual
+        // identity, matching how `id` and `speakerID` already favor
+        // the left side. V2 may surface a prompt-on-conflict instead.
         return SubtitleEntry(
             id: self.id,
             relativeStart: mergedStart,
@@ -236,7 +251,8 @@ extension SubtitleEntry {
             speakerID: self.speakerID,
             translations: mergedTranslations,
             runs: nil,
-            wordTimings: combined
+            wordTimings: combined,
+            styleOverride: self.styleOverride
         )
     }
 

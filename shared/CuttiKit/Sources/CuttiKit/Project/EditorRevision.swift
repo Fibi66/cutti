@@ -195,9 +195,14 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
         /// render uniformly (no word-level pill sweep) until the owning
         /// audio is re-transcribed with word timestamps enabled.
         public let wordTimings: [WordTiming]?
+        /// Optional per-cue visual style override. Missing field
+        /// rehydrates as nil — back-compat for every revision written
+        /// before per-cue style overrides landed; such cues render
+        /// using the project-wide `SubtitleStyle` exactly as before.
+        public let styleOverride: SubtitleCueStyleOverride?
 
         enum CodingKeys: String, CodingKey {
-            case id, relativeStart, relativeDuration, text, speakerID, translations, runs, wordTimings
+            case id, relativeStart, relativeDuration, text, speakerID, translations, runs, wordTimings, styleOverride
         }
 
         public init(from entry: SubtitleEntry) {
@@ -209,6 +214,10 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
             self.translations = entry.translations.isEmpty ? nil : entry.translations
             self.runs = entry.runs
             self.wordTimings = entry.wordTimings
+            // Persist nil for empty overrides so revisions stay
+            // bit-identical to pre-feature ones when no cue is
+            // customized — keeps diffs and migration audits clean.
+            self.styleOverride = (entry.styleOverride?.hasAnyField == true) ? entry.styleOverride : nil
         }
 
         public init(from decoder: any Decoder) throws {
@@ -221,6 +230,7 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
             translations = try c.decodeIfPresent([String: String].self, forKey: .translations)
             runs = try c.decodeIfPresent([SubtitleRun].self, forKey: .runs)
             wordTimings = try c.decodeIfPresent([WordTiming].self, forKey: .wordTimings)
+            styleOverride = try c.decodeIfPresent(SubtitleCueStyleOverride.self, forKey: .styleOverride)
         }
 
         public func toSubtitleEntry() -> SubtitleEntry {
@@ -232,7 +242,8 @@ public struct EditorRevision: Codable, Identifiable, Sendable {
                 speakerID: speakerID,
                 translations: translations ?? [:],
                 runs: runs,
-                wordTimings: wordTimings
+                wordTimings: wordTimings,
+                styleOverride: styleOverride
             )
         }
     }

@@ -356,7 +356,8 @@ public struct AIActionExecutor {
                     speakerID: old.speakerID,
                     translations: old.translations,
                     runs: nil,
-                    wordTimings: nil
+                    wordTimings: nil,
+                    styleOverride: old.styleOverride
                 )
                 applied += 1
 
@@ -378,7 +379,8 @@ public struct AIActionExecutor {
                                 speakerID: old.speakerID,
                                 translations: old.translations,
                                 runs: nil,
-                                wordTimings: nil
+                                wordTimings: nil,
+                                styleOverride: old.styleOverride
                             )
                             changed += 1
                         }

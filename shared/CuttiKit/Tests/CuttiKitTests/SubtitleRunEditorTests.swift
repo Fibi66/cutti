@@ -338,7 +338,43 @@ final class SubtitleRunEditorTests: XCTestCase {
             EditorRevision.PersistableSubtitle.self, from: legacyJSON)
         let entry = decoded.toSubtitleEntry()
         XCTAssertNil(entry.runs)
+        XCTAssertNil(entry.styleOverride)
         XCTAssertEqual(entry.text, "legacy")
+    }
+
+    func test_subtitleEntry_styleOverride_persistAndRehydrate() throws {
+        let override = SubtitleCueStyleOverride(
+            fontSizePoints: 64,
+            textColor: .yellow,
+            backgroundColor: .black,
+            cornerRadius: 12
+        )
+        let entry = SubtitleEntry(
+            id: UUID(),
+            relativeStart: 0,
+            relativeDuration: 1.5,
+            text: "highlighted",
+            styleOverride: override
+        )
+        let data = try JSONEncoder().encode(EditorRevision.PersistableSubtitle(from: entry))
+        let decoded = try JSONDecoder().decode(
+            EditorRevision.PersistableSubtitle.self, from: data)
+        XCTAssertEqual(decoded.toSubtitleEntry().styleOverride, override)
+    }
+
+    func test_subtitleEntry_styleOverride_emptyOverride_persistsAsNil() throws {
+        // An override that has had every field reset (hasAnyField == false)
+        // should round-trip to nil — keeping diffs/manifests bit-identical
+        // to pre-feature output for projects that touched no cue style.
+        let entry = SubtitleEntry(
+            id: UUID(),
+            relativeStart: 0,
+            relativeDuration: 1.5,
+            text: "no-op override",
+            styleOverride: SubtitleCueStyleOverride()
+        )
+        let persistable = EditorRevision.PersistableSubtitle(from: entry)
+        XCTAssertNil(persistable.styleOverride)
     }
 
     func test_subtitleEntry_hasConsistentRuns_detectsDrift() {

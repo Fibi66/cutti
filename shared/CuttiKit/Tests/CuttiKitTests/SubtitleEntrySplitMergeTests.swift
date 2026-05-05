@@ -243,4 +243,76 @@ final class SubtitleEntrySplitMergeTests: XCTestCase {
         let b = SubtitleEntry(id: UUID(), relativeStart: 1.0, relativeDuration: 1.0, text: "bar", speakerID: 2)
         XCTAssertEqual(a.appending(b).speakerID, 1)
     }
+
+    // MARK: - Style override propagation
+
+    func test_split_propagatesStyleOverrideToBothHalves() {
+        let override = SubtitleCueStyleOverride(
+            fontSizePoints: 64,
+            textColor: .yellow,
+            backgroundColor: .black
+        )
+        let entry = SubtitleEntry(
+            id: UUID(),
+            relativeStart: 0,
+            relativeDuration: 2.0,
+            text: "hello world",
+            styleOverride: override
+        )
+        guard let (left, right) = entry.split(atUTF16Offset: 6) else {
+            return XCTFail("expected non-nil split")
+        }
+        XCTAssertEqual(left.styleOverride, override, "left half must keep override")
+        XCTAssertEqual(right.styleOverride, override, "right half must keep override")
+    }
+
+    func test_split_noOverride_yieldsNilOverride() {
+        let entry = SubtitleEntry(
+            id: UUID(),
+            relativeStart: 0,
+            relativeDuration: 2.0,
+            text: "hello world"
+        )
+        guard let (left, right) = entry.split(atUTF16Offset: 6) else {
+            return XCTFail("expected non-nil split")
+        }
+        XCTAssertNil(left.styleOverride)
+        XCTAssertNil(right.styleOverride)
+    }
+
+    func test_appending_keepsLeftStyleOverride_dropsRights() {
+        let leftOverride = SubtitleCueStyleOverride(textColor: .yellow)
+        let rightOverride = SubtitleCueStyleOverride(textColor: SubtitleStyle.RGBAColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let a = SubtitleEntry(
+            id: UUID(), relativeStart: 0, relativeDuration: 1.0, text: "foo",
+            styleOverride: leftOverride
+        )
+        let b = SubtitleEntry(
+            id: UUID(), relativeStart: 1.0, relativeDuration: 1.0, text: "bar",
+            styleOverride: rightOverride
+        )
+        XCTAssertEqual(a.appending(b).styleOverride, leftOverride,
+                       "merge must preserve the LEFT override silently")
+    }
+
+    func test_appending_leftHasOverride_rightDoesNot_keepsLeft() {
+        let leftOverride = SubtitleCueStyleOverride(fontSizePoints: 100)
+        let a = SubtitleEntry(
+            id: UUID(), relativeStart: 0, relativeDuration: 1.0, text: "foo",
+            styleOverride: leftOverride
+        )
+        let b = SubtitleEntry(id: UUID(), relativeStart: 1.0, relativeDuration: 1.0, text: "bar")
+        XCTAssertEqual(a.appending(b).styleOverride, leftOverride)
+    }
+
+    func test_appending_leftNoOverride_rightHasOverride_resultIsNil() {
+        let rightOverride = SubtitleCueStyleOverride(fontSizePoints: 100)
+        let a = SubtitleEntry(id: UUID(), relativeStart: 0, relativeDuration: 1.0, text: "foo")
+        let b = SubtitleEntry(
+            id: UUID(), relativeStart: 1.0, relativeDuration: 1.0, text: "bar",
+            styleOverride: rightOverride
+        )
+        XCTAssertNil(a.appending(b).styleOverride,
+                     "right's override is intentionally dropped on merge (V1 silent left-wins)")
+    }
 }

@@ -1733,7 +1733,8 @@ final class MediaCoreViewModel: ObservableObject {
                     speakerID: preservedSpeakerID,
                     translations: preservedTranslations,
                     runs: preservedRuns,
-                    wordTimings: entry.wordTimings
+                    wordTimings: entry.wordTimings,
+                    styleOverride: entry.styleOverride
                 )
             }
         }
@@ -1780,7 +1781,10 @@ final class MediaCoreViewModel: ObservableObject {
                         relativeDuration: old.relativeDuration,
                         text: old.text,
                         speakerID: old.speakerID,
-                        translations: newTranslations
+                        translations: newTranslations,
+                        runs: old.runs,
+                        wordTimings: old.wordTimings,
+                        styleOverride: old.styleOverride
                     )
                     writeCount += 1
                     located = true
@@ -2096,7 +2100,8 @@ final class MediaCoreViewModel: ObservableObject {
                 sourceEnd: clampedSourceEnd,
                 speedRate: seg.normalizedSpeedRate,
                 originalComposedStart: cue.startSeconds,
-                originalComposedEnd: cue.endSeconds
+                originalComposedEnd: cue.endSeconds,
+                styleOverride: entry.styleOverride
             )
             plans.append(Plan(
                 tombstone: tombstone,
@@ -2153,7 +2158,8 @@ final class MediaCoreViewModel: ObservableObject {
             relativeStart: 0,
             relativeDuration: sourceDuration,
             text: tombstone.text,
-            speakerID: tombstone.speakerID
+            speakerID: tombstone.speakerID,
+            styleOverride: tombstone.styleOverride
         )
         let newSegment = TimelineSegment(
             id: UUID(),
@@ -2229,7 +2235,8 @@ final class MediaCoreViewModel: ObservableObject {
                         speakerID: old.speakerID,
                         translations: old.translations,
                         runs: nil,
-                        wordTimings: nil
+                        wordTimings: nil,
+                        styleOverride: old.styleOverride
                     )
                     changed += 1
                 }
@@ -2270,7 +2277,8 @@ final class MediaCoreViewModel: ObservableObject {
                     speakerID: old.speakerID,
                     translations: old.translations,
                     runs: nil,
-                    wordTimings: nil
+                    wordTimings: nil,
+                    styleOverride: old.styleOverride
                 )
                 didChange = true
                 break
@@ -2340,7 +2348,8 @@ final class MediaCoreViewModel: ObservableObject {
                 speakerID: old.speakerID,
                 translations: newTranslations,
                 runs: primaryChanged ? nil : old.runs,
-                wordTimings: primaryChanged ? nil : old.wordTimings
+                wordTimings: primaryChanged ? nil : old.wordTimings,
+                styleOverride: old.styleOverride
             )
             rebuildComposedSubtitles()
             return
@@ -2561,7 +2570,9 @@ final class MediaCoreViewModel: ObservableObject {
                 text: old.text,
                 speakerID: old.speakerID,
                 translations: old.translations,
-                runs: normalized
+                runs: normalized,
+                wordTimings: old.wordTimings,
+                styleOverride: old.styleOverride
             )
             rebuildComposedSubtitles()
             return true
@@ -2589,7 +2600,9 @@ final class MediaCoreViewModel: ObservableObject {
                 text: old.text,
                 speakerID: old.speakerID,
                 translations: old.translations,
-                runs: nil
+                runs: nil,
+                wordTimings: old.wordTimings,
+                styleOverride: old.styleOverride
             )
             rebuildComposedSubtitles()
             return true
@@ -2803,7 +2816,8 @@ final class MediaCoreViewModel: ObservableObject {
             speakerID: oldCue.speakerID,
             translations: oldCue.translations,
             runs: oldCue.runs,
-            wordTimings: oldCue.wordTimings
+            wordTimings: oldCue.wordTimings,
+            styleOverride: oldCue.styleOverride
         )
         timelineSegments[targetSegIndex].subtitles.append(newCue)
         timelineSegments[targetSegIndex].subtitles.sort { $0.relativeStart < $1.relativeStart }
@@ -2855,7 +2869,8 @@ final class MediaCoreViewModel: ObservableObject {
             speakerID: oldCue.speakerID,
             translations: oldCue.translations,
             runs: oldCue.runs,
-            wordTimings: oldCue.wordTimings
+            wordTimings: oldCue.wordTimings,
+            styleOverride: oldCue.styleOverride
         )
         newSubs.sort { $0.relativeStart < $1.relativeStart }
         timelineSegments[segIndex].subtitles = newSubs
@@ -3055,7 +3070,8 @@ final class MediaCoreViewModel: ObservableObject {
                     relativeStart: max(0, sub.relativeStart - splitOffset),
                     relativeDuration: sub.relativeDuration,
                     text: sub.text,
-                    speakerID: sub.speakerID
+                    speakerID: sub.speakerID,
+                    styleOverride: sub.styleOverride
                 ))
             } else {
                 // Cue straddles the split — clip to left, and put a new
@@ -3068,7 +3084,8 @@ final class MediaCoreViewModel: ObservableObject {
                         relativeStart: sub.relativeStart,
                         relativeDuration: leftDur,
                         text: sub.text,
-                        speakerID: sub.speakerID
+                        speakerID: sub.speakerID,
+                        styleOverride: sub.styleOverride
                     ))
                 }
                 let rightDur = subEnd - splitOffset
@@ -3078,7 +3095,8 @@ final class MediaCoreViewModel: ObservableObject {
                         relativeStart: 0,
                         relativeDuration: rightDur,
                         text: sub.text,
-                        speakerID: sub.speakerID
+                        speakerID: sub.speakerID,
+                        styleOverride: sub.styleOverride
                     ))
                 }
             }
@@ -3235,7 +3253,8 @@ final class MediaCoreViewModel: ObservableObject {
                     speakerID: sub.speakerID,
                     translations: sub.translations,
                     runs: sub.runs,
-                    wordTimings: sub.wordTimings
+                    wordTimings: sub.wordTimings,
+                    styleOverride: sub.styleOverride
                 ))
             } else {
                 let leftDur = splitOffsetInSource - sub.relativeStart
@@ -3248,7 +3267,8 @@ final class MediaCoreViewModel: ObservableObject {
                         speakerID: sub.speakerID,
                         translations: sub.translations,
                         runs: nil,
-                        wordTimings: nil
+                        wordTimings: nil,
+                        styleOverride: sub.styleOverride
                     ))
                 }
                 let rightDur = subEnd - splitOffsetInSource
@@ -3261,7 +3281,8 @@ final class MediaCoreViewModel: ObservableObject {
                         speakerID: sub.speakerID,
                         translations: sub.translations,
                         runs: nil,
-                        wordTimings: nil
+                        wordTimings: nil,
+                        styleOverride: sub.styleOverride
                     ))
                 }
             }
@@ -3476,7 +3497,11 @@ final class MediaCoreViewModel: ObservableObject {
                     relativeStart: sub.relativeStart + offsetSource,
                     relativeDuration: sub.relativeDuration,
                     text: sub.text,
-                    speakerID: sub.speakerID
+                    speakerID: sub.speakerID,
+                    translations: sub.translations,
+                    runs: sub.runs,
+                    wordTimings: sub.wordTimings,
+                    styleOverride: sub.styleOverride
                 ))
             }
             offsetSource += seg.range.endSeconds - seg.range.startSeconds
