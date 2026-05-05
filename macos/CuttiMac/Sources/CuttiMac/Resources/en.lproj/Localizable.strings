@@ -1006,7 +1006,8 @@
 "Changing this restarts Cutti." = "Changing this restarts Cutti.";
 "Choose where Cutti's AI runs. Cutti Cloud is fastest to start; bring your own keys for full control." = "Choose where Cutti's AI runs. Cutti Cloud is fastest to start; bring your own keys for full control.";
 "Create account" = "Create account";
-"Default behaviors when starting a new clip session." = "Default behaviors when starting a new clip session.";
+"Default behaviors, language, and the local speech model." = "Default behaviors, language, and the local speech model.";
+"Local speech model" = "Local speech model";
 "Email unverified" = "Email unverified";
 "Help us make Cutti better." = "Help us make Cutti better.";
 "How Cutti picks models for first-cut and creative tasks." = "How Cutti picks models for first-cut and creative tasks.";
@@ -1024,11 +1025,8 @@
 "Sign in to use AI features. Required for both Cutti Cloud and Custom (BYOK) modes." = "Sign in to use AI features. Required for both Cutti Cloud and Custom (BYOK) modes.";
 "Sign out" = "Sign out";
 "Smart" = "Smart";
-"Speech and language preferences." = "Speech and language preferences.";
-"Speech recognition" = "Speech recognition";
 "Stored in macOS Keychain." = "Stored in macOS Keychain.";
 "Use a different provider for images" = "Use a different provider for images";
-"Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles." = "Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles.";
 "Verified" = "Verified";
 "When you create a new clip, the subtitle overlay is visible in preview and timeline." = "When you create a new clip, the subtitle overlay is visible in preview and timeline.";
 "Where your credits went, by feature." = "Where your credits went, by feature.";

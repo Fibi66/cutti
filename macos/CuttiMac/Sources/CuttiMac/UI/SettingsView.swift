@@ -50,15 +50,7 @@ struct SettingsView: View {
                 list.append(contentsOf: [.subscription, .usage])
             }
         }
-        list.append(contentsOf: [.general, .editor])
-        // Qwen3-ASR sidebar entry hidden on Intel Macs (where it can
-        // never run) and on Mac App Store builds (where shipping a
-        // private Python runtime would breach Apple's review rules —
-        // direct-distribution only). Otherwise visible whether or not
-        // it's installed: that's how users discover the feature.
-        if qwenAsrHostIsAppleSilicon() && CuttiDistribution.current == .direct {
-            list.append(.qwenAsr)
-        }
+        list.append(.general)
         // Auto-update controls only exist on direct-download builds.
         // On Mac App Store builds Apple handles updates and Sparkle is
         // not even instantiated (see SparkleUpdater).
@@ -136,8 +128,6 @@ struct SettingsView: View {
         case .subscription: SubscriptionSection()
         case .usage:        UsageSection()
         case .general:      GeneralSection()
-        case .editor:       EditorSection()
-        case .qwenAsr:      QwenAsrSection()
         case .updates:      UpdatesSection()
         case .support:      SupportSection()
         case .developer:    DeveloperSection()

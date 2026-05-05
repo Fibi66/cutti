@@ -440,7 +440,6 @@ struct ContentView: View {
     }
 
     enum LeftPanelTab { case chat, media }  // retained for EditorShellSmokeTests compat
-    @AppStorage(CuttiSettings.editorLanguageKey) private var editorLanguageRaw: String = EditorLanguagePreference.automatic.rawValue
     @AppStorage(CuttiSettings.qwenSetupDismissedKey) private var qwenSetupDismissedRaw: Bool = false
     @ObservedObject private var qwenManager: QwenAsrSidecarManager = .shared
 
@@ -1025,12 +1024,6 @@ struct ContentView: View {
             await viewModel.loadRevisions()
             await viewModel.loadChatHistory()
             await viewModel.loadRecords(validateSources: true)
-        }
-        .onChange(of: editorLanguageRaw) { _, _ in
-            // Language preference change has no effect on the Qwen
-            // overlay state (the install state is global), but the
-            // hook is kept as a placeholder for future language-
-            // gated UI.
         }
         .sheet(isPresented: $showAgentTrace) {
             AgentTraceView(

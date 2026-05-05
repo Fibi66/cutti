@@ -20,8 +20,7 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         )
 
         let profile = CuttiSettings.resolveSpeechProfile(
-            language: .chinese,
-            fallbackLocale: Locale(identifier: "en-US"),
+            fallbackLocale: Locale(identifier: "zh-CN"),
             capabilities: caps
         )
 
@@ -38,7 +37,6 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         )
 
         let profile = CuttiSettings.resolveSpeechProfile(
-            language: .english,
             fallbackLocale: Locale(identifier: "en-US"),
             capabilities: caps
         )
@@ -59,7 +57,6 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         )
 
         let profile = CuttiSettings.resolveSpeechProfile(
-            language: .automatic,
             fallbackLocale: Locale(identifier: "zh-CN"),
             capabilities: caps
         )
@@ -79,7 +76,6 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         )
 
         let profile = CuttiSettings.resolveSpeechProfile(
-            language: .english,
             fallbackLocale: Locale(identifier: "en-US"),
             capabilities: caps
         )
@@ -87,7 +83,7 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(profile.backendChain, [.appleSpeech])
     }
 
-    func test_resolveSpeechProfile_automaticPicksCantoneseFromLocale() {
+    func test_resolveSpeechProfile_cantoneseLocalePropagatesYueHint() {
         let caps = SpeechResolverCapabilities(
             isDirectDistribution: true,
             isAppleSilicon: true,
@@ -95,7 +91,6 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         )
 
         let profile = CuttiSettings.resolveSpeechProfile(
-            language: .automatic,
             fallbackLocale: Locale(identifier: "yue-Hant-HK"),
             capabilities: caps
         )

@@ -49,7 +49,6 @@ struct SpeechTranscriptionService: Sendable {
 
     func transcribe(url: URL, onProgress: (@Sendable (String) -> Void)? = nil) async throws -> Result {
         let profile = CuttiSettings.resolvedSpeechProfile(
-            defaults: .standard,
             fallbackLocale: locale
         )
         var lastError: Error?

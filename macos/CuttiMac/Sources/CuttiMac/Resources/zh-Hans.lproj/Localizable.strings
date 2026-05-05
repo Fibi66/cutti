@@ -1012,7 +1012,8 @@
 "Changing this restarts Cutti." = "修改此项会重启 Cutti。";
 "Choose where Cutti's AI runs. Cutti Cloud is fastest to start; bring your own keys for full control." = "选择 Cutti AI 的运行位置。Cutti 云端开箱即用最快；自带 API Key 可完全自主控制。";
 "Create account" = "创建账户";
-"Default behaviors when starting a new clip session." = "新建剪辑会话时的默认行为。";
+"Default behaviors, language, and the local speech model." = "默认行为、语言以及本地语音模型。";
+"Local speech model" = "本地语音模型";
 "Email unverified" = "邮箱未验证";
 "Help us make Cutti better." = "帮助我们把 Cutti 做得更好。";
 "How Cutti picks models for first-cut and creative tasks." = "Cutti 在初剪和创意任务中如何选择模型。";
@@ -1030,11 +1031,8 @@
 "Sign in to use AI features. Required for both Cutti Cloud and Custom (BYOK) modes." = "登录后即可使用 AI 功能。Cutti 云端和 BYOK 模式都需要登录。";
 "Sign out" = "退出登录";
 "Smart" = "智能";
-"Speech and language preferences." = "语音与语言偏好。";
-"Speech recognition" = "语音识别";
 "Stored in macOS Keychain." = "存储在 macOS 钥匙串中。";
 "Use a different provider for images" = "图像使用不同的服务";
-"Used by the local speech model (Qwen3-ASR when installed, otherwise Apple Speech) to generate subtitles." = "由本地语音模型生成字幕（已安装 Qwen3-ASR 时使用，否则回退到 Apple Speech）。";
 "Verified" = "已验证";
 "When you create a new clip, the subtitle overlay is visible in preview and timeline." = "新建剪辑时，字幕叠加将在预览和时间线中可见。";
 "Where your credits went, by feature." = "按功能划分的积分使用情况。";

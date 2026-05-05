@@ -1,66 +1,5 @@
 import Foundation
 
-enum EditorLanguagePreference: String, CaseIterable, Identifiable, Sendable {
-    case automatic
-    case chinese
-    case english
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .automatic:
-            return "Automatic"
-        case .chinese:
-            return "Chinese"
-        case .english:
-            return "English"
-        }
-    }
-
-    func resolvedLocale(fallback: Locale) -> Locale {
-        switch self {
-        case .automatic:
-            return fallback
-        case .chinese:
-            return Locale(identifier: "zh-CN")
-        case .english:
-            return Locale(identifier: "en-US")
-        }
-    }
-
-    /// Two-letter language hint forwarded to the speech engine. Returns
-    /// `en` / `zh` / `yue`. The Qwen3-ASR aligner accepts all three;
-    /// Apple SFSpeech only consumes the parent locale (built from
-    /// `resolvedLocale`), so this code is just a hint for the primary
-    /// engine.
-    func resolvedLanguageCode(fallback: Locale) -> String {
-        switch self {
-        case .automatic:
-            let lang = fallback.language.languageCode?.identifier.lowercased() ?? "en"
-            switch lang {
-            case "zh":
-                return "zh"
-            case "yue":
-                return "yue"
-            default:
-                return "en"
-            }
-        case .chinese:
-            return "zh"
-        case .english:
-            return "en"
-        }
-    }
-
-    /// Primary backend. Always Qwen3-ASR — accuracy + per-character
-    /// timestamps win for both CJK and English. Apple SFSpeech remains
-    /// the fallback when Qwen isn't installed (or fails at runtime).
-    func resolvedPrimaryBackend(fallback: Locale) -> SpeechRecognitionBackend {
-        return .qwenAsrSidecar
-    }
-}
-
 enum SpeechRecognitionBackend: String, Sendable {
     case appleSpeech
     /// Local Qwen3-ASR + ForcedAligner sidecar (Apple Silicon, direct
@@ -80,9 +19,10 @@ enum SpeechRecognitionBackend: String, Sendable {
 }
 
 struct SpeechRecognitionProfile: Sendable {
-    let languagePreference: EditorLanguagePreference
     let locale: Locale
-    /// Two-letter ASR language hint (`en` / `zh` / `yue`).
+    /// Two-letter ASR language hint (`en` / `zh` / `yue`) derived from
+    /// `locale.language.languageCode`. Qwen3-ASR consumes all three;
+    /// Apple SFSpeech reads the parent locale.
     let languageCode: String
     /// Ordered list of backends to try, first → last. Each entry is
     /// attempted until one returns non-empty results. Always at least
@@ -123,10 +63,8 @@ struct SpeechResolverCapabilities: Sendable {
 
 enum CuttiSettings {
     static let subtitlesVisibleByDefaultKey = "cutti.subtitlesVisibleByDefault"
-    static let editorLanguageKey = "cutti.editorLanguage"
     static let showAgentTraceKey = "cutti.showAgentTrace"
-    /// User's preferred UI language. Independent from `editorLanguageKey`,
-    /// which controls speech recognition. Values: "system" / "en" / "zh-Hans".
+    /// User's preferred UI language. Values: "system" / "en" / "zh-Hans".
     /// Applied at app launch via the `AppleLanguages` UserDefaults key;
     /// changes require a restart to fully take effect.
     static let uiLanguageKey = "cutti.uiLanguage"
@@ -161,9 +99,6 @@ enum CuttiSettings {
     static func ensureDefaults(defaults: UserDefaults = .standard) {
         if defaults.object(forKey: subtitlesVisibleByDefaultKey) == nil {
             defaults.set(true, forKey: subtitlesVisibleByDefaultKey)
-        }
-        if defaults.object(forKey: editorLanguageKey) == nil {
-            defaults.set(EditorLanguagePreference.automatic.rawValue, forKey: editorLanguageKey)
         }
         if defaults.object(forKey: showAgentTraceKey) == nil {
             defaults.set(false, forKey: showAgentTraceKey)
@@ -200,19 +135,10 @@ enum CuttiSettings {
         return defaults.bool(forKey: subtitlesVisibleByDefaultKey)
     }
 
-    static func editorLanguage(defaults: UserDefaults = .standard) -> EditorLanguagePreference {
-        guard let rawValue = defaults.string(forKey: editorLanguageKey),
-              let language = EditorLanguagePreference(rawValue: rawValue) else {
-            return .automatic
-        }
-        return language
-    }
-
-    /// Pure resolver. Given a language preference, fallback locale, and
-    /// host capabilities, return the speech profile. Has no side
+    /// Pure resolver. Given a fallback locale (typically `Locale.current`)
+    /// and host capabilities, return the speech profile. Has no side
     /// effects and reads no globals — kept testable.
     static func resolveSpeechProfile(
-        language: EditorLanguagePreference,
         fallbackLocale: Locale,
         capabilities: SpeechResolverCapabilities
     ) -> SpeechRecognitionProfile {
@@ -227,9 +153,8 @@ enum CuttiSettings {
         chain.append(.appleSpeech)
 
         return SpeechRecognitionProfile(
-            languagePreference: language,
-            locale: language.resolvedLocale(fallback: fallbackLocale),
-            languageCode: language.resolvedLanguageCode(fallback: fallbackLocale),
+            locale: fallbackLocale,
+            languageCode: asrLanguageHint(for: fallbackLocale),
             backendChain: chain
         )
     }
@@ -237,14 +162,25 @@ enum CuttiSettings {
     /// Production entry point — fills `SpeechResolverCapabilities` from
     /// real host state and delegates to the pure resolver.
     static func resolvedSpeechProfile(
-        defaults: UserDefaults = .standard,
         fallbackLocale: Locale = .current
     ) -> SpeechRecognitionProfile {
         return resolveSpeechProfile(
-            language: editorLanguage(defaults: defaults),
             fallbackLocale: fallbackLocale,
             capabilities: SpeechResolverCapabilities.current()
         )
+    }
+
+    /// Map a `Locale` to a 2-letter ASR hint. Returns `zh` for any
+    /// Chinese variant, `yue` for Cantonese, and `en` for everything
+    /// else. Qwen3-ASR's aligner accepts all three; Apple SFSpeech
+    /// reads the parent locale.
+    static func asrLanguageHint(for locale: Locale) -> String {
+        let lang = locale.language.languageCode?.identifier.lowercased() ?? "en"
+        switch lang {
+        case "zh": return "zh"
+        case "yue": return "yue"
+        default: return "en"
+        }
     }
 
     // MARK: - Qwen setup overlay dismissal

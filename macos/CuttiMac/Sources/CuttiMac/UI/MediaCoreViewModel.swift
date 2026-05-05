@@ -6488,7 +6488,7 @@ final class MediaCoreViewModel: ObservableObject {
                 break
             }
 
-            let isEnglish = Self.currentEditorLocaleIsEnglish()
+            let isEnglish = Self.currentAppLanguageIsEnglish()
             // The brief's `language` controls what language the
             // animation copy is generated in (heading / labels / etc).
             // It must reflect the SOURCE audio's language so visuals
@@ -8993,7 +8993,7 @@ final class MediaCoreViewModel: ObservableObject {
         // need to analyse first) and then each tool-call step of the
         // agent loop. `runAgentLoop` adopts this id so it updates in
         // place instead of spawning a second bubble.
-        let isEnglish = Self.currentEditorLocaleIsEnglish()
+        let isEnglish = Self.currentAppLanguageIsEnglish()
         let needsAnalysis = timelineSegments.isEmpty && revisions.isEmpty
         let liveBubbleID = UUID()
         let initialLive = needsAnalysis
@@ -9357,7 +9357,7 @@ final class MediaCoreViewModel: ObservableObject {
         // (chat path where analysis was run first into the same
         // bubble), otherwise spawn a fresh one. Either way the
         // bubble's id is stable for the duration of this turn.
-        let isEnglish = Self.currentEditorLocaleIsEnglish()
+        let isEnglish = Self.currentAppLanguageIsEnglish()
         let liveBubbleID: UUID
         if let existingLiveBubbleID {
             liveBubbleID = existingLiveBubbleID
@@ -9904,14 +9904,24 @@ final class MediaCoreViewModel: ObservableObject {
         return false
     }
 
-    /// Read the user's editor-language preference. `.automatic` falls
-    /// back to the process locale; anything non-English is treated as
-    /// Chinese (the product's default).
-    static func currentEditorLocaleIsEnglish() -> Bool {
-        let pref = CuttiSettings.editorLanguage()
-        let locale = pref.resolvedLocale(fallback: .current)
-        let code = locale.language.languageCode?.identifier ?? "zh"
-        return code == "en"
+    /// Read whether the AI prompt / chat copy should default to English.
+    /// Driven by the user's interface-language preference
+    /// (`uiLanguageKey`); when that is `system`, falls through to
+    /// `Locale.current`. Source-audio language is detected separately
+    /// by the speech engine and has no influence here.
+    static func currentAppLanguageIsEnglish() -> Bool {
+        let raw = UserDefaults.standard.string(forKey: CuttiSettings.uiLanguageKey)
+            ?? CuttiSettings.uiLanguageSystem
+        switch raw {
+        case CuttiSettings.uiLanguageEnglish:
+            return true
+        case CuttiSettings.uiLanguageChinese:
+            return false
+        default:
+            // System: trust the OS-resolved primary language.
+            let code = Locale.current.language.languageCode?.identifier.lowercased() ?? "en"
+            return code == "en"
+        }
     }
 
     /// Pick a short, casual one-liner for the live bubble. Prefers
@@ -11083,7 +11093,7 @@ final class MediaCoreViewModel: ObservableObject {
             let client = OpenAIClient(configuration: config)
             let engine = SubtitleTranslationEngine(client: client)
 
-            let isEnglish = Self.currentEditorLocaleIsEnglish()
+            let isEnglish = Self.currentAppLanguageIsEnglish()
             let locale = request.targetLocale
             let inputs = candidates.map {
                 SubtitleTranslationEngine.CueInput(id: $0.id, text: $0.text)
