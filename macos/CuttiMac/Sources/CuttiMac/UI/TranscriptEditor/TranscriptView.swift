@@ -44,6 +44,19 @@ struct TranscriptView: View {
     /// "Speaker N+1") — for cues whose speaker isn't in the current
     /// registry yet.
     var onAssignNewSpeaker: ([UUID]) -> Void = { _ in }
+    /// Split a cue into N pieces. The transcript view detects newlines
+    /// in the inline-edit draft (Return inserts a `\n` because the
+    /// editor uses `axis: .vertical`) and routes the raw, line-split
+    /// pieces here. The view model is responsible for proportionally
+    /// re-distributing the cue's time span across the pieces and for
+    /// dropping word timings / runs / translations (which can't be
+    /// auto-aligned across an arbitrary edit).
+    var onSplitCue: (UUID, [String]) -> Void = { _, _ in }
+    /// Merge two or more cues into one. The view passes the cue ids in
+    /// any order; the view model is responsible for sorting + adjacency
+    /// validation (must be a contiguous run within one
+    /// `TimelineSegment.subtitles[]` and share the same speaker).
+    var onMergeCues: ([UUID]) -> Void = { _ in }
 
     @State private var findText: String = ""
     @State private var replaceText: String = ""
@@ -507,8 +520,25 @@ struct TranscriptView: View {
                         }
                     },
                     onCommit: { id in
-                        let newText = editingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !newText.isEmpty { onEditCue(id, newText) }
+                        // The inline editor uses `axis: .vertical`,
+                        // so plain Return inserts a newline rather
+                        // than committing. Whenever the draft picks
+                        // up a `\n` we route it through the split
+                        // path (each non-empty trimmed line becomes
+                        // its own cue); a single-line draft falls
+                        // through to the normal text-edit callback.
+                        let raw = editingDraft
+                            .replacingOccurrences(of: "\r\n", with: "\n")
+                            .replacingOccurrences(of: "\r", with: "\n")
+                        let pieces = raw
+                            .components(separatedBy: "\n")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        if pieces.count >= 2 {
+                            onSplitCue(id, pieces)
+                        } else if let single = pieces.first {
+                            onEditCue(id, single)
+                        }
                         editingCueID = nil
                     },
                     onContextDelete: { id in
@@ -550,6 +580,27 @@ struct TranscriptView: View {
                             onAssignNewSpeaker([id])
                         }
                     },
+                    onContextMergeWithPrevious: { id in
+                        // For convenience: this menu fires regardless
+                        // of selection state — merge with previous is
+                        // a single-cue operation. The view model
+                        // resolves the predecessor in the same
+                        // segment and no-ops if there isn't one.
+                        onMergeCues(neighborMergeIDs(forCueID: id, direction: .previous))
+                    },
+                    onContextMergeWithNext: { id in
+                        onMergeCues(neighborMergeIDs(forCueID: id, direction: .next))
+                    },
+                    onContextMergeSelected: {
+                        // Multi-merge: only meaningful when 2+ cues
+                        // are selected. The view model validates
+                        // adjacency / same-segment / same-speaker;
+                        // invalid selections become no-ops.
+                        guard selectedCueIDs.count >= 2 else { return }
+                        onMergeCues(Array(selectedCueIDs))
+                    },
+                    selectionCount: selectedCueIDs.count,
+                    isSelected: { selectedCueIDs.contains($0) },
                     onRestoreTombstone: onRestoreTombstone
                 )
                 .padding(.leading, 2)
@@ -692,6 +743,29 @@ struct TranscriptView: View {
         renamingSpeakerID = nil
     }
 
+    private enum NeighborDirection { case previous, next }
+
+    /// For the "Merge with previous" / "Merge with next" cue menu items,
+    /// build the `[UUID]` payload to hand to `onMergeCues` so the view
+    /// model can apply its same-segment + adjacency validation. We
+    /// approximate "neighbor in same segment" by picking the
+    /// immediately-prior / immediately-next *live cue* in the
+    /// transcript's reading order — the view model will silently no-op
+    /// if that neighbor turns out to live in a different segment.
+    private func neighborMergeIDs(forCueID id: UUID, direction: NeighborDirection) -> [UUID] {
+        // `cues` is the source-of-truth ordered list (composed-time
+        // order); tombstones are excluded from merge candidates.
+        guard let idx = cues.firstIndex(where: { $0.id == id }) else { return [] }
+        switch direction {
+        case .previous:
+            guard idx > 0 else { return [] }
+            return [cues[idx - 1].id, id]
+        case .next:
+            guard idx + 1 < cues.count else { return [] }
+            return [id, cues[idx + 1].id]
+        }
+    }
+
     private func speakerInitials(_ name: String?) -> String {
         guard let name, !name.isEmpty else { return "?" }
         let parts = name.split(whereSeparator: { $0.isWhitespace })
@@ -738,6 +812,18 @@ private struct FlowingCues: View {
     var onContextDelete: (UUID) -> Void
     var onContextAssignSpeaker: (UUID, Int) -> Void
     var onContextAssignNewSpeaker: (UUID) -> Void
+    var onContextMergeWithPrevious: (UUID) -> Void
+    var onContextMergeWithNext: (UUID) -> Void
+    var onContextMergeSelected: () -> Void
+    /// Number of cues currently multi-selected. Used to decide whether
+    /// "Merge selected" appears in the right-click menu and what label
+    /// it carries.
+    let selectionCount: Int
+    /// Predicate used to ask whether a particular cue is part of the
+    /// active multi-selection (so the right-click menu can short-circuit
+    /// the per-cue merge variants when the selection-merge is the
+    /// natural action instead).
+    let isSelected: (UUID) -> Bool
     var onRestoreTombstone: (UUID) -> Void
 
     var body: some View {
@@ -762,10 +848,31 @@ private struct FlowingCues: View {
     @ViewBuilder
     private func cueView(_ cue: ComposedSubtitle) -> some View {
         if editing == cue.id {
-            TextField("", text: $editingDraft, onCommit: { onCommit(cue.id) })
+            // Multi-line so plain Return inserts a newline rather than
+            // committing — that's the affordance for "split the cue
+            // here". `lineLimit(1...4)` keeps a single-line cue from
+            // exploding height, while still expanding when the user
+            // adds break points.
+            TextField("", text: $editingDraft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
                 .frame(minWidth: 120)
+                // `onSubmit` is unreliable on `axis: .vertical` (Return
+                // is consumed as a newline) so we hook focus loss
+                // through `.onChange(of:)` on the editing id by having
+                // the parent flip `editing == nil` after blur. As a
+                // belt-and-braces commit path, also commit when the
+                // draft picks up a newline so the user sees instant
+                // split-on-Return behavior.
+                .onChange(of: editingDraft) { _, newValue in
+                    if newValue.contains("\n") {
+                        onCommit(cue.id)
+                    }
+                }
         } else {
+            let mergeWithPreviousLabel = L("Merge with previous cue")
+            let mergeWithNextLabel = L("Merge with next cue")
+            let inSelection = isSelected(cue.id) && selectionCount > 1
             Text(karaokeText(for: cue))
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
@@ -778,6 +885,19 @@ private struct FlowingCues: View {
                     Button { onBeginEdit(cue.id) } label: { T("Edit") }
                     Divider()
                     speakerMenu(for: cue)
+                    Divider()
+                    if inSelection {
+                        Button(String(format: L("Merge %d selected cues"), selectionCount)) {
+                            onContextMergeSelected()
+                        }
+                    } else {
+                        Button(mergeWithPreviousLabel) {
+                            onContextMergeWithPrevious(cue.id)
+                        }
+                        Button(mergeWithNextLabel) {
+                            onContextMergeWithNext(cue.id)
+                        }
+                    }
                     Divider()
                     Button(selected.contains(cue.id) && selected.count > 1
                            ? String(format: L("Delete %d cues"), selected.count)

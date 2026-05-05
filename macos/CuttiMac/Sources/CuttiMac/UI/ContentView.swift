@@ -811,6 +811,12 @@ struct ContentView: View {
                     },
                     onAssignNewSpeaker: { ids in
                         viewModel.assignNewSpeakerToCues(ids: ids)
+                    },
+                    onSplitCue: { id, pieces in
+                        viewModel.splitSubtitleCueFromMultilineText(id: id, pieces: pieces)
+                    },
+                    onMergeCues: { ids in
+                        viewModel.mergeSubtitleCues(ids: ids)
                     }
                 )
                 .frame(minHeight: 180)

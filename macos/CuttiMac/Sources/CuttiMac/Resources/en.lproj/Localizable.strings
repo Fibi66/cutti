@@ -471,6 +471,9 @@
 "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace." = "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace.";
 "Edit" = "Edit";
 "Delete %d cues" = "Delete %d cues";
+"Merge with previous cue" = "Merge with previous cue";
+"Merge with next cue" = "Merge with next cue";
+"Merge %d selected cues" = "Merge %d selected cues";
 "Restore" = "Restore";
 
 /* Timeline — zoom slider, popovers, overlay context menu */

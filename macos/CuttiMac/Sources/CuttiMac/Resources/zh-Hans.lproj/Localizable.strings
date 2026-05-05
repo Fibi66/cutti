@@ -471,6 +471,9 @@
 "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace." = "在检查器面板中转录视频后，转录内容将显示在此处。您可以点击文本跳转、删除字幕条目来剪切视频，以及使用查找与替换功能。";
 "Edit" = "编辑";
 "Delete %d cues" = "删除 %d 条字幕";
+"Merge with previous cue" = "与上一句合并";
+"Merge with next cue" = "与下一句合并";
+"Merge %d selected cues" = "合并选中的 %d 条字幕";
 "Restore" = "恢复";
 
 /* Timeline — zoom slider, popovers, overlay context menu */

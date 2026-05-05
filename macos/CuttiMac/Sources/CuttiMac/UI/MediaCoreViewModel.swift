@@ -2347,6 +2347,189 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
+    /// Replace one cue with N cues by splitting the user's edited
+    /// (multi-line) draft on `\n` boundaries. The new cues' time spans
+    /// are distributed proportional to each piece's UTF-16 length —
+    /// not via `wordTimings`, because the text has been edited and the
+    /// original timings can no longer be relied on to align with the
+    /// new content. `wordTimings`, `runs`, and `translations` are
+    /// dropped on every produced piece (matching the existing
+    /// `updateSubtitleText` posture for any text-mutating edit).
+    ///
+    /// Single-piece arrays fall through to `updateSubtitleText`, so
+    /// callers can plumb the entire draft here without checking
+    /// newline-count up front.
+    func splitSubtitleCueFromMultilineText(id: UUID, pieces: [String]) {
+        let trimmedPieces = pieces
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !trimmedPieces.isEmpty else { return }
+        guard trimmedPieces.count >= 2 else {
+            updateSubtitleText(id: id, newText: trimmedPieces[0])
+            return
+        }
+
+        for segIndex in timelineSegments.indices {
+            guard let subIndex = timelineSegments[segIndex].subtitles
+                .firstIndex(where: { $0.id == id }) else { continue }
+            let original = timelineSegments[segIndex].subtitles[subIndex]
+            let pieceLens = trimmedPieces.map { Double(($0 as NSString).length) }
+            let totalLen = pieceLens.reduce(0, +)
+            guard totalLen > 0 else { return }
+
+            pushRevision(
+                label: trimmedPieces.count == 2
+                    ? "Split subtitle cue"
+                    : "Split subtitle cue (\(trimmedPieces.count) parts)",
+                trigger: .userEdit(description: "split-subtitle")
+            )
+
+            var newEntries: [SubtitleEntry] = []
+            newEntries.reserveCapacity(trimmedPieces.count)
+            var cursor = original.relativeStart
+            let totalDur = original.relativeDuration
+            for (i, piece) in trimmedPieces.enumerated() {
+                let isLast = (i == trimmedPieces.count - 1)
+                // Distribute proportionally; the last piece absorbs
+                // any rounding drift so the overall span is preserved
+                // exactly.
+                let dur: Double
+                if isLast {
+                    dur = (original.relativeStart + totalDur) - cursor
+                } else {
+                    dur = totalDur * (pieceLens[i] / totalLen)
+                }
+                newEntries.append(SubtitleEntry(
+                    id: i == 0 ? original.id : UUID(),
+                    relativeStart: cursor,
+                    relativeDuration: max(0, dur),
+                    text: piece,
+                    speakerID: original.speakerID,
+                    translations: [:],
+                    runs: nil,
+                    wordTimings: nil
+                ))
+                cursor += dur
+            }
+            timelineSegments[segIndex].subtitles
+                .replaceSubrange(subIndex...subIndex, with: newEntries)
+            print("📝 splitSubtitleCueFromMultilineText id=\(id) pieces=\(trimmedPieces.count)")
+            rebuildComposedSubtitles()
+            return
+        }
+    }
+
+    /// Merge two or more cues into one. All `ids` must:
+    /// - belong to the **same** `TimelineSegment.subtitles` array, AND
+    /// - sit at **contiguous indices** within that array, AND
+    /// - share the same `speakerID`.
+    ///
+    /// Cross-segment / non-contiguous / cross-speaker requests are
+    /// silently rejected (with a log line) — the UI exposes the menu
+    /// item even when the selection isn't valid, and the user gets a
+    /// no-op rather than a half-applied merge.
+    ///
+    /// The merged cue's time span covers the extent of all inputs (any
+    /// inter-cue gap becomes silent time inside the merged cue), and
+    /// `wordTimings` are concatenated with the right halves rebased
+    /// onto the merged-cue timeline. See `SubtitleEntry.appending` for
+    /// the per-pair fold semantics.
+    func mergeSubtitleCues(ids: [UUID]) {
+        guard ids.count >= 2 else { return }
+
+        struct Loc { let seg: Int; let sub: Int }
+        var locs: [Loc] = []
+        locs.reserveCapacity(ids.count)
+        for id in ids {
+            var found: Loc?
+            for segIndex in timelineSegments.indices {
+                if let subIndex = timelineSegments[segIndex].subtitles
+                    .firstIndex(where: { $0.id == id }) {
+                    found = Loc(seg: segIndex, sub: subIndex)
+                    break
+                }
+            }
+            guard let location = found else {
+                print("📝 mergeSubtitleCues: cue \(id) not found")
+                return
+            }
+            locs.append(location)
+        }
+        locs.sort { ($0.seg, $0.sub) < ($1.seg, $1.sub) }
+
+        guard let firstLoc = locs.first else { return }
+        let segIndex = firstLoc.seg
+        guard locs.allSatisfy({ $0.seg == segIndex }) else {
+            print("📝 mergeSubtitleCues: cues span multiple segments — abort")
+            return
+        }
+        for i in 1..<locs.count {
+            guard locs[i].sub == locs[i - 1].sub + 1 else {
+                print("📝 mergeSubtitleCues: cues not contiguous in segment — abort")
+                return
+            }
+        }
+        let firstSpeaker = timelineSegments[segIndex].subtitles[firstLoc.sub].speakerID
+        let allSameSpeaker = locs.allSatisfy {
+            timelineSegments[segIndex].subtitles[$0.sub].speakerID == firstSpeaker
+        }
+        guard allSameSpeaker else {
+            print("📝 mergeSubtitleCues: cues span multiple speakers — abort")
+            return
+        }
+
+        var merged = timelineSegments[segIndex].subtitles[firstLoc.sub]
+        for i in 1..<locs.count {
+            let next = timelineSegments[segIndex].subtitles[locs[i].sub]
+            merged = merged.appending(next)
+        }
+        pushRevision(
+            label: ids.count == 2 ? "Merge subtitle cues" : "Merge \(ids.count) subtitle cues",
+            trigger: .userEdit(description: "merge-subtitles")
+        )
+        let firstSub = firstLoc.sub
+        let lastSub = locs.last!.sub
+        timelineSegments[segIndex].subtitles
+            .replaceSubrange(firstSub...lastSub, with: [merged])
+        print("📝 mergeSubtitleCues count=\(ids.count) seg=\(segIndex) range=\(firstSub)...\(lastSub)")
+        rebuildComposedSubtitles()
+    }
+
+    /// Convenience: when the user wants to merge a single cue with
+    /// the cue immediately after it in the same segment. Returns
+    /// silently when there's no successor in the same segment.
+    func mergeSubtitleCueWithNext(id: UUID) {
+        for segIndex in timelineSegments.indices {
+            guard let subIndex = timelineSegments[segIndex].subtitles
+                .firstIndex(where: { $0.id == id }) else { continue }
+            let entries = timelineSegments[segIndex].subtitles
+            guard subIndex + 1 < entries.count else {
+                print("📝 mergeSubtitleCueWithNext: cue \(id) is the last in its segment")
+                return
+            }
+            let nextID = entries[subIndex + 1].id
+            mergeSubtitleCues(ids: [id, nextID])
+            return
+        }
+    }
+
+    /// Convenience: merge a single cue with the cue immediately before
+    /// it. Returns silently when there's no predecessor in the same
+    /// segment.
+    func mergeSubtitleCueWithPrevious(id: UUID) {
+        for segIndex in timelineSegments.indices {
+            guard let subIndex = timelineSegments[segIndex].subtitles
+                .firstIndex(where: { $0.id == id }) else { continue }
+            guard subIndex > 0 else {
+                print("📝 mergeSubtitleCueWithPrevious: cue \(id) is the first in its segment")
+                return
+            }
+            let prevID = timelineSegments[segIndex].subtitles[subIndex - 1].id
+            mergeSubtitleCues(ids: [prevID, id])
+            return
+        }
+    }
+
     // MARK: - Subtitle emphasis (per-run styling)
 
     /// Apply per-run style overrides to one or more UTF-16 ranges inside
