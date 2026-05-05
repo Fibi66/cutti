@@ -5537,6 +5537,146 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
+    /// Lightweight transcribe-only path used by `detect_speakers` when
+    /// the user clicks "Detect speakers" on a clip that hasn't been
+    /// analyzed yet. We run the local `AnalysisOrchestrator`
+    /// (transcription + scene + audio quality, no LLM cuts, no B-roll)
+    /// for every video on the timeline that is missing a copilot
+    /// snapshot, then store a "keep everything" snapshot whose single
+    /// keptRange covers the full source duration verbatim — no silence
+    /// trimming, no cuts. This lets diarization stamp speaker IDs onto
+    /// the resulting cues without having to run First Cut, which would
+    /// otherwise rewrite the user's timeline against their will.
+    ///
+    /// Best-effort: each source is processed independently, failures
+    /// are logged + skipped. Returns whether at least one source ended
+    /// up with a transcript.
+    func transcribeForDiarization() async -> Bool {
+        guard let store else { return false }
+        guard !isAnalyzing else { return false }
+
+        let pending = videoRecordsOnTimeline.filter {
+            $0.status == .ready && $0.copilot == nil && $0.analysis != nil
+        }
+        guard !pending.isEmpty else { return false }
+
+        isAnalyzing = true
+        bannerMessage = nil
+
+        let totalCount = pending.count
+        appendAnalysisAssistantLine(
+            totalCount > 1
+                ? L("Transcribing %d clips for speaker detection…", totalCount)
+                : L("Transcribing for speaker detection…"),
+            icon: "waveform",
+            tone: .working,
+            persist: true
+        )
+
+        let orchestrator = AnalysisOrchestrator()
+        var anySucceeded = false
+
+        for record in pending {
+            guard let analysis = record.analysis else { continue }
+            let sourceURL: URL
+            if let proxyPath = record.derived.proxyRelativePath, let root = projectRoot {
+                sourceURL = root.appending(path: proxyPath)
+            } else {
+                sourceURL = URL(fileURLWithPath: record.sourcePath)
+            }
+
+            // Mark this source as analyzing so the UI status chip
+            // updates and concurrent analysis calls bail.
+            do {
+                var manifest = try store.loadManifest()
+                if let idx = manifest.media.firstIndex(where: { $0.id == record.id }) {
+                    manifest.media[idx].status = .analyzing
+                    try store.saveManifest(manifest)
+                }
+            } catch {
+                print("🔴 transcribeForDiarization: failed to mark analyzing for \(record.id): \(error)")
+                continue
+            }
+
+            do {
+                let localResult = try await orchestrator.analyze(
+                    sourceURL: sourceURL,
+                    analysis: analysis,
+                    onProgress: { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            self?.analysisProgress = progress
+                            self?.updateAnalysisChatBubble(progress)
+                        }
+                    }
+                )
+
+                // Single keptRange covering the whole source — no
+                // silence trimming, no LLM cuts. We're _only_ here to
+                // get a transcript so diarization has cues to stamp.
+                let fullRange = TimeRange(
+                    startSeconds: 0,
+                    endSeconds: analysis.durationSeconds
+                )
+                let allText = localResult.transcript
+                    .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                let snapshot = AICopilotSnapshot(
+                    semanticTags: localResult.semanticTags,
+                    issues: localResult.audioIssues,
+                    suggestions: [],
+                    markers: [],
+                    keptRanges: [fullRange],
+                    keptTexts: [allText],
+                    transcript: localResult.transcript,
+                    wordTranscript: localResult.rawWordTranscript
+                )
+
+                var manifest = try store.loadManifest()
+                if let idx = manifest.media.firstIndex(where: { $0.id == record.id }) {
+                    manifest.media[idx].copilot = snapshot
+                    manifest.media[idx].status = .ready
+                    try store.saveManifest(manifest)
+                    anySucceeded = true
+                }
+            } catch {
+                print("🔴 transcribeForDiarization failed for \(record.id): \(error)")
+                // Best-effort revert so the clip doesn't look stuck.
+                if var manifest = try? store.loadManifest(),
+                   let idx = manifest.media.firstIndex(where: { $0.id == record.id }) {
+                    manifest.media[idx].status = .ready
+                    try? store.saveManifest(manifest)
+                }
+            }
+        }
+
+        isAnalyzing = false
+        analysisProgress = nil
+        await loadRecords()
+
+        // Defensive pass for the (rare) case where the user manually
+        // trimmed a slot before detection. `rebuildTimelineSegments`
+        // keeps non-placeholder slots verbatim and won't re-derive
+        // their subs from the freshly-saved transcript, so do it here.
+        for segIdx in timelineSegments.indices {
+            guard timelineSegments[segIdx].subtitles.isEmpty else { continue }
+            let sid = timelineSegments[segIdx].sourceVideoID
+            guard let record = records.first(where: { $0.id == sid }),
+                  let transcript = record.copilot?.transcript else { continue }
+            let subs = Self.buildSubtitleEntries(
+                for: timelineSegments[segIdx].range,
+                from: transcript,
+                wordTranscript: record.copilot?.wordTranscript
+            )
+            if !subs.isEmpty {
+                timelineSegments[segIdx].subtitles = subs
+            }
+        }
+        rebuildComposedSubtitles()
+
+        return anySucceeded
+    }
+
     /// Pause-based speaker auto-detection. Cycles through `speakerCount`
     /// IDs whenever the gap between cues exceeds `pauseThreshold`. Good
     /// enough for two-person interview podcasts; users can rename the
@@ -8828,7 +8968,7 @@ final class MediaCoreViewModel: ObservableObject {
         - 要改某个 segment 的属性前，先用 get_segment_detail 查当前值，避免盲改。
         - 画面类问题（构图 / 画质 / 是否空镜）用 get_frame_at 抽帧再判断，不要靠想象。
         - 涉及说话人（某人说的 / 谁在发言）先 detect_speakers 再 find_by_speaker / mute_speaker。
-        - **诊断 / 查询工具返回空或 not-ready 时，不要自动升级到更重的工具去满足它**。例：detect_speakers 报 no_transcript，**不要**自动跑 run_first_cut；find_by_transcript / find_by_speaker / find_filler_words 无结果，不要自动转录或重剪；mute_speaker 找不到目标 segment 也是同样道理。这种情况下停止 tool 循环，用自然语言告诉用户为什么做不了、并询问是否愿意运行那个更重的步骤（比如先做 First Cut）。**用户没明确点头之前一律不能调 run_first_cut / run_full_analysis 这类会重写整个时间线的工具。**
+        - **诊断 / 查询工具返回空或 not-ready 时，不要自动升级到更重的工具去满足它**。例：find_by_transcript / find_by_speaker / find_filler_words 无结果，不要自动转录或重剪；mute_speaker 找不到目标 segment 也是同样道理。这种情况下停止 tool 循环，用自然语言告诉用户为什么做不了、并询问是否愿意运行那个更重的步骤（比如先做 First Cut）。**用户没明确点头之前一律不能调 run_first_cut / run_full_analysis 这类会重写整个时间线的工具。** detect_speakers 自己会在没有转录时先做最小转录再识别，不要替它去 run_first_cut。
         - 用户要求"删掉所有 uh / 嗯 / 啊"这类按内容批量操作时，先调用 find_filler_words 拿到具体 cue 列表，再用 delete_range 按 composed_start..composed_end 一条条删除（或合并临近的）。
         - 用户用"我说到 X 的那段"指代时，先 find_by_transcript 找到 cue。
         - 用户问"我现在的剪辑多长 / 哪段最啰嗦"等粗略问题，先 get_timeline_summary。
@@ -10951,26 +11091,27 @@ final class MediaCoreViewModel: ObservableObject {
 
         case "detect_speakers":
             let request = DetectSpeakersRequest.parse(from: args)
-            // Hard stop when there's nothing to diarize. autoDetectSpeakers
-            // bails silently in that case (just sets a banner), and the old
-            // wrapper went on to claim ok=true detected_speakers=0 — which
-            // the LLM read as "no speakers found, I should make some" and
-            // promptly escalated to run_first_cut, recutting the user's
-            // video without permission. Return a real error and tell the
-            // agent in no uncertain terms not to climb the tool ladder on
-            // its own.
+            // detect_speakers is a self-sufficient feature: if the
+            // timeline has no transcript yet (fresh import, user
+            // clicked "Detect speakers" as their first action), run a
+            // minimal transcribe-only path and then diarize. We
+            // intentionally do NOT escalate to run_first_cut here —
+            // that would recut the user's video without consent. See
+            // commits 41af14e + this commit for the history.
             if composedSubtitles.isEmpty {
-                return AgentToolOutcome(
-                    resultJSON: AgentToolJSON.encodeError(
-                        "no_transcript: cannot detect speakers because the timeline has no transcribed cues yet. "
-                        + "DO NOT call run_first_cut, run_full_analysis, or any other transcription/cutting tool "
-                        + "to satisfy this — that would re-edit the user's video without their consent. "
-                        + "Stop the tool loop, reply in natural language explaining that detection needs a transcript, "
-                        + "and ask the user whether they'd like to run analysis first."
-                    ),
-                    userSummary: "⚠️ 还没有转录文本，无法识别说话人。先运行 First Cut 或 Transcript cleanup。",
-                    checkpointID: nil
-                )
+                let transcribed = await transcribeForDiarization()
+                if !transcribed || composedSubtitles.isEmpty {
+                    return AgentToolOutcome(
+                        resultJSON: AgentToolJSON.encodeError(
+                            "transcription_failed: detect_speakers tried to transcribe the timeline first "
+                            + "but the local transcription pipeline failed (no audio? proxy missing?). "
+                            + "DO NOT call run_first_cut, run_full_analysis, or any other cutting tool to recover — "
+                            + "stop the tool loop and ask the user to verify the clip has audio."
+                        ),
+                        userSummary: "⚠️ 自动转录失败，无法识别说话人。",
+                        checkpointID: nil
+                    )
+                }
             }
             await autoDetectSpeakers(
                 pauseThreshold: request.pauseThreshold,
