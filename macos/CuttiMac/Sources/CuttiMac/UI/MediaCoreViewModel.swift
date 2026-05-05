@@ -804,11 +804,26 @@ final class MediaCoreViewModel: ObservableObject {
     let mediaCore: (any MediaCoreImporting)?
     private let store: ProjectStore?
     private let analysisPipeline: (any AnalysisPipelineProtocol)?
-    private let overlayRenderer: (any RemotionOverlayRendering)?
+    private var overlayRenderer: (any RemotionOverlayRendering)?
     /// Lazily-built content-addressable cache over `overlayRenderer`.
     /// Nil until `overlayRenderer`, `mediaCore`, and `projectRoot` are
     /// all wired — built on first use by `makeOverlayCache()`.
     private var _overlayRenderCache: OverlayRenderCache?
+    /// Per-suggestion compose history. Keyed by suggestion id; tracks
+    /// how many times the user has clicked "Generate animation" on
+    /// THIS suggestion in THIS session, plus a compact summary of the
+    /// last 3 takes so the server can deliberately produce something
+    /// different on regeneration.
+    ///
+    /// Cleared on suggestion dismissal. NOT persisted — the goal is
+    /// "if the user keeps clicking, keep varying" within one session;
+    /// across launches we deliberately reset so a content-cached MOV
+    /// from a previous session is reusable on the first click.
+    private struct ComposeAttemptHistory {
+        var count: Int = 0
+        var summaries: [ComposeBrief.PreviousAttemptSummary] = []
+    }
+    private var composeAttemptHistory: [UUID: ComposeAttemptHistory] = [:]
     /// Segment IDs whose overlay render is currently in-flight (initial
     /// generation or Inspector-triggered re-render). Used by the UI to
     /// show a spinner on the overlay pill.
@@ -902,6 +917,15 @@ final class MediaCoreViewModel: ObservableObject {
         MainActor.assumeIsolated {
             autosaveTimer?.invalidate()
             autosaveTimer = nil
+            // Belt-and-suspenders: silence any still-running playback
+            // before the VM is gone. The container's `.onDisappear` is
+            // the primary stop point for the "leave the editor" flow,
+            // but if the VM is ever torn down without first going
+            // through onDisappear (programmatic swap, future
+            // refactor, test harness, …) this prevents the AVPlayer's
+            // audio pipeline from continuing to render the last clip
+            // on its way to deallocation.
+            player?.pause()
         }
     }
 
@@ -3180,6 +3204,216 @@ final class MediaCoreViewModel: ObservableObject {
         rebuildComposition()
     }
 
+    // MARK: - Restore cut between adjacent segments
+
+    /// Returns the source-time gap (in seconds) immediately BEFORE the
+    /// segment at `index`, or nil when there is no restorable cut there
+    /// (no previous segment, different source, gap below `0.05`s, or
+    /// either side has detached aux audio). Used by the timeline
+    /// context menu to decide whether to surface the "Restore N.Ns cut
+    /// before this clip" item, and by `restoreCutBetween` as a guard.
+    func gapBeforeSegment(at index: Int) -> Double? {
+        return restorableGap(leftIndex: index - 1, rightIndex: index)
+    }
+
+    /// Returns the source-time gap (in seconds) immediately AFTER the
+    /// segment at `index`, or nil when there is no restorable cut there.
+    func gapAfterSegment(at index: Int) -> Double? {
+        return restorableGap(leftIndex: index, rightIndex: index + 1)
+    }
+
+    private func restorableGap(leftIndex: Int, rightIndex: Int) -> Double? {
+        guard leftIndex >= 0,
+              rightIndex == leftIndex + 1,
+              rightIndex < timelineSegments.count else { return nil }
+        let left = timelineSegments[leftIndex]
+        let right = timelineSegments[rightIndex]
+        guard left.sourceVideoID == right.sourceVideoID else { return nil }
+        guard left.linkedSegmentID == nil,
+              right.linkedSegmentID == nil else { return nil }
+        let gap = right.range.startSeconds - left.range.endSeconds
+        return gap > 0.05 ? gap : nil
+    }
+
+    /// Restore the source-time gap between two adjacent V1 segments
+    /// that came from the same source video. Brings back the footage
+    /// that was previously cut out (by first-cut, manual delete, or
+    /// any other path) along with the matching subtitle cues from the
+    /// original transcript.
+    ///
+    /// Behaviour:
+    /// - When the two segments share `speedRate` / `volumeLevel` /
+    ///   `isVideoHidden` / non-fade `effects` / `pipLayout` /
+    ///   `freeTransform`, the pair is replaced by a single merged
+    ///   segment whose `range` covers `[left.range.startSeconds,
+    ///   right.range.endSeconds]` — matches the convention of
+    ///   `mergeSelectedSegments`.  Outer crossfades are preserved
+    ///   (`left.audioFadeIn` + `right.audioFadeOut`); the inner
+    ///   pair is dropped because the boundary they faded across no
+    ///   longer exists.
+    /// - Otherwise a new clip carrying just the recovered footage is
+    ///   inserted between them, leaving both untouched. A banner
+    ///   explains why no merge happened. The inserted clip inherits
+    ///   `speedRate` when both sides agree so the user doesn't hear
+    ///   a sudden tempo change inside what was originally one
+    ///   continuous span.
+    /// - Subtitles for the recovered span are rebuilt from the
+    ///   record's transcript via `rebuildSubtitles(for:recordID:)`.
+    /// - Tombstones whose source range falls inside the recovered
+    ///   span are dropped (the footage they were "remembering" is
+    ///   back, so a strikethrough overlay would contradict the
+    ///   restored cue).
+    /// - Pushes a revision labelled "Restore cut" so the action is
+    ///   undoable.
+    func restoreCutBetween(leftIndex: Int, rightIndex: Int) {
+        guard !isPrimaryTrackLocked() else { return }
+        guard restorableGap(leftIndex: leftIndex, rightIndex: rightIndex) != nil else {
+            return
+        }
+        let left = timelineSegments[leftIndex]
+        let right = timelineSegments[rightIndex]
+
+        // Source record must exist for transcript / subtitle rebuild.
+        // `rebuildSubtitles` returns nil when the record is missing
+        // (vs. an empty array when the record exists but isn't
+        // transcribed). Refuse the merge in the missing case rather
+        // than silently producing a clip with no captions and a
+        // potentially broken playback URL.
+        guard records.contains(where: { $0.id == left.sourceVideoID }) else {
+            bannerMessage = L("Source clip not available — can't restore.")
+            return
+        }
+
+        pushRevision(label: "Restore cut", trigger: .userEdit(description: "restore-cut"))
+
+        let recoveredStart = left.range.endSeconds
+        let recoveredEnd = right.range.startSeconds
+
+        let compatible = effectsCompatibleForRestore(left: left, right: right)
+
+        if compatible {
+            // ---- Merge path ----
+            let mergedRange = TimeRange(
+                startSeconds: left.range.startSeconds,
+                endSeconds: right.range.endSeconds
+            )
+            let mergedSubs = rebuildSubtitles(
+                for: mergedRange,
+                recordID: left.sourceVideoID
+            ) ?? []
+            let mergedTextFromSubs = mergedSubs
+                .map(\.text)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            let mergedText = mergedTextFromSubs.isEmpty
+                ? [left.text, right.text].filter { !$0.isEmpty }.joined(separator: " ")
+                : mergedTextFromSubs
+
+            // Preserve outer crossfades; drop the inner pair (which
+            // crossfaded across a boundary that no longer exists).
+            var mergedEffects = left.effects
+            mergedEffects.audioFadeInDuration = left.effects.audioFadeInDuration
+            mergedEffects.audioFadeOutDuration = right.effects.audioFadeOutDuration
+
+            var merged = TimelineSegment(
+                id: UUID(),
+                sourceVideoID: left.sourceVideoID,
+                range: mergedRange,
+                text: mergedText,
+                subtitles: mergedSubs
+            )
+            merged.volumeLevel = left.volumeLevel
+            merged.speedRate = left.speedRate
+            merged.isVideoHidden = left.isVideoHidden
+            merged.effects = mergedEffects
+            merged.alternatives = left.alternatives
+
+            timelineSegments.replaceSubrange(leftIndex...rightIndex, with: [merged])
+            dropTombstones(
+                inSourceRange: recoveredStart...recoveredEnd,
+                forSource: left.sourceVideoID
+            )
+            setSingleSelectedSegment(id: merged.id)
+        } else {
+            // ---- Insert fallback ----
+            let insertedRange = TimeRange(
+                startSeconds: recoveredStart,
+                endSeconds: recoveredEnd
+            )
+            let insertedSubs = rebuildSubtitles(
+                for: insertedRange,
+                recordID: left.sourceVideoID
+            ) ?? []
+            let insertedText = insertedSubs
+                .map(\.text)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+
+            var inserted = TimelineSegment(
+                id: UUID(),
+                sourceVideoID: left.sourceVideoID,
+                range: insertedRange,
+                text: insertedText,
+                subtitles: insertedSubs
+            )
+            if left.speedRate == right.speedRate {
+                inserted.speedRate = left.speedRate
+            }
+
+            timelineSegments.insert(inserted, at: rightIndex)
+            dropTombstones(
+                inSourceRange: recoveredStart...recoveredEnd,
+                forSource: left.sourceVideoID
+            )
+            setSingleSelectedSegment(id: inserted.id)
+            bannerMessage = L("Inserted recovered footage as a new clip — adjacent segments had different effects, so they couldn't be merged.")
+        }
+
+        syncAllLinkedAuxSegments()
+        rebuildComposition()
+    }
+
+    /// Compatibility check used by `restoreCutBetween` to decide
+    /// merge-vs-insert. Audio fade durations live inside
+    /// `SegmentEffects` but encode boundary crossfades — they MUST be
+    /// excluded from the equality check, otherwise a cross-faded pair
+    /// would always fall into the insert fallback.
+    private func effectsCompatibleForRestore(
+        left: TimelineSegment,
+        right: TimelineSegment
+    ) -> Bool {
+        func fadeStripped(_ e: SegmentEffects) -> SegmentEffects {
+            var c = e
+            c.audioFadeInDuration = 0
+            c.audioFadeOutDuration = 0
+            return c
+        }
+        return left.speedRate == right.speedRate
+            && left.volumeLevel == right.volumeLevel
+            && left.isVideoHidden == right.isVideoHidden
+            && fadeStripped(left.effects) == fadeStripped(right.effects)
+            && left.pipLayout == right.pipLayout
+            && left.freeTransform == right.freeTransform
+            && left.overlaySpec == nil
+            && right.overlaySpec == nil
+    }
+
+    /// Drop every tombstone whose source range is fully contained in
+    /// `range` for the given `sourceVideoID`. Used after restoring a
+    /// cut so soft-deleted strikethrough cues don't shadow the
+    /// freshly-recovered footage.
+    private func dropTombstones(
+        inSourceRange range: ClosedRange<Double>,
+        forSource sourceVideoID: UUID
+    ) {
+        let epsilon = 0.001
+        subtitleTombstones.removeAll { tomb in
+            tomb.sourceVideoID == sourceVideoID
+                && tomb.sourceStart >= range.lowerBound - epsilon
+                && tomb.sourceEnd <= range.upperBound + epsilon
+        }
+    }
+
     /// Insert a manual segment from source video at the given timeline position.
     func insertManualSegment(
         range: TimeRange,
@@ -3765,6 +3999,21 @@ final class MediaCoreViewModel: ObservableObject {
             _overlayRenderCache = nil
             bannerMessage = L("⚠️ Animated overlay rendering (chapter cards, animated subtitles) is only available with Cutti Cloud.")
             return nil
+        }
+        // The renderer was wired at VM-construction time. If the user
+        // signed in mid-session, the original wiring may have been a
+        // `LocalRemotionRenderer` (token-less fallback). Re-resolve so
+        // a freshly-issued JWT promotes us to `CloudRemotionRenderer`
+        // without forcing the user to fully restart the app. The reverse
+        // flow (cloud → local) doesn't need handling because losing a
+        // token doesn't happen mid-session under normal use.
+        if !(overlayRenderer is CloudRemotionRenderer) {
+            let upgraded = AppleSiliconPhaseOneStack.makeDefaultOverlayRenderer()
+            if upgraded is CloudRemotionRenderer {
+                print("🎬 [overlay] makeOverlayCache: upgrading renderer \(overlayRenderer.map { String(describing: type(of: $0)) } ?? "nil") → CloudRemotionRenderer (token now present)")
+                overlayRenderer = upgraded
+                _overlayRenderCache = nil
+            }
         }
         if let existing = _overlayRenderCache {
             print("🎬 [overlay] makeOverlayCache: returning memoized cache")
@@ -5873,6 +6122,25 @@ final class MediaCoreViewModel: ObservableObject {
             }
 
             let isEnglish = Self.currentEditorLocaleIsEnglish()
+            // The brief's `language` controls what language the
+            // animation copy is generated in (heading / labels / etc).
+            // It must reflect the SOURCE audio's language so visuals
+            // match what the speaker actually said — not the editor's
+            // UI language. A Chinese speaker who switched their app
+            // to English still wants Chinese overlays on a Chinese
+            // recording, and vice versa.
+            //
+            // Detect language from the highest-signal source we have:
+            // userTitle + agentHint (Stage-1 produces these in the
+            // source language) + a sample of transcript text.
+            let signalForLang = [
+                hint.userTitle ?? "",
+                hint.agentHint ?? "",
+                cues.prefix(3).map(\.text).joined(separator: " "),
+            ].joined(separator: " ")
+            let sourceIsCJK = Self.textIsPredominantlyCJK(signalForLang)
+            let briefLanguage: ComposeBrief.Language = sourceIsCJK ? .zh : .en
+
             // User-facing bubble text. Shows only what the user can
             // (and did) edit — never the full brief payload.
             let suggestionDisplayText: String = {
@@ -5884,8 +6152,37 @@ final class MediaCoreViewModel: ObservableObject {
                 }
             }()
 
+            // Pull (and bump) this suggestion's attempt counter. The
+            // first click on a suggestion is attempt=1 (deterministic
+            // pass with no variation hint). Subsequent clicks bump to
+            // 2/3/… and forward the prior takes' summaries so the
+            // server can deliberately produce a different valid take.
+            // We bump BEFORE building the brief so attempt=1 maps to
+            // a virgin click, not "after one prior render".
+            //
+            // We never bump when the user typed a fresh edit — a
+            // userEdit IS a different brief, no need to nudge the
+            // model toward variance, and bumping would reset the
+            // headline list against an unrelated baseline.
+            let suggestionID = hint.id
+            var history = composeAttemptHistory[suggestionID] ?? ComposeAttemptHistory()
+            if !userDidEdit {
+                history.count += 1
+            } else {
+                // A user-edited brief is treated as a fresh first
+                // pass; clear the previous-attempts list so the LLM
+                // isn't told to avoid headlines that no longer
+                // describe what the user wants.
+                history.count = 1
+                history.summaries = []
+            }
+            composeAttemptHistory[suggestionID] = history
+            let attempt = history.count
+            let previousAttempts =
+                attempt > 1 && !history.summaries.isEmpty ? history.summaries : nil
+
             let brief = ComposeBrief(
-                language: isEnglish ? .en : .zh,
+                language: briefLanguage,
                 section: ComposeBrief.Section(
                     composedTime: hint.composedSeconds,
                     durationSec: anchorDuration,
@@ -5895,7 +6192,9 @@ final class MediaCoreViewModel: ObservableObject {
                     rationale: hint.rationale,
                     userEdit: userDidEdit ? trimmedEdit : nil
                 ),
-                transcriptWindow: cues
+                transcriptWindow: cues,
+                attempt: attempt,
+                previousAttempts: previousAttempts
             )
 
             let working = isEnglish ? "Composing animation…" : "正在挑模板…"
@@ -5910,6 +6209,29 @@ final class MediaCoreViewModel: ObservableObject {
                 do {
                     let result = try await self.composeAnimationViaRelay(brief: brief)
                     print("🎬 [compose] template=\(result.template_id) iters=\(result.iterations) duration=\(result.duration_seconds)s")
+                    // Record this successful take so a *subsequent*
+                    // click on the same suggestion can tell the
+                    // server "don't repeat this headline". We extract
+                    // the most identifying screen text from props
+                    // (heading / first item label / quote) up to 80
+                    // chars — that's what the user will visually
+                    // recognize as "the same one".
+                    let headline = Self.extractComposeHeadline(
+                        templateID: result.template_id,
+                        propsJSON: result.props_json
+                    )
+                    var updated = self.composeAttemptHistory[suggestionID]
+                        ?? ComposeAttemptHistory(count: attempt, summaries: [])
+                    updated.summaries.append(
+                        ComposeBrief.PreviousAttemptSummary(
+                            template_id: result.template_id,
+                            headline: headline
+                        )
+                    )
+                    if updated.summaries.count > 3 {
+                        updated.summaries.removeFirst(updated.summaries.count - 3)
+                    }
+                    self.composeAttemptHistory[suggestionID] = updated
                     if let err = await self.generateOverlay(
                         templateID: result.template_id,
                         propsJSON: result.props_json,
@@ -5941,6 +6263,17 @@ final class MediaCoreViewModel: ObservableObject {
                     let msg: String = (error as? AnimationComposeError)?.errorDescription
                         ?? error.localizedDescription
                     print("🎬 [compose] failed: \(msg)")
+                    // Roll back the attempt bump so the user's NEXT
+                    // click is treated as a fresh attempt rather than
+                    // counting this transport/decode failure as a
+                    // "prior take to vary from". We don't append to
+                    // summaries on failure (there's no headline to
+                    // reference), but we do need to undo the count++
+                    // we did before sending the request.
+                    var rolled = self.composeAttemptHistory[suggestionID]
+                        ?? ComposeAttemptHistory()
+                    if rolled.count > 0 { rolled.count -= 1 }
+                    self.composeAttemptHistory[suggestionID] = rolled
                     self.finishPresetActionChat(
                         id: bubbleID,
                         text: msg,
@@ -5954,6 +6287,39 @@ final class MediaCoreViewModel: ObservableObject {
         }
 
         // (unreachable now — both kinds handled above.)
+    }
+
+    /// Pulls the most identifying screen text out of a compose result
+    /// so it can be cited in the next regeneration's "don't repeat"
+    /// list. Tries (in order): `heading`, the first `items[].label`,
+    /// `quote`, `title`, then any first string field. Capped to ~80
+    /// chars so a long heading + several items list stays compact in
+    /// the prompt. Returns "(no headline)" only if everything fails.
+    private static func extractComposeHeadline(
+        templateID: String,
+        propsJSON: String
+    ) -> String {
+        guard let data = propsJSON.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return "(no headline)" }
+        let preferredKeys = ["heading", "title", "tagline", "quote", "label", "appName", "agentName", "assistantName", "repoName"]
+        for key in preferredKeys {
+            if let v = obj[key] as? String, !v.isEmpty {
+                return String(v.prefix(80))
+            }
+        }
+        if let items = obj["items"] as? [[String: Any]],
+           let first = items.first,
+           let label = first["label"] as? String, !label.isEmpty {
+            return String(label.prefix(80))
+        }
+        if let userPrompt = obj["userPrompt"] as? String, !userPrompt.isEmpty {
+            return String(userPrompt.prefix(80))
+        }
+        if let userMessage = obj["userMessage"] as? String, !userMessage.isEmpty {
+            return String(userMessage.prefix(80))
+        }
+        return "(no headline)"
     }
 
     /// Context stashed by `generateOverlayFromSuggestion` so the
@@ -6032,14 +6398,27 @@ final class MediaCoreViewModel: ObservableObject {
                         lastEnd: w.endSeconds
                     ))
                 } else {
-                    last.text += w.text
+                    // WhisperKit per-word segments don't carry trailing
+                    // spaces, so naive concatenation collapses
+                    // "We actually use" into "Weactuallyuse" and the
+                    // LLM loses every word boundary. Insert a space
+                    // when joining two Latin tokens; CJK characters
+                    // don't need spaces.
+                    let prevTrim = last.text
+                    let nextTrim = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !prevTrim.isEmpty && !nextTrim.isEmpty
+                        && Self.shouldInsertJoinSpace(prev: prevTrim, next: nextTrim) {
+                        last.text = prevTrim + " " + nextTrim
+                    } else {
+                        last.text = prevTrim + nextTrim
+                    }
                     last.lastEnd = w.endSeconds
                     buckets[buckets.count - 1] = last
                 }
             } else {
                 buckets.append(Bucket(
                     startOffset: offset,
-                    text: w.text,
+                    text: w.text.trimmingCharacters(in: .whitespacesAndNewlines),
                     lastEnd: w.endSeconds
                 ))
             }
@@ -6052,10 +6431,70 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
+    /// Decide whether two adjacent ASR word tokens need a space when
+    /// concatenated. CJK tokens (Han, Hiragana, Katakana, Hangul)
+    /// concatenate without a space — Asian writing systems don't use
+    /// inter-word whitespace. Latin / Cyrillic / Greek tokens do.
+    /// Punctuation on either edge skips the separator (matches how
+    /// natural orthography reads "word, next" → "word," + " " + "next").
+    private static func shouldInsertJoinSpace(prev: String, next: String) -> Bool {
+        guard let last = prev.unicodeScalars.last,
+              let first = next.unicodeScalars.first else { return false }
+        if last.properties.isWhitespace || first.properties.isWhitespace { return false }
+        if Self.isCJKScalar(last) || Self.isCJKScalar(first) { return false }
+        // Skip the separator if either edge is punctuation that
+        // already implies a boundary (e.g. "Hello," + "world").
+        let punct = CharacterSet.punctuationCharacters
+        if first.value <= 0x10FFFF, punct.contains(first) { return false }
+        return true
+    }
+
+    private static func isCJKScalar(_ s: Unicode.Scalar) -> Bool {
+        let v = s.value
+        // CJK Unified Ideographs + Extension A + B + C + D + E + F
+        if (0x3400...0x4DBF).contains(v) { return true }
+        if (0x4E00...0x9FFF).contains(v) { return true }
+        if (0x20000...0x2A6DF).contains(v) { return true }
+        if (0x2A700...0x2EBEF).contains(v) { return true }
+        // Hiragana + Katakana
+        if (0x3040...0x30FF).contains(v) { return true }
+        // Hangul Syllables + Jamo
+        if (0xAC00...0xD7AF).contains(v) { return true }
+        if (0x1100...0x11FF).contains(v) { return true }
+        // CJK Symbols and Punctuation, Halfwidth and Fullwidth Forms
+        if (0x3000...0x303F).contains(v) { return true }
+        if (0xFF00...0xFFEF).contains(v) { return true }
+        return false
+    }
+
+    /// `true` when more than ~30% of the letter-bearing scalars are
+    /// CJK. We bias toward CJK because mixed bilingual content
+    /// ("接入 Event Hub SDK") still wants Chinese-language output —
+    /// a single Latin technical term in an otherwise Chinese sentence
+    /// shouldn't flip the entire animation copy to English.
+    private static func textIsPredominantlyCJK(_ s: String) -> Bool {
+        var cjk = 0
+        var latin = 0
+        for scalar in s.unicodeScalars {
+            if Self.isCJKScalar(scalar) {
+                cjk += 1
+            } else if scalar.properties.isAlphabetic {
+                latin += 1
+            }
+        }
+        let total = cjk + latin
+        guard total > 0 else { return false }
+        return Double(cjk) / Double(total) >= 0.30
+    }
+
     /// Mark a suggestion as dismissed. Persists so it doesn't come back
     /// on reload. Silently no-ops if the id isn't found (user dismissed
     /// an already-gone suggestion, or id is stale across sessions).
     func dismissBRollSuggestion(id: UUID) {
+        // Drop any compose history for this id so a future
+        // re-spawned suggestion (Stage-1 may regenerate) starts at
+        // attempt=1 with no "previous take" baggage.
+        composeAttemptHistory.removeValue(forKey: id)
         guard let store else { return }
         do {
             var manifest = try store.loadManifest()

@@ -112,6 +112,17 @@ struct ComposeBrief: Codable {
     let language: Language
     let section: Section
     let transcriptWindow: [TranscriptCue]
+    /// 1 on the first click. Bumped by the Mac client every time the
+    /// user clicks "Generate animation" on the SAME suggestion (without
+    /// editing the prompt) so the server can deliberately produce a
+    /// different valid take. Also folded into the local cache key so
+    /// `OverlayRenderCache` actually re-renders rather than serving
+    /// the previous MOV from disk.
+    let attempt: Int?
+    /// Compact summaries of prior compose passes for THIS suggestion in
+    /// THIS app session, oldest first. Capped to the 3 most recent so
+    /// the prompt stays small.
+    let previousAttempts: [PreviousAttemptSummary]?
 
     enum Language: String, Codable {
         case en
@@ -144,6 +155,14 @@ struct ComposeBrief: Codable {
         /// ASR text bucket — the server uses this only as a timing
         /// reference, not for verbatim screen text.
         let text: String
+    }
+
+    struct PreviousAttemptSummary: Codable {
+        let template_id: String
+        /// First ~80 chars of the heading / first label / quote — whatever
+        /// the prior take's primary screen text was. Used as a concrete
+        /// "don't repeat THIS" reference for the LLM.
+        let headline: String
     }
 }
 
