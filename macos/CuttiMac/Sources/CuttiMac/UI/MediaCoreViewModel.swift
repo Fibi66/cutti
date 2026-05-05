@@ -5539,178 +5539,14 @@ final class MediaCoreViewModel: ObservableObject {
                     return body.isEmpty ? "生成动画" : "生成动画：\(body)"
                 }
             }()
-            let instruction: String
-            let durationFormatted = String(format: "%.1f", anchorDuration)
-            if isEnglish {
-                if userDidEdit {
-                    instruction = """
-                    Generate a single animated overlay at composed_time = \
-                    \(String(format: "%.2f", hint.composedSeconds))s.
-
-                    ## Anchor window
-                    The speaker spends \(durationFormatted)s on this topic. \
-                    For sequence-style overlays the overlay must match \
-                    that runtime: set `durationSeconds` ≈ \(durationFormatted) \
-                    (clamped to the template's allowed range, max 30s).
-
-                    ## User direction (THIS is what the user wants on screen — \
-                    use it as the authoritative source for all text content)
-                    "\(rawPrompt)"
-
-                    The user has hand-edited the prompt for this overlay. \
-                    Treat their text above as the source of truth for what \
-                    appears on screen. For SequenceSteps / Comparison / \
-                    TripleTap / SkillMeter / Quote / etc., extract item \
-                    labels, headings, bullets, and quoted text from THIS \
-                    user direction — NOT from the transcript below. The \
-                    transcript is included only so you can pick reasonable \
-                    `atSeconds` timing for sequence items.
-
-                    ## Transcript in the anchor window (for TIMING reference \
-                    only; word-level buckets, timestamps RELATIVE to overlay \
-                    start, 0 = overlay begins)
-                    \(transcriptBlock)
-
-                    ## Why this moment benefits from a visual
-                    "\(hint.rationale)"
-
-                    Pick the most appropriate template from the catalog \
-                    (ChapterTitle / TitleCard / ChatBubble / PromptTyping / \
-                    SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / \
-                    SequenceSteps / Quote / Comparison) based on the structure \
-                    of the User direction above and call `generate_overlay` \
-                    exactly once. Routing hints:
-                    - Enumeration ("first… second… third…") → \
-                      SequenceSteps layout="list"
-                    - Step/process description ("A → B → C", "先 X 再 Y") → \
-                      SequenceSteps layout="flow"
-                    - Dated chronology ("in 2020…, in 2022…, in 2024…") → \
-                      SequenceSteps layout="timeline"
-                    - Single memorable line → Quote
-                    - Contrast A vs B → Comparison
-                    - Standalone title / chapter break (~2–3s) → \
-                      ChapterTitle or TitleCard (DO NOT size these to the \
-                      full anchor window — keep them tight).
-
-                    For SequenceSteps: lift each item's label directly from \
-                    the User direction above (split on bullets, line breaks, \
-                    or numbered/lettered enumeration). For each item's \
-                    `atSeconds`, prefer the relative timestamp of the \
-                    closest phrase in the transcript that names that item; \
-                    if no clear correspondence exists, distribute items \
-                    evenly across the overlay duration. Do not run any \
-                    other tools.
-                    """
-                } else {
-                    instruction = """
-                    Generate a single animated overlay at composed_time = \
-                    \(String(format: "%.2f", hint.composedSeconds))s.
-
-                    ## Anchor window
-                    The speaker spends \(durationFormatted)s on this topic. \
-                    For sequence-style overlays the overlay must match that \
-                    runtime: set `durationSeconds` ≈ \(durationFormatted) \
-                    (clamped to the template's allowed range, max 30s).
-
-                    ## Transcript in the anchor window (word-level buckets; \
-                    timestamps are RELATIVE to the overlay start, 0 = overlay \
-                    begins)
-                    \(transcriptBlock)
-
-                    ## Suggestion hint (inspiration only — DO NOT copy verbatim)
-                    "\(rawPrompt)"
-
-                    ## Why this moment benefits from a visual
-                    "\(hint.rationale)"
-
-                    Pick the most appropriate template from the catalog \
-                    (ChapterTitle / TitleCard / ChatBubble / PromptTyping / \
-                    SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / \
-                    SequenceSteps / Quote / Comparison) and call \
-                    `generate_overlay` exactly once. Routing hints:
-                    - Enumeration ("first… second… third…") → \
-                      SequenceSteps layout="list"
-                    - Step/process description ("A → B → C", "先 X 再 Y") → \
-                      SequenceSteps layout="flow"
-                    - Dated chronology ("in 2020…, in 2022…, in 2024…") → \
-                      SequenceSteps layout="timeline"
-                    - Single memorable line → Quote
-                    - Contrast A vs B → Comparison
-                    - Standalone title / chapter break (~2–3s) → \
-                      ChapterTitle or TitleCard (DO NOT size these to the \
-                      full anchor window — keep them tight).
-
-                    For SequenceSteps: set each item's `atSeconds` from the \
-                    transcript offsets above (find the phrase where item N \
-                    is uttered → that item's atSeconds ≈ that phrase's +X.Xs \
-                    timestamp). Extract the real item labels from the \
-                    transcript, NOT from the suggestion hint text. Do not \
-                    run any other tools.
-                    """
-                }
-            } else {
-                if userDidEdit {
-                    instruction = """
-                    请在 composed_time = \(String(format: "%.2f", hint.composedSeconds))s 处生成一个动画 overlay。
-
-                    ## Anchor 窗口
-                    用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
-
-                    ## 用户指令（**这就是要显示在屏幕上的内容** — 把它当作文字内容的权威来源）
-                    "\(rawPrompt)"
-
-                    用户手动编辑了这条 overlay 的 prompt，请把上面这段当作 overlay 屏幕文字的权威来源。对于 SequenceSteps / Comparison / TripleTap / SkillMeter / Quote 等模板，item 的 label、heading、bullet、引用文字 **必须从用户指令里提炼**，不要从下面的转录原文里抽。下方转录仅用于给 SequenceSteps 计算 `atSeconds`。
-
-                    ## 窗口内的原文（**仅用于时间参考**；word-level 短句分桶，时间戳相对于 overlay 开始，0 = overlay 开播）
-                    \(transcriptBlock)
-
-                    ## 为什么此处需要视觉辅助
-                    "\(hint.rationale)"
-
-                    请从 generate_overlay 模板目录里（ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison）**根据用户指令的结构**挑最合适的一个，调用一次 generate_overlay。路由提示：
-                    - 列举"第一/第二/第三" → SequenceSteps layout="list"
-                    - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
-                    - 带日期的年表"2020 创立，2022 融资，2024 上线" → SequenceSteps layout="timeline"
-                    - 一句金句/关键总结 → Quote
-                    - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
-                    - 纯标题卡/章节过场（2–3s）→ ChapterTitle 或 TitleCard（**不要**把这类撑满整个 anchor 窗口，短小紧凑）
-
-                    SequenceSteps 的要点：
-                    - item 的 label **直接从用户指令里拆**（按符号、换行或编号切）
-                    - 每个 item 的 `atSeconds`：优先用转录里最接近该 item 的短句的相对时间戳；如果对不上，则在 overlay 时长内均匀分布
-                    - 不要调用其它工具
-                    """
-                } else {
-                    instruction = """
-                    请在 composed_time = \(String(format: "%.2f", hint.composedSeconds))s 处生成一个动画 overlay。
-
-                    ## Anchor 窗口
-                    用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
-
-                    ## 窗口内的原文（word-level 短句分桶，时间戳**相对于 overlay 开始**，0 = overlay 开播）
-                    \(transcriptBlock)
-
-                    ## 灵感提示（仅供参考，**不要**原样当 props）
-                    "\(rawPrompt)"
-
-                    ## 为什么此处需要视觉辅助
-                    "\(hint.rationale)"
-
-                    请从 generate_overlay 模板目录里（ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison）挑最合适的一个，调用一次 generate_overlay。路由提示：
-                    - 列举"第一/第二/第三" → SequenceSteps layout="list"
-                    - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
-                    - 带日期的年表"2020 创立，2022 融资，2024 上线" → SequenceSteps layout="timeline"
-                    - 一句金句/关键总结 → Quote
-                    - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
-                    - 纯标题卡/章节过场（2–3s）→ ChapterTitle 或 TitleCard（**不要**把这类撑满整个 anchor 窗口，短小紧凑）
-
-                    SequenceSteps 的要点：
-                    - 每个 item 的 `atSeconds` **从上面的相对时间戳里提取**（找到第 N 条对应的短句 → 该 item 的 atSeconds ≈ 短句的 +X.Xs），这样动画节奏跟着讲话走
-                    - 真正要显示的 item label **从原文里提炼**，不要把"灵感提示"那段当 props
-                    - 不要调用其它工具
-                    """
-                }
-            }
+            let instruction = Self.buildOverlayInstructionBody(
+                hint: hint,
+                rawPrompt: rawPrompt,
+                transcriptBlock: transcriptBlock,
+                anchorDuration: anchorDuration,
+                userDidEdit: userDidEdit,
+                isEnglish: isEnglish
+            )
             Task { await handleAIPrompt(instruction, displayAs: suggestionDisplayText) }
             return
         }
@@ -5778,6 +5614,210 @@ final class MediaCoreViewModel: ObservableObject {
             let clean = b.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return "[+\(String(format: "%.1f", b.startOffset))s] \(clean)"
         }.joined(separator: "\n")
+    }
+
+    /// Composes the per-call agent instruction sent to the overlay
+    /// agent loop after a user clicks "Generate animation" on a B-roll
+    /// suggestion bubble.
+    ///
+    /// Source-of-truth priority for screen text:
+    ///   1. Stage-1 `userTitle` + parsed `agent_hint` (the distilled
+    ///      structured signals — these are what we want on screen).
+    ///   2. User's hand edit IF it carries structural delimiters (full
+    ///      override of the parsed payload). Edits that look title-only
+    ///      promote to a heading override and KEEP the parsed items.
+    ///   3. Transcript — last-resort, with explicit "no filler / no
+    ///      partial ASR shards" guard.
+    /// `rawPrompt` (the FLUX-style asset description) is intentionally
+    /// dropped from this path when structured signals exist; it bleeds
+    /// asset-description language into headings ("a flowchart showing
+    /// X → Y") which looks awful on the overlay.
+    static func buildOverlayInstructionBody(
+        hint: TimelineCreativeActions.BRollSuggestionHint,
+        rawPrompt: String,
+        transcriptBlock: String,
+        anchorDuration: Double,
+        userDidEdit: Bool,
+        isEnglish: Bool
+    ) -> String {
+        let parsedFromHint = AgentHintParser.parse(hint.agentHint, role: hint.sectionRole)
+        let editStructural = userDidEdit && AgentHintParser.editLooksStructural(rawPrompt)
+
+        // If user did a structural edit, parse THEIR text as the
+        // override; otherwise keep Stage-1's parsed payload.
+        let effectiveParsed: ParsedAgentHint = {
+            guard editStructural else { return parsedFromHint }
+            return AgentHintParser.parse(rawPrompt, role: hint.sectionRole)
+        }()
+        // Title precedence: a non-structural user edit IS the title;
+        // otherwise fall back to Stage-1's userTitle.
+        let effectiveTitle: String? = {
+            if userDidEdit && !editStructural {
+                let trimmed = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? hint.userTitle : trimmed
+            }
+            return hint.userTitle
+        }()
+
+        let structuredBlock = OverlayInstructionScaffold.structuredSignalsBlock(
+            userTitle: effectiveTitle,
+            parsed: effectiveParsed,
+            sectionRole: hint.sectionRole,
+            isEnglish: isEnglish
+        )
+        let durationFormatted = String(format: "%.1f", anchorDuration)
+        let composedFormatted = String(format: "%.2f", hint.composedSeconds)
+        let guardRail = OverlayInstructionScaffold.transcriptGuardRail(isEnglish: isEnglish)
+
+        var sections: [String] = []
+        if isEnglish {
+            sections.append("Generate a single animated overlay at composed_time = \(composedFormatted)s.")
+            sections.append("""
+            ## Anchor window
+            The speaker spends \(durationFormatted)s on this topic. For \
+            sequence-style overlays the overlay must match that runtime: \
+            set `durationSeconds` ≈ \(durationFormatted) (clamped to the \
+            template's allowed range, max 30s).
+            """)
+            if let block = structuredBlock {
+                sections.append("""
+                ## Distilled signals — PRIMARY source for all screen text
+                \(block)
+                """)
+            } else if !rawPrompt.isEmpty {
+                sections.append("""
+                ## Suggestion hint (no structured signals available — \
+                distill into clean labels, do NOT lift verbatim if the \
+                phrasing reads as an asset description)
+                "\(rawPrompt)"
+                """)
+            }
+            sections.append(guardRail)
+            sections.append("""
+            ## Transcript in the anchor window (TIMING REFERENCE — \
+            word-level buckets, timestamps RELATIVE to overlay start, \
+            0 = overlay begins)
+            \(transcriptBlock)
+            """)
+            sections.append("""
+            ## Why this moment benefits from a visual
+            "\(hint.rationale)"
+            """)
+            sections.append(routingDirectives(structured: structuredBlock != nil, isEnglish: true))
+        } else {
+            sections.append("请在 composed_time = \(composedFormatted)s 处生成一个动画 overlay。")
+            sections.append("""
+            ## Anchor 窗口
+            用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
+            """)
+            if let block = structuredBlock {
+                sections.append("""
+                ## 蒸馏信号 — 屏幕所有文字的**权威来源**
+                \(block)
+                """)
+            } else if !rawPrompt.isEmpty {
+                sections.append("""
+                ## 提示文本（**没有**结构化信号 — 蒸馏成干净的 label，文字若像"素材描述"不要原样使用）
+                "\(rawPrompt)"
+                """)
+            }
+            sections.append(guardRail)
+            sections.append("""
+            ## 窗口内的原文（**仅作为时间参考** — word-level 短句分桶，时间戳**相对于 overlay 开始**，0 = overlay 开播）
+            \(transcriptBlock)
+            """)
+            sections.append("""
+            ## 为什么此处需要视觉辅助
+            "\(hint.rationale)"
+            """)
+            sections.append(routingDirectives(structured: structuredBlock != nil, isEnglish: false))
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// The "how to choose a template + how to fill props" block
+    /// appended to every overlay instruction. The `structured` flag
+    /// flips the SequenceSteps recipe between "lift parsed labels
+    /// verbatim from the distilled signals" (Stage-1 gave us a clean
+    /// payload) and "distill 3-5 noun-phrase labels from the
+    /// transcript" (legacy fallback).
+    private static func routingDirectives(structured: Bool, isEnglish: Bool) -> String {
+        if isEnglish {
+            var s = """
+            ## Pick a template and call `generate_overlay` exactly once
+            Catalog: ChapterTitle, TitleCard, ChatBubble, PromptTyping, \
+            SkillMeter, CodeGen, ContextBar, GitHubCard, TripleTap, \
+            SequenceSteps, Quote, Comparison.
+            Routing nudges (the section-role hint above is usually decisive):
+            - Enumeration ("first… second… third…") → SequenceSteps layout="list"
+            - Step / process ("A → B → C") → SequenceSteps layout="flow"
+            - Dated chronology ("2020…, 2022…, 2024…") → SequenceSteps layout="timeline"
+            - Single memorable line → Quote
+            - Contrast A vs B → Comparison
+            - Standalone title / chapter break (~2–3s) → ChapterTitle or TitleCard \
+              (DO NOT size these to the full anchor window — keep them tight).
+            Do not run any other tools.
+            """
+            if structured {
+                s += "\n\n"
+                s += """
+                For SequenceSteps: lift each item's `label` directly from the \
+                parsed list in the DISTILLED SIGNALS block above (use those \
+                strings verbatim — they were already cleaned by Stage-1). \
+                For each item's `atSeconds`, find the closest matching \
+                phrase in the transcript above and use its relative \
+                timestamp. If no clear correspondence exists, distribute \
+                items evenly across `durationSeconds`.
+                For Quote: use the parsed quote text verbatim as `text`. \
+                For Comparison: map LEFT/RIGHT directly to `leftLabel`/`rightLabel`. \
+                For TitleCard headlining a stat: put the figure in `subtitle`.
+                """
+            } else {
+                s += "\n\n"
+                s += """
+                For SequenceSteps without parsed signals: distill 3–5 clean \
+                noun-phrase or short imperative labels from the transcript \
+                content (NOT verbatim sentence extracts; strip filler, ASR \
+                shards, and opening phatic phrases). Set each item's \
+                `atSeconds` from the relative timestamp of the closest \
+                matching phrase.
+                """
+            }
+            return s
+        } else {
+            var s = """
+            ## 选模板 + 调用一次 `generate_overlay`
+            目录：ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison。
+            路由提示（上面的 section-role 提示通常是决定性的）：
+            - 列举"第一/第二/第三" → SequenceSteps layout="list"
+            - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
+            - 带日期的年表"2020…, 2022…, 2024…" → SequenceSteps layout="timeline"
+            - 一句金句 → Quote
+            - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
+            - 纯标题卡 / 章节过场（约 2-3s）→ ChapterTitle 或 TitleCard（**不要**撑满整个 anchor 窗口，紧凑）
+            不要调其它工具。
+            """
+            if structured {
+                s += "\n\n"
+                s += """
+                SequenceSteps 的要点（已有蒸馏信号）：
+                - `items[].label` **直接**从上面"蒸馏信号"块里的解析列表抄（Stage-1 已经清洗过，原样使用）
+                - 每个 item 的 `atSeconds`：在字幕里找最接近该 label 的短句的相对时间戳；找不到就在 `durationSeconds` 区间内均匀分布
+                Quote 的要点：parsed quote 的 `text` **原样**作为 `text` 字段。
+                Comparison 的要点：LEFT/RIGHT 直接映射到 `leftLabel`/`rightLabel`。
+                TitleCard 突出数据时：核心数字放 `subtitle`。
+                """
+            } else {
+                s += "\n\n"
+                s += """
+                SequenceSteps 的要点（没有结构化信号）：
+                - `items[].label` 从字幕**蒸馏**成 3–5 条干净的名词短语 / 动作短语（**不要**搬整句字幕，去掉口头禅、ASR 残片和起头语气词）
+                - 每个 item 的 `atSeconds`：用最接近该 label 的字幕短句的相对时间戳
+                """
+            }
+            return s
+        }
     }
 
     /// Mark a suggestion as dismissed. Persists so it doesn't come back
