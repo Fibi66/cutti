@@ -86,12 +86,53 @@ server, no CDN, no Pages.
 
 ## Cutting a release
 
+Two paths:
+
+### Option A — GitHub Actions (recommended; works from any machine)
+
+Once the secrets below are configured (one-time), every release is:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+A workflow at `.github/workflows/release-macos.yml` picks up the tag,
+runs the same `scripts/release-macos.sh` on a `macos-14` runner, and
+publishes the GitHub Release. **You do not need this Mac to release any
+more.**
+
+#### Required GitHub Actions secrets
+
+In `Settings → Secrets and variables → Actions → New repository secret`:
+
+| Name | Value |
+|------|-------|
+| `DEVELOPER_ID_APPLICATION`    | `Developer ID Application: Your Name (TEAMID)` (literal string from `security find-identity`) |
+| `DEVELOPER_ID_P12_BASE64`     | Output of `base64 -i developer-id-application.p12 \| tr -d '\n'` |
+| `DEVELOPER_ID_P12_PASSWORD`   | The password used when exporting the .p12 (leave empty if exported with no password) |
+| `ASC_API_KEY_ID`              | App Store Connect API key id, e.g. `ABC123XYZ0` |
+| `ASC_API_KEY_ISSUER_ID`       | The team's issuer UUID from App Store Connect |
+| `ASC_API_KEY_P8_BASE64`       | Output of `base64 -i AuthKey_*.p8 \| tr -d '\n'` |
+| `SPARKLE_ED_PRIVATE_KEY`      | The 44-char base64 raw private key (the one in your password manager) |
+| `SPARKLE_PUBLIC_ED_KEY`       | The matching base64 public key |
+
+`GITHUB_TOKEN` is provided automatically — no manual setup needed.
+
+You can also trigger a release manually from the Actions tab
+(`workflow_dispatch`) and supply the version inline.
+
+### Option B — Run locally
+
 ```bash
 # Bump version, commit, and push first. Then:
 scripts/release-macos.sh --version 1.0.0
 ```
 
-The script will:
+Only useful if you want to debug the pipeline interactively. Otherwise
+Option A is strictly better.
+
+### What the script does
 
 1. Build `Cutti.app` for arm64
 2. Sign nested Sparkle helpers, then the framework, then the app
@@ -100,10 +141,11 @@ The script will:
 5. Sign + notarize + staple the DMG
 6. Sign the DMG with Sparkle's EdDSA key
 7. Generate a fresh `appcast.xml` advertising this version
-8. Push a `v1.0.0` tag and create a GitHub release with **both** the
-   DMG and the appcast.xml attached as assets
+8. Push a `v1.0.0` tag (skipped if already present at HEAD, e.g. when
+   the workflow was triggered by the tag itself) and create a GitHub
+   release with **both** the DMG and the appcast.xml attached as assets
 
-Use `--draft` for dry-runs:
+Use `--draft` for dry-runs (local only):
 
 ```bash
 scripts/release-macos.sh --version 0.0.1-test --draft

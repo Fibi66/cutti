@@ -63,15 +63,35 @@ TAG="v$VERSION"
 # Build number = total commits on HEAD. Monotonic and reproducible.
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"
 
+# When notarytool stores credentials in a non-default keychain (CI uses a
+# build keychain), every notarytool invocation must reference it. Empty
+# in local runs (uses login keychain).
+NOTARYTOOL_KC=()
+if [[ -n "${NOTARYTOOL_KEYCHAIN:-}" ]]; then
+  NOTARYTOOL_KC=(--keychain "$NOTARYTOOL_KEYCHAIN")
+fi
+
 # ---------- Pre-flight ----------
 if [[ -n "$(git -C "$ROOT" status --porcelain)" ]]; then
   echo "ERROR: working tree is dirty. Commit or stash first." >&2
   exit 1
 fi
 
+# CI runs after the tag is already pushed (workflow trigger). If the tag
+# already points at HEAD that's fine — we'll skip the tag-create step at
+# the end. Otherwise it's an error.
+SKIP_TAG_PUSH=0
 if git -C "$ROOT" rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "ERROR: tag $TAG already exists." >&2
-  exit 1
+  TAG_SHA="$(git -C "$ROOT" rev-parse "${TAG}^{commit}")"
+  HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+  if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
+    echo "==> Tag $TAG already at HEAD; will skip tag create + push"
+    SKIP_TAG_PUSH=1
+  else
+    echo "ERROR: tag $TAG already exists but does not point at HEAD." >&2
+    echo "       TAG=$TAG_SHA  HEAD=$HEAD_SHA" >&2
+    exit 1
+  fi
 fi
 
 for tool in gh xcrun hdiutil sign_update; do
@@ -94,6 +114,7 @@ echo "==> Notarizing Cutti.app"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 xcrun notarytool submit "$ZIP" \
+  "${NOTARYTOOL_KC[@]}" \
   --keychain-profile "$NOTARYTOOL_KEYCHAIN_PROFILE" \
   --wait
 xcrun stapler staple "$APP"
@@ -120,6 +141,7 @@ codesign --force --sign "$DEVELOPER_ID_APPLICATION" --timestamp "$DMG"
 
 echo "==> Notarizing DMG"
 xcrun notarytool submit "$DMG" \
+  "${NOTARYTOOL_KC[@]}" \
   --keychain-profile "$NOTARYTOOL_KEYCHAIN_PROFILE" \
   --wait
 xcrun stapler staple "$DMG"
@@ -166,8 +188,10 @@ EOF
 
 # ---------- 6. GitHub release ----------
 echo "==> Creating GitHub release $TAG"
-git -C "$ROOT" tag -a "$TAG" -m "Cutti $VERSION (build $BUILD_NUMBER)"
-git -C "$ROOT" push origin "$TAG"
+if [[ $SKIP_TAG_PUSH -eq 0 ]]; then
+  git -C "$ROOT" tag -a "$TAG" -m "Cutti $VERSION (build $BUILD_NUMBER)"
+  git -C "$ROOT" push origin "$TAG"
+fi
 
 DRAFT_FLAG=""
 [[ $DRAFT -eq 1 ]] && DRAFT_FLAG="--draft"
