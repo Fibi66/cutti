@@ -812,8 +812,8 @@ struct ContentView: View {
                     onAssignNewSpeaker: { ids in
                         viewModel.assignNewSpeakerToCues(ids: ids)
                     },
-                    onSplitCue: { id, pieces in
-                        viewModel.splitSubtitleCueFromMultilineText(id: id, pieces: pieces)
+                    onSplitCueAtOffset: { id, offset in
+                        viewModel.splitSubtitleCue(id: id, atUTF16Offset: offset)
                     },
                     onMergeCues: { ids in
                         viewModel.mergeSubtitleCues(ids: ids)

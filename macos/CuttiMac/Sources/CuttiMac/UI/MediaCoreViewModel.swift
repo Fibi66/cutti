@@ -2347,76 +2347,38 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
-    /// Replace one cue with N cues by splitting the user's edited
-    /// (multi-line) draft on `\n` boundaries. The new cues' time spans
-    /// are distributed proportional to each piece's UTF-16 length —
-    /// not via `wordTimings`, because the text has been edited and the
-    /// original timings can no longer be relied on to align with the
-    /// new content. `wordTimings`, `runs`, and `translations` are
-    /// dropped on every produced piece (matching the existing
-    /// `updateSubtitleText` posture for any text-mutating edit).
+    /// Split a cue into two pieces at a UTF-16 character offset within
+    /// its `text`. The `SubtitleEntry.split(atUTF16Offset:)` data-layer
+    /// helper handles the time-base math: when `wordTimings` are
+    /// present, the time boundary snaps to the start of the first
+    /// timing whose cumulative UTF-16 cursor crosses the offset;
+    /// without timings, the boundary is interpolated proportional to
+    /// the character ratio. The left half keeps the original cue's
+    /// `id`; the right half gets a fresh `id`. `runs` and
+    /// `translations` are dropped on both halves (matching
+    /// `updateSubtitleText`).
     ///
-    /// Single-piece arrays fall through to `updateSubtitleText`, so
-    /// callers can plumb the entire draft here without checking
-    /// newline-count up front.
-    func splitSubtitleCueFromMultilineText(id: UUID, pieces: [String]) {
-        let trimmedPieces = pieces
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !trimmedPieces.isEmpty else { return }
-        guard trimmedPieces.count >= 2 else {
-            updateSubtitleText(id: id, newText: trimmedPieces[0])
-            return
-        }
-
+    /// No-op when the offset is at a boundary (`0` or `text.utf16.count`).
+    func splitSubtitleCue(id: UUID, atUTF16Offset offset: Int) {
         for segIndex in timelineSegments.indices {
             guard let subIndex = timelineSegments[segIndex].subtitles
                 .firstIndex(where: { $0.id == id }) else { continue }
             let original = timelineSegments[segIndex].subtitles[subIndex]
-            let pieceLens = trimmedPieces.map { Double(($0 as NSString).length) }
-            let totalLen = pieceLens.reduce(0, +)
-            guard totalLen > 0 else { return }
-
+            guard let halves = original.split(atUTF16Offset: offset) else {
+                print("📝 splitSubtitleCue: offset \(offset) at boundary — no-op")
+                return
+            }
             pushRevision(
-                label: trimmedPieces.count == 2
-                    ? "Split subtitle cue"
-                    : "Split subtitle cue (\(trimmedPieces.count) parts)",
+                label: "Split subtitle cue",
                 trigger: .userEdit(description: "split-subtitle")
             )
-
-            var newEntries: [SubtitleEntry] = []
-            newEntries.reserveCapacity(trimmedPieces.count)
-            var cursor = original.relativeStart
-            let totalDur = original.relativeDuration
-            for (i, piece) in trimmedPieces.enumerated() {
-                let isLast = (i == trimmedPieces.count - 1)
-                // Distribute proportionally; the last piece absorbs
-                // any rounding drift so the overall span is preserved
-                // exactly.
-                let dur: Double
-                if isLast {
-                    dur = (original.relativeStart + totalDur) - cursor
-                } else {
-                    dur = totalDur * (pieceLens[i] / totalLen)
-                }
-                newEntries.append(SubtitleEntry(
-                    id: i == 0 ? original.id : UUID(),
-                    relativeStart: cursor,
-                    relativeDuration: max(0, dur),
-                    text: piece,
-                    speakerID: original.speakerID,
-                    translations: [:],
-                    runs: nil,
-                    wordTimings: nil
-                ))
-                cursor += dur
-            }
             timelineSegments[segIndex].subtitles
-                .replaceSubrange(subIndex...subIndex, with: newEntries)
-            print("📝 splitSubtitleCueFromMultilineText id=\(id) pieces=\(trimmedPieces.count)")
+                .replaceSubrange(subIndex...subIndex, with: [halves.left, halves.right])
+            print("📝 splitSubtitleCue id=\(id) offset=\(offset) leftDur=\(halves.left.relativeDuration) rightDur=\(halves.right.relativeDuration)")
             rebuildComposedSubtitles()
             return
         }
+        print("📝 splitSubtitleCue: cue \(id) not found")
     }
 
     /// Merge two or more cues into one. All `ids` must:

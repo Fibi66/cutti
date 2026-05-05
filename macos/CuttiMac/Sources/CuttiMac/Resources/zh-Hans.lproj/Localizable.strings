@@ -471,6 +471,11 @@
 "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace." = "在检查器面板中转录视频后，转录内容将显示在此处。您可以点击文本跳转、删除字幕条目来剪切视频，以及使用查找与替换功能。";
 "Edit" = "编辑";
 "Delete %d cues" = "删除 %d 条字幕";
+"Split…" = "拆分…";
+"Split cue" = "拆分字幕";
+"Click a marker between words to split the cue there. Timestamps are aligned automatically." = "点击词与词之间的细线即可在此处拆分字幕，时间戳会自动对齐。";
+"This cue has no splittable words." = "这条字幕没有可拆分的位置。";
+"Split here" = "在此处拆分";
 "Merge with previous cue" = "与上一句合并";
 "Merge with next cue" = "与下一句合并";
 "Merge %d selected cues" = "合并选中的 %d 条字幕";

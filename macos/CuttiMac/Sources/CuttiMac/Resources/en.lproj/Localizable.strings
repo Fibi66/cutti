@@ -471,6 +471,11 @@
 "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace." = "Transcribe a video from the Inspector panel to see the transcript here. You can then click text to jump, delete cues to cut video, and use Find & Replace.";
 "Edit" = "Edit";
 "Delete %d cues" = "Delete %d cues";
+"Split…" = "Split…";
+"Split cue" = "Split cue";
+"Click a marker between words to split the cue there. Timestamps are aligned automatically." = "Click a marker between words to split the cue there. Timestamps are aligned automatically.";
+"This cue has no splittable words." = "This cue has no splittable words.";
+"Split here" = "Split here";
 "Merge with previous cue" = "Merge with previous cue";
 "Merge with next cue" = "Merge with next cue";
 "Merge %d selected cues" = "Merge %d selected cues";

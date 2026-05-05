@@ -44,14 +44,12 @@ struct TranscriptView: View {
     /// "Speaker N+1") — for cues whose speaker isn't in the current
     /// registry yet.
     var onAssignNewSpeaker: ([UUID]) -> Void = { _ in }
-    /// Split a cue into N pieces. The transcript view detects newlines
-    /// in the inline-edit draft (Return inserts a `\n` because the
-    /// editor uses `axis: .vertical`) and routes the raw, line-split
-    /// pieces here. The view model is responsible for proportionally
-    /// re-distributing the cue's time span across the pieces and for
-    /// dropping word timings / runs / translations (which can't be
-    /// auto-aligned across an arbitrary edit).
-    var onSplitCue: (UUID, [String]) -> Void = { _, _ in }
+    /// Split a cue into two pieces at a UTF-16 character offset within
+    /// the cue's text. The offset comes from the "Split…" popover —
+    /// each clickable boundary corresponds to a token gap. The view
+    /// model uses the wordTimings-aware `SubtitleEntry.split` helper
+    /// in CuttiKit to get the time boundary right.
+    var onSplitCueAtOffset: (UUID, Int) -> Void = { _, _ in }
     /// Merge two or more cues into one. The view passes the cue ids in
     /// any order; the view model is responsible for sorting + adjacency
     /// validation (must be a contiguous run within one
@@ -70,6 +68,11 @@ struct TranscriptView: View {
     @State private var selectionAnchorID: UUID?
     @State private var editingCueID: UUID?
     @State private var editingDraft: String = ""
+    /// Cue currently showing the "Split…" popover (set from the
+    /// right-click menu). Nil while no popover is open. Anchors a
+    /// SwiftUI `.popover` over the cue text and clears itself when
+    /// the popover dismisses or the user picks an offset.
+    @State private var splittingCueID: UUID?
     /// Speaker ID currently being renamed (popover anchor + TextField focus).
     @State private var renamingSpeakerID: Int?
     @State private var renameDraft: String = ""
@@ -520,25 +523,8 @@ struct TranscriptView: View {
                         }
                     },
                     onCommit: { id in
-                        // The inline editor uses `axis: .vertical`,
-                        // so plain Return inserts a newline rather
-                        // than committing. Whenever the draft picks
-                        // up a `\n` we route it through the split
-                        // path (each non-empty trimmed line becomes
-                        // its own cue); a single-line draft falls
-                        // through to the normal text-edit callback.
-                        let raw = editingDraft
-                            .replacingOccurrences(of: "\r\n", with: "\n")
-                            .replacingOccurrences(of: "\r", with: "\n")
-                        let pieces = raw
-                            .components(separatedBy: "\n")
-                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                            .filter { !$0.isEmpty }
-                        if pieces.count >= 2 {
-                            onSplitCue(id, pieces)
-                        } else if let single = pieces.first {
-                            onEditCue(id, single)
-                        }
+                        let newText = editingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !newText.isEmpty { onEditCue(id, newText) }
                         editingCueID = nil
                     },
                     onContextDelete: { id in
@@ -599,6 +585,18 @@ struct TranscriptView: View {
                         guard selectedCueIDs.count >= 2 else { return }
                         onMergeCues(Array(selectedCueIDs))
                     },
+                    onRequestSplit: { id in
+                        // Open the popover anchored to this cue.
+                        splittingCueID = id
+                    },
+                    onDismissSplit: {
+                        splittingCueID = nil
+                    },
+                    onPickSplitOffset: { id, offset in
+                        splittingCueID = nil
+                        onSplitCueAtOffset(id, offset)
+                    },
+                    splittingCueID: splittingCueID,
                     selectionCount: selectedCueIDs.count,
                     isSelected: { selectedCueIDs.contains($0) },
                     onRestoreTombstone: onRestoreTombstone
@@ -815,6 +813,14 @@ private struct FlowingCues: View {
     var onContextMergeWithPrevious: (UUID) -> Void
     var onContextMergeWithNext: (UUID) -> Void
     var onContextMergeSelected: () -> Void
+    /// Open the "Split…" popover anchored at this cue.
+    var onRequestSplit: (UUID) -> Void
+    /// Dismiss the popover without picking a split point.
+    var onDismissSplit: () -> Void
+    /// User picked a UTF-16 split offset inside this cue's text.
+    var onPickSplitOffset: (UUID, Int) -> Void
+    /// Cue currently showing the split popover (driven by parent state).
+    let splittingCueID: UUID?
     /// Number of cues currently multi-selected. Used to decide whether
     /// "Merge selected" appears in the right-click menu and what label
     /// it carries.
@@ -848,30 +854,14 @@ private struct FlowingCues: View {
     @ViewBuilder
     private func cueView(_ cue: ComposedSubtitle) -> some View {
         if editing == cue.id {
-            // Multi-line so plain Return inserts a newline rather than
-            // committing — that's the affordance for "split the cue
-            // here". `lineLimit(1...4)` keeps a single-line cue from
-            // exploding height, while still expanding when the user
-            // adds break points.
-            TextField("", text: $editingDraft, axis: .vertical)
+            // Single-line TextField — Enter commits the edit. Splitting
+            // is handled by the dedicated "Split…" right-click menu /
+            // popover instead, which is more discoverable and uses the
+            // wordTimings-aware data-layer split helper.
+            TextField("", text: $editingDraft, onCommit: { onCommit(cue.id) })
                 .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
                 .frame(minWidth: 120)
-                // `onSubmit` is unreliable on `axis: .vertical` (Return
-                // is consumed as a newline) so we hook focus loss
-                // through `.onChange(of:)` on the editing id by having
-                // the parent flip `editing == nil` after blur. As a
-                // belt-and-braces commit path, also commit when the
-                // draft picks up a newline so the user sees instant
-                // split-on-Return behavior.
-                .onChange(of: editingDraft) { _, newValue in
-                    if newValue.contains("\n") {
-                        onCommit(cue.id)
-                    }
-                }
         } else {
-            let mergeWithPreviousLabel = L("Merge with previous cue")
-            let mergeWithNextLabel = L("Merge with next cue")
             let inSelection = isSelected(cue.id) && selectionCount > 1
             Text(karaokeText(for: cue))
                 .padding(.horizontal, 4)
@@ -881,20 +871,36 @@ private struct FlowingCues: View {
                 .contentShape(Rectangle())
                 .modifier(ClickWithModifiers { mods in onClickCue(cue.id, mods) })
                 .onTapGesture(count: 2) { onBeginEdit(cue.id) }
+                .popover(
+                    isPresented: Binding(
+                        get: { splittingCueID == cue.id },
+                        set: { if !$0 { onDismissSplit() } }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    SplitCuePopover(
+                        cueText: cue.text,
+                        onPick: { utf16Offset in
+                            onPickSplitOffset(cue.id, utf16Offset)
+                        },
+                        onCancel: { onDismissSplit() }
+                    )
+                }
                 .contextMenu {
                     Button { onBeginEdit(cue.id) } label: { T("Edit") }
                     Divider()
                     speakerMenu(for: cue)
                     Divider()
+                    Button(L("Split…")) { onRequestSplit(cue.id) }
                     if inSelection {
                         Button(String(format: L("Merge %d selected cues"), selectionCount)) {
                             onContextMergeSelected()
                         }
                     } else {
-                        Button(mergeWithPreviousLabel) {
+                        Button(L("Merge with previous cue")) {
                             onContextMergeWithPrevious(cue.id)
                         }
-                        Button(mergeWithNextLabel) {
+                        Button(L("Merge with next cue")) {
                             onContextMergeWithNext(cue.id)
                         }
                     }
@@ -1135,5 +1141,113 @@ private struct WrapHStack: Layout {
             rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
         }
         return rows
+    }
+}
+
+// MARK: - SplitCuePopover
+
+/// Popover that lets the user pick a split point inside a subtitle
+/// cue's text. Tokenizes the text via `SubtitleWordTokenizer` (the
+/// same tokenizer used by the emphasis UI, so the boundaries are
+/// consistent), then renders each token as a static label with a
+/// thin tappable split marker between adjacent tokens. The markers
+/// stay visually quiet (a 2pt grey rule) so the sentence is still
+/// readable as prose; on hover they light up in accent color and
+/// expand slightly so the click target is obvious.
+private struct SplitCuePopover: View {
+    let cueText: String
+    let onPick: (Int) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        let tokens = SubtitleWordTokenizer.tokenize(cueText)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L("Split cue"))
+                .font(.headline)
+            Text(L("Click a marker between words to split the cue there. Timestamps are aligned automatically."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if tokens.isEmpty {
+                Text(L("This cue has no splittable words."))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView {
+                    splitFlow(tokens: tokens)
+                        .padding(.vertical, 4)
+                }
+                .frame(maxWidth: 420, maxHeight: 220)
+            }
+
+            HStack {
+                Spacer()
+                Button(L("Cancel"), role: .cancel) { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 320)
+    }
+
+    @ViewBuilder
+    private func splitFlow(tokens: [SubtitleWordTokenizer.Token]) -> some View {
+        // `spacing: 0` because each `SplitMarker` carries its own
+        // horizontal padding for the hit target; an extra row gap
+        // would push tokens apart and hurt readability.
+        WrapHStack(spacing: 0, lineSpacing: 4) {
+            ForEach(0..<tokens.count, id: \.self) { idx in
+                let token = tokens[idx]
+                // The marker BEFORE token[i] sits at
+                // `token.utf16Range.location` — the boundary between
+                // token[i-1] and token[i]. We skip the first boundary
+                // (offset 0) and the last (cue end), since
+                // `SubtitleEntry.split(atUTF16Offset:)` rejects those.
+                if idx > 0 {
+                    SplitMarker(offset: token.utf16Range.location, onPick: onPick)
+                }
+                Text(token.text)
+                    .font(.body)
+            }
+        }
+    }
+}
+
+/// Slim split marker — a 2pt rule that quietly lives between two
+/// tokens. On hover it brightens to the editor accent color, widens
+/// to 3pt, and surfaces a scissors tooltip so the meaning is still
+/// obvious even though the resting state is subtle. The marker has
+/// horizontal padding *outside* the visible rule so the hit target
+/// is comfortable without visually pushing tokens apart.
+private struct SplitMarker: View {
+    let offset: Int
+    let onPick: (Int) -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button {
+            onPick(offset)
+        } label: {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(isHovering
+                      ? AnyShapeStyle(EditorShellStyle.accentSolid)
+                      : AnyShapeStyle(Color.secondary.opacity(0.35)))
+                .frame(width: isHovering ? 3 : 2, height: 14)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .help(L("Split here"))
     }
 }
