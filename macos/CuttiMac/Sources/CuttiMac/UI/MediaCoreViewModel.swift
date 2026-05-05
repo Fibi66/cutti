@@ -336,6 +336,14 @@ final class MediaCoreViewModel: ObservableObject {
     /// themselves mutate `subtitleStyle`.
     private var isApplyingStyleHistory = false
 
+    /// Last per-cue style snapshot push timestamp + cue id. Used to
+    /// coalesce rapid successive snapshot writes from the inspector
+    /// (slider drags, color scrubs) so a single drag becomes one
+    /// undoable revision rather than dozens. Mirrors the
+    /// `styleUndoCoalesceWindow` strategy used for the global path.
+    private var lastPerCueStyleSnapshotAt: Date?
+    private var lastPerCueStyleSnapshotCueID: UUID?
+
     private func recordSubtitleStyleChange(previous: SubtitleStyle) {
         guard !isApplyingStyleHistory else { return }
         let now = Date()
@@ -2732,6 +2740,104 @@ final class MediaCoreViewModel: ObservableObject {
         let next = report.style
         if next == subtitleStyle { return }
         subtitleStyle = next
+    }
+
+    /// Apply a full `SubtitleStyle` snapshot to a single cue as a
+    /// per-cue override. Computes the diff vs the project-wide
+    /// `subtitleStyle` and stores just the diverging fields on the
+    /// cue's `styleOverride`; an empty diff collapses the override
+    /// back to nil so the cue stops being marked "Customized".
+    ///
+    /// Lets the Inspector / overlay drive per-cue edits via a plain
+    /// `Binding<SubtitleStyle>` (the binding's setter calls this
+    /// helper) without having to express every mutable visual field
+    /// in `SubtitleStylePatch`. Rapid successive snapshots on the
+    /// same cue are coalesced onto a single revision via
+    /// `styleUndoCoalesceWindow` so a slider drag yields one
+    /// undoable step rather than dozens — matches the global path's
+    /// coalescing behaviour.
+    func applySubtitleStyleSnapshot(
+        _ newStyle: SubtitleStyle,
+        toCueID cueID: UUID,
+        commit: Bool
+    ) {
+        guard let segIdx = timelineSegments.firstIndex(where: { seg in
+            seg.subtitles.contains { $0.id == cueID }
+        }) else { return }
+        guard let subIdx = timelineSegments[segIdx].subtitles
+            .firstIndex(where: { $0.id == cueID }) else { return }
+
+        let old = timelineSegments[segIdx].subtitles[subIdx]
+        let diffedOverride = SubtitleCueStyleOverride.diff(
+            effective: newStyle, base: subtitleStyle
+        )
+        let nextOverride: SubtitleCueStyleOverride? =
+            diffedOverride.hasAnyField ? diffedOverride : nil
+        if nextOverride == old.styleOverride { return }
+
+        if commit {
+            let now = Date()
+            let withinWindow: Bool = {
+                guard let last = lastPerCueStyleSnapshotAt,
+                      lastPerCueStyleSnapshotCueID == cueID
+                else { return false }
+                return now.timeIntervalSince(last) < styleUndoCoalesceWindow
+            }()
+            if !withinWindow {
+                pushRevision(
+                    label: "Edit subtitle style",
+                    trigger: .userEdit(description: "edit-cue-style")
+                )
+            }
+            lastPerCueStyleSnapshotAt = now
+            lastPerCueStyleSnapshotCueID = cueID
+        }
+
+        timelineSegments[segIdx].subtitles[subIdx] = SubtitleEntry(
+            id: old.id,
+            relativeStart: old.relativeStart,
+            relativeDuration: old.relativeDuration,
+            text: old.text,
+            speakerID: old.speakerID,
+            translations: old.translations,
+            runs: old.runs,
+            wordTimings: old.wordTimings,
+            styleOverride: nextOverride
+        )
+        rebuildComposedSubtitles()
+    }
+
+    /// SwiftUI `Binding<SubtitleStyle>` that targets either the
+    /// currently-selected cue's effective style (per-cue override
+    /// merged onto the project baseline) when a subtitle is selected
+    /// in the editor, or the project-wide `subtitleStyle` otherwise.
+    /// Set-side routes per-cue writes through
+    /// `applySubtitleStyleSnapshot(_:toCueID:commit:)` (auto-coalesced)
+    /// and global writes through the existing `subtitleStyle` setter
+    /// (which carries its own coalesced lightweight undo stack).
+    ///
+    /// Inspector + viewer overlay consume this binding so the same
+    /// component code drives both scopes — UI components don't need
+    /// to know whether they're editing a single cue or the global
+    /// baseline.
+    var subtitleStyleEffectiveBinding: Binding<SubtitleStyle> {
+        Binding(
+            get: { [weak self] in
+                guard let self else { return SubtitleStyle.default }
+                if let id = self.selectedSubtitleID {
+                    return self.effectiveSubtitleStyle(forCueID: id)
+                }
+                return self.subtitleStyle
+            },
+            set: { [weak self] newValue in
+                guard let self else { return }
+                if let id = self.selectedSubtitleID {
+                    self.applySubtitleStyleSnapshot(newValue, toCueID: id, commit: true)
+                } else {
+                    self.subtitleStyle = newValue
+                }
+            }
+        )
     }
 
     /// True when the cue with `id` has a non-empty per-cue style

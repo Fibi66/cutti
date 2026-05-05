@@ -165,7 +165,7 @@ struct ContentView: View {
             subtitleRuns: viewModel.currentSubtitleRuns(at: playheadSeconds),
             subtitleSecondaryText: viewModel.currentSubtitleSecondaryText(at: playheadSeconds),
             showSubtitles: viewModel.showSubtitles && !viewModel.subtitlesPreviewHidden,
-            subtitleStyle: $viewModel.subtitleStyle,
+            subtitleStyle: viewModel.subtitleStyleEffectiveBinding,
             subtitleSelected: $viewModel.isSubtitleSelected,
             onCommitSubtitleText: { newText in
                 if let id = viewModel.currentSubtitleID(at: playheadSeconds) {
@@ -270,7 +270,7 @@ struct ContentView: View {
     private var viewerInspectorsOverlay: some View {
         if viewModel.isSubtitleSelected && viewModel.showSubtitles {
             SubtitleInspector(
-                style: $viewModel.subtitleStyle,
+                style: viewModel.subtitleStyleEffectiveBinding,
                 onClose: { viewModel.isSubtitleSelected = false }
             )
             .padding(12)

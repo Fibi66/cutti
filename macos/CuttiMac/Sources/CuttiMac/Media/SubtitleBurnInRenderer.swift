@@ -28,26 +28,45 @@ struct SubtitleBurnInRenderer: Sendable {
         /// line is always rendered plain, even when the primary line
         /// carries runs — translations don't have a per-run model.
         let runs: [SubtitleRun]?
+        /// Optional per-cue style override. Nil = render with the
+        /// renderer's project-wide `style` (back-compat path every cue
+        /// takes when the user hasn't customised this cue
+        /// individually). When non-nil, every set field replaces the
+        /// matching field on `style` at render time so burn-in matches
+        /// the viewer overlay pixel-for-pixel.
+        let styleOverride: SubtitleCueStyleOverride?
 
         init(
             startSeconds: Double,
             endSeconds: Double,
             text: String,
             secondaryText: String? = nil,
-            runs: [SubtitleRun]? = nil
+            runs: [SubtitleRun]? = nil,
+            styleOverride: SubtitleCueStyleOverride? = nil
         ) {
             self.startSeconds = startSeconds
             self.endSeconds = endSeconds
             self.text = text
             self.secondaryText = secondaryText
             self.runs = runs
+            self.styleOverride = styleOverride
         }
     }
 
     let cues: [Cue]
+    /// Project-wide baseline style. Per-cue overrides on
+    /// `Cue.styleOverride` layer on top of this at render time; a cue
+    /// with `styleOverride == nil` renders identically to the pre-V1 path.
     let style: SubtitleStyle
     /// Final render size (points). Determines font scale and max width.
     let renderSize: CGSize
+
+    /// Resolve the effective style for a cue (global × per-cue override).
+    /// Cues without an override return the global baseline unchanged so
+    /// the fast path is bit-stable.
+    func effectiveStyle(for cue: Cue) -> SubtitleStyle {
+        cue.styleOverride?.applied(to: style) ?? style
+    }
 
     /// Pick the cue active at `time` (or nil if none).
     func cue(at time: Double) -> Cue? {
@@ -62,12 +81,13 @@ struct SubtitleBurnInRenderer: Sendable {
         guard let cue = cue(at: time) else { return nil }
         let primary = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !primary.isEmpty else { return nil }
+        let effective = effectiveStyle(for: cue)
         let secondary = cue.secondaryText?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let secondary, !secondary.isEmpty, style.bilingual != nil {
-            return renderBilingual(primary: primary, secondary: secondary, runs: cue.runs)
+        if let secondary, !secondary.isEmpty, effective.bilingual != nil {
+            return renderBilingual(primary: primary, secondary: secondary, runs: cue.runs, style: effective)
         }
-        return render(text: primary, runs: cue.runs)
+        return render(text: primary, runs: cue.runs, style: effective)
     }
 
     // MARK: - Rendering
@@ -85,7 +105,8 @@ struct SubtitleBurnInRenderer: Sendable {
     /// overrides are applied on top of the baseline cue style. When
     /// `runs` is nil (or drifted — fallback), the whole line renders
     /// uniformly using the cue style.
-    func render(text: String, runs: [SubtitleRun]? = nil) -> CIImage? {
+    func render(text: String, runs: [SubtitleRun]? = nil, style explicitStyle: SubtitleStyle? = nil) -> CIImage? {
+        let style = explicitStyle ?? self.style
         let scale = heightScale
         let fontSize = max(8, CGFloat(style.fontSizePoints) * scale)
         let padH = CGFloat(style.backgroundPaddingHorizontal) * scale
@@ -104,7 +125,8 @@ struct SubtitleBurnInRenderer: Sendable {
         let attributed = makeAttributedString(
             text: text,
             runs: runs,
-            baseFontSize: fontSize
+            baseFontSize: fontSize,
+            style: style
         )
 
         let maxTextWidth = max(10, renderSize.width * CGFloat(style.maxWidthFraction))
@@ -189,7 +211,8 @@ struct SubtitleBurnInRenderer: Sendable {
         let overlay = CIImage(cgImage: cgImage)
         let positioned = positioningTransform(
             overlayWidth: canvasSize.width,
-            overlayHeight: canvasSize.height
+            overlayHeight: canvasSize.height,
+            style: style
         )
         return overlay.transformed(by: positioned)
     }
@@ -210,15 +233,17 @@ struct SubtitleBurnInRenderer: Sendable {
     func renderBilingual(
         primary: String,
         secondary: String,
-        runs: [SubtitleRun]? = nil
+        runs: [SubtitleRun]? = nil,
+        style explicitStyle: SubtitleStyle? = nil
     ) -> CIImage? {
+        let style = explicitStyle ?? self.style
         let trimmedPrimary = primary.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSecondary = secondary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrimary.isEmpty else {
-            return trimmedSecondary.isEmpty ? nil : render(text: trimmedSecondary)
+            return trimmedSecondary.isEmpty ? nil : render(text: trimmedSecondary, style: style)
         }
-        guard !trimmedSecondary.isEmpty else { return render(text: trimmedPrimary, runs: runs) }
-        guard let bilingual = style.bilingual else { return render(text: trimmedPrimary, runs: runs) }
+        guard !trimmedSecondary.isEmpty else { return render(text: trimmedPrimary, runs: runs, style: style) }
+        guard let bilingual = style.bilingual else { return render(text: trimmedPrimary, runs: runs, style: style) }
 
         let scale = heightScale
         let primaryFontSize = max(8, CGFloat(style.fontSizePoints) * scale)
@@ -241,13 +266,13 @@ struct SubtitleBurnInRenderer: Sendable {
         let strokeWidth = CGFloat(style.strokeWidthFraction) * primaryFontSize * CGFloat(maxSizeMultiplier)
 
         guard let primaryLine = layoutLine(
-                text: trimmedPrimary, fontSize: primaryFontSize, runs: runs),
+                text: trimmedPrimary, fontSize: primaryFontSize, runs: runs, style: style),
               let secondaryLine = layoutLine(
-                text: trimmedSecondary, fontSize: secondaryFontSize, runs: nil)
+                text: trimmedSecondary, fontSize: secondaryFontSize, runs: nil, style: style)
         else {
             // Framesetter refused both — fall back to single-line so the
             // viewer still sees the primary text instead of a blank frame.
-            return render(text: trimmedPrimary, runs: runs)
+            return render(text: trimmedPrimary, runs: runs, style: style)
         }
 
         let textWidth = max(primaryLine.size.width, secondaryLine.size.width)
@@ -335,7 +360,8 @@ struct SubtitleBurnInRenderer: Sendable {
         let overlay = CIImage(cgImage: cgImage)
         let positioned = positioningTransform(
             overlayWidth: canvasSize.width,
-            overlayHeight: canvasSize.height
+            overlayHeight: canvasSize.height,
+            style: style
         )
         return overlay.transformed(by: positioned)
     }
@@ -353,10 +379,12 @@ struct SubtitleBurnInRenderer: Sendable {
     private func layoutLine(
         text: String,
         fontSize: CGFloat,
-        runs: [SubtitleRun]? = nil
+        runs: [SubtitleRun]? = nil,
+        style explicitStyle: SubtitleStyle? = nil
     ) -> LineLayout? {
+        let style = explicitStyle ?? self.style
         let attributed = makeAttributedString(
-            text: text, runs: runs, baseFontSize: fontSize)
+            text: text, runs: runs, baseFontSize: fontSize, style: style)
         let maxTextWidth = max(10, renderSize.width * CGFloat(style.maxWidthFraction))
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
         let suggested = CTFramesetterSuggestFrameSizeWithConstraints(
@@ -390,9 +418,11 @@ struct SubtitleBurnInRenderer: Sendable {
     func makeAttributedString(
         text: String,
         runs: [SubtitleRun]?,
-        baseFontSize: CGFloat
+        baseFontSize: CGFloat,
+        style explicitStyle: SubtitleStyle? = nil
     ) -> NSAttributedString {
-        let baseAttrs = baseAttributes(fontSize: baseFontSize)
+        let style = explicitStyle ?? self.style
+        let baseAttrs = baseAttributes(fontSize: baseFontSize, style: style)
         guard
             let runs,
             SubtitleRunEditor.plainText(runs) == text,
@@ -405,7 +435,8 @@ struct SubtitleBurnInRenderer: Sendable {
             let attrs = mergeAttributes(
                 base: baseAttrs,
                 with: run.style,
-                baseFontSize: baseFontSize
+                baseFontSize: baseFontSize,
+                style: style
             )
             result.append(NSAttributedString(string: run.text, attributes: attrs))
         }
@@ -415,7 +446,8 @@ struct SubtitleBurnInRenderer: Sendable {
     /// Attributes that every run inherits before its own overrides are
     /// merged in. Keeping this in one place means the baseline mirrors
     /// the pre-rich-text path exactly.
-    private func baseAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+    private func baseAttributes(fontSize: CGFloat, style explicitStyle: SubtitleStyle? = nil) -> [NSAttributedString.Key: Any] {
+        let style = explicitStyle ?? self.style
         let ctFont = CTFontCreateWithName(style.fontName as CFString, fontSize, nil)
         var attrs: [NSAttributedString.Key: Any] = [
             .font: ctFont,
@@ -437,8 +469,10 @@ struct SubtitleBurnInRenderer: Sendable {
     private func mergeAttributes(
         base: [NSAttributedString.Key: Any],
         with override: SubtitleRunStyle,
-        baseFontSize: CGFloat
+        baseFontSize: CGFloat,
+        style explicitStyle: SubtitleStyle? = nil
     ) -> [NSAttributedString.Key: Any] {
+        let style = explicitStyle ?? self.style
         var attrs = base
 
         // --- Font (family / size / weight) ---
@@ -656,7 +690,8 @@ struct SubtitleBurnInRenderer: Sendable {
     /// Positioning is computed from `horizontalPositionFraction` (center-X) and
     /// `verticalPositionFraction` (center-Y, top→bottom). The `alignment`
     /// field only affects internal text alignment, not placement.
-    func positioningTransform(overlayWidth: CGFloat, overlayHeight: CGFloat) -> CGAffineTransform {
+    func positioningTransform(overlayWidth: CGFloat, overlayHeight: CGFloat, style explicitStyle: SubtitleStyle? = nil) -> CGAffineTransform {
+        let style = explicitStyle ?? self.style
         let hFrac = max(0, min(1, CGFloat(style.horizontalPositionFraction)))
         let xCenter = hFrac * renderSize.width
         let xOrigin = xCenter - overlayWidth / 2

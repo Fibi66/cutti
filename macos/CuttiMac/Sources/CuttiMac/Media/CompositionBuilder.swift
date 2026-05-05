@@ -530,7 +530,8 @@ struct CompositionBuilder: Sendable {
                             endSeconds: cue.endSeconds,
                             text: cue.text,
                             secondaryText: secondary,
-                            runs: cue.runs
+                            runs: cue.runs,
+                            styleOverride: cue.styleOverride
                         )
                     },
                     style: burn.style,
