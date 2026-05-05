@@ -2015,11 +2015,20 @@ final class MediaCoreViewModel: ObservableObject {
                     of: find, with: replace, options: options
                 )
                 if updated != old.text {
+                    // Preserve speakerID + translations on text edits.
+                    // Drop runs/wordTimings because both have invariants
+                    // tied to the exact bytes of `text`
+                    // (`runs.plainText == text`, UTF-16 word alignment),
+                    // which a textual replace silently violates.
                     newSegments[segIndex].subtitles[subIndex] = SubtitleEntry(
                         id: old.id,
                         relativeStart: old.relativeStart,
                         relativeDuration: old.relativeDuration,
-                        text: updated
+                        text: updated,
+                        speakerID: old.speakerID,
+                        translations: old.translations,
+                        runs: nil,
+                        wordTimings: nil
                     )
                     changed += 1
                 }
@@ -2036,6 +2045,11 @@ final class MediaCoreViewModel: ObservableObject {
     /// Replace the text of the subtitle entry with the given id (which matches
     /// both `SubtitleEntry.id` and `ComposedSubtitle.id`). Rebuilds the
     /// composed-subtitle index so the viewer overlay and exports update.
+    ///
+    /// Preserves `speakerID` and `translations` so editing the source
+    /// line of a bilingual cue does not silently wipe the AI translation.
+    /// Resets `runs` and `wordTimings` because both have invariants tied
+    /// to the exact bytes of `text`.
     func updateSubtitleText(id: UUID, newText: String) {
         print("📝 VM.updateSubtitleText start id=\(id) newText=\"\(newText.prefix(30))\"")
         defer { print("📝 VM.updateSubtitleText done") }
@@ -2051,7 +2065,11 @@ final class MediaCoreViewModel: ObservableObject {
                     id: old.id,
                     relativeStart: old.relativeStart,
                     relativeDuration: old.relativeDuration,
-                    text: trimmed
+                    text: trimmed,
+                    speakerID: old.speakerID,
+                    translations: old.translations,
+                    runs: nil,
+                    wordTimings: nil
                 )
                 didChange = true
                 break
@@ -2059,6 +2077,72 @@ final class MediaCoreViewModel: ObservableObject {
         }
         if didChange {
             rebuildComposedSubtitles()
+        }
+    }
+
+    /// Update both the source-language line and the secondary-language
+    /// translation of a subtitle cue in a single revision.
+    ///
+    /// - Parameters:
+    ///   - id: SubtitleEntry.id to update.
+    ///   - primaryText: The new source-language line. Trimmed; an empty
+    ///                  primary makes the call a no-op (matching
+    ///                  `updateSubtitleText`).
+    ///   - secondaryText: The new translation line. Trimmed; an empty
+    ///                    secondary REMOVES `translations[locale]` so
+    ///                    users can drop a bad AI translation. Other
+    ///                    locales' translations are untouched.
+    ///   - secondaryLocale: BCP-47 locale of the translation. The locale
+    ///                      is normalized via
+    ///                      `BilingualDisplayOptions.normalizeLocale` so
+    ///                      writes round-trip with the renderer's
+    ///                      lookups.
+    ///
+    /// Pushes a single revision so the change is undoable as one step,
+    /// and rebuilds composed subtitles so the preview updates.
+    func updateSubtitleBilingualText(
+        id: UUID,
+        primaryText: String,
+        secondaryText: String,
+        secondaryLocale: String
+    ) {
+        let trimmedPrimary = primaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSecondary = secondaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrimary.isEmpty else { return }
+        let normalizedLocale = BilingualDisplayOptions.normalizeLocale(secondaryLocale)
+        guard !normalizedLocale.isEmpty else {
+            // Fall back to the regular path so we don't silently drop
+            // the primary edit when the locale is malformed.
+            updateSubtitleText(id: id, newText: trimmedPrimary)
+            return
+        }
+        for segIndex in timelineSegments.indices {
+            guard let subIndex = timelineSegments[segIndex].subtitles
+                .firstIndex(where: { $0.id == id }) else { continue }
+            let old = timelineSegments[segIndex].subtitles[subIndex]
+            let primaryChanged = old.text != trimmedPrimary
+            var newTranslations = old.translations
+            let existing = newTranslations[normalizedLocale] ?? ""
+            let secondaryChanged = existing != trimmedSecondary
+            if trimmedSecondary.isEmpty {
+                newTranslations.removeValue(forKey: normalizedLocale)
+            } else {
+                newTranslations[normalizedLocale] = trimmedSecondary
+            }
+            guard primaryChanged || secondaryChanged else { return }
+            pushRevision(label: "Edit subtitle text", trigger: .userEdit(description: "edit-subtitle-bilingual"))
+            timelineSegments[segIndex].subtitles[subIndex] = SubtitleEntry(
+                id: old.id,
+                relativeStart: old.relativeStart,
+                relativeDuration: old.relativeDuration,
+                text: primaryChanged ? trimmedPrimary : old.text,
+                speakerID: old.speakerID,
+                translations: newTranslations,
+                runs: primaryChanged ? nil : old.runs,
+                wordTimings: primaryChanged ? nil : old.wordTimings
+            )
+            rebuildComposedSubtitles()
+            return
         }
     }
 
@@ -2370,7 +2454,10 @@ final class MediaCoreViewModel: ObservableObject {
             relativeStart: bestStart,
             relativeDuration: targetDurationSource,
             text: oldCue.text,
-            speakerID: oldCue.speakerID
+            speakerID: oldCue.speakerID,
+            translations: oldCue.translations,
+            runs: oldCue.runs,
+            wordTimings: oldCue.wordTimings
         )
         timelineSegments[targetSegIndex].subtitles.append(newCue)
         timelineSegments[targetSegIndex].subtitles.sort { $0.relativeStart < $1.relativeStart }
@@ -2419,7 +2506,10 @@ final class MediaCoreViewModel: ObservableObject {
             relativeStart: clampedStart,
             relativeDuration: clampedDuration,
             text: oldCue.text,
-            speakerID: oldCue.speakerID
+            speakerID: oldCue.speakerID,
+            translations: oldCue.translations,
+            runs: oldCue.runs,
+            wordTimings: oldCue.wordTimings
         )
         newSubs.sort { $0.relativeStart < $1.relativeStart }
         timelineSegments[segIndex].subtitles = newSubs
@@ -5446,91 +5536,60 @@ final class MediaCoreViewModel: ObservableObject {
             }
             return
         case .animation, .other:
-            // Animation hints route through the agent loop so the LLM
-            // can pick an appropriate template from the full Remotion
-            // skill catalog and emit a `generate_overlay` call with
-            // valid props for that template.
+            // Server-authoritative animation compose path.
             //
-            // CRITICAL: the agent needs
-            //   (a) the actual spoken words at this moment (so it fills
-            //       real headline / bullet text, not the FLUX-style
-            //       image description from the suggestion)
-            //   (b) per-phrase timestamps RELATIVE TO the overlay start
-            //       (so sequence-template items can carry `atSeconds`
-            //       that mirror the speaker's cadence)
-            //   (c) the anchor window's total duration (so the overlay
-            //       runtime matches how long the speaker spent on it)
+            // Stage-2 already produced clean structured signals
+            // (`userTitle`, `agentHint`, `sectionRole`). We forward
+            // those — plus the spoken transcript window in this anchor —
+            // as a `ComposeBrief` to `/v1/agents/animation/compose`.
+            // The relay-side AnimationSkill picks the template, fills
+            // the props, and runs a server-side validator loop. We
+            // never assemble template-picking instructions on the
+            // client anymore — the skill is the sole authority.
             //
             // WhisperKit already persists word-level timestamps on
             // `record.copilot?.wordTranscript` (each `TranscriptSegment`
-            // is ≈ one spoken word). We prefer that over the sentence-
-            // level `composedSubtitles` because sentence cues are too
-            // coarse — a single breath enumerating "第一X、第二Y、第三Z"
-            // is usually ONE cue, which gives the agent no temporal
-            // information about when to show each item. Word-level
-            // lets us bucket into ~1.5s phrases with accurate offsets.
-            //
-            // We look up the original suggestion by id so we can use
-            // its source-time anchor verbatim; this avoids the
-            // approximation of centering a composed-time window on
-            // `composedSeconds` (which can be off when cuts sit inside
-            // the anchor range).
+            // is ≈ one spoken word). We bucket those into ~1.5s phrases
+            // because sentence-level subtitles are too coarse — a
+            // single breath enumerating "first X, second Y, third Z"
+            // is usually one cue, which gives the agent no temporal
+            // information about when to show each item.
             var anchorDuration = max(1.0, hint.anchorDurationSeconds)
-            var transcriptBlock: String = "(no transcript in this window)"
-            let foundOriginal: Bool = {
-                for record in records {
-                    guard let sugg = (record.copilot?.bRollSuggestions ?? [])
-                        .first(where: { $0.id == hint.id }) else { continue }
-                    let src0 = sugg.sourceStartSeconds
-                    let src1 = sugg.sourceEndSeconds
-                    anchorDuration = max(1.0, src1 - src0)
-                    let words = record.copilot?.wordTranscript ?? []
-                    if !words.isEmpty {
-                        transcriptBlock = Self.buildWordBucketTranscript(
-                            words: words,
-                            windowStart: src0,
-                            windowEnd: src1
-                        )
-                    } else {
-                        // Fallback to composed-subtitle cues centered on
-                        // the hint when there's no word-level data.
-                        let half = anchorDuration / 2.0
-                        let ws = max(0, hint.composedSeconds - half)
-                        let we = hint.composedSeconds + half
-                        let lines = composedSubtitles
-                            .filter { $0.endSeconds >= ws && $0.startSeconds <= we }
-                            .compactMap { cue -> String? in
-                                let text = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !text.isEmpty else { return nil }
-                                let off = max(0.0, min(anchorDuration, cue.startSeconds - ws))
-                                return "[+\(String(format: "%.1f", off))s] \(text)"
-                            }
-                        if !lines.isEmpty {
-                            transcriptBlock = lines.joined(separator: "\n")
+            var cues: [ComposeBrief.TranscriptCue] = []
+            for record in records {
+                guard let sugg = (record.copilot?.bRollSuggestions ?? [])
+                    .first(where: { $0.id == hint.id }) else { continue }
+                let src0 = sugg.sourceStartSeconds
+                let src1 = sugg.sourceEndSeconds
+                anchorDuration = max(1.0, src1 - src0)
+                let words = record.copilot?.wordTranscript ?? []
+                if !words.isEmpty {
+                    cues = Self.buildWordBucketCues(
+                        words: words,
+                        windowStart: src0,
+                        windowEnd: src1
+                    )
+                } else {
+                    // Fallback to composed-subtitle cues centered on
+                    // the hint when there's no word-level data.
+                    let half = anchorDuration / 2.0
+                    let ws = max(0, hint.composedSeconds - half)
+                    let we = hint.composedSeconds + half
+                    cues = composedSubtitles
+                        .filter { $0.endSeconds >= ws && $0.startSeconds <= we }
+                        .compactMap { cue -> ComposeBrief.TranscriptCue? in
+                            let text = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else { return nil }
+                            let off = max(0.0, min(anchorDuration, cue.startSeconds - ws))
+                            return ComposeBrief.TranscriptCue(relativeSec: off, text: text)
                         }
-                    }
-                    return true
                 }
-                return false
-            }()
-            _ = foundOriginal
-
-            // Stash validation context so the generate_overlay tool
-            // handler can reject SequenceSteps responses that ignore
-            // the anchor duration and trigger a retry. Cleared on a
-            // successful render or after 2 minutes (stale guard).
-            pendingOverlayAnchor = PendingOverlayAnchor(
-                anchorDurationSeconds: anchorDuration,
-                expiresAt: Date().addingTimeInterval(120)
-            )
+                break
+            }
 
             let isEnglish = Self.currentEditorLocaleIsEnglish()
             // User-facing bubble text. Shows only what the user can
-            // (and did) edit — the suggestion prompt itself — instead
-            // of the full scaffolded instruction (anchor window,
-            // transcript buckets, template catalog, routing hints, …)
-            // that we send to the LLM. The full `instruction` still
-            // goes to the agent via `content`.
+            // (and did) edit — never the full brief payload.
             let suggestionDisplayText: String = {
                 let body = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
                 if isEnglish {
@@ -5539,15 +5598,73 @@ final class MediaCoreViewModel: ObservableObject {
                     return body.isEmpty ? "生成动画" : "生成动画：\(body)"
                 }
             }()
-            let instruction = Self.buildOverlayInstructionBody(
-                hint: hint,
-                rawPrompt: rawPrompt,
-                transcriptBlock: transcriptBlock,
-                anchorDuration: anchorDuration,
-                userDidEdit: userDidEdit,
-                isEnglish: isEnglish
+
+            let brief = ComposeBrief(
+                language: isEnglish ? .en : .zh,
+                section: ComposeBrief.Section(
+                    composedTime: hint.composedSeconds,
+                    durationSec: anchorDuration,
+                    role: hint.sectionRole ?? "other",
+                    userTitle: hint.userTitle,
+                    agentHint: hint.agentHint,
+                    rationale: hint.rationale,
+                    userEdit: userDidEdit ? trimmedEdit : nil
+                ),
+                transcriptWindow: cues
             )
-            Task { await handleAIPrompt(instruction, displayAs: suggestionDisplayText) }
+
+            let working = isEnglish ? "Composing animation…" : "正在挑模板…"
+            let bubbleID = beginPresetActionChat(
+                userAction: suggestionDisplayText,
+                working: working,
+                icon: "wand.and.stars"
+            )
+
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let result = try await self.composeAnimationViaRelay(brief: brief)
+                    print("🎬 [compose] template=\(result.template_id) iters=\(result.iterations) duration=\(result.duration_seconds)s")
+                    if let err = await self.generateOverlay(
+                        templateID: result.template_id,
+                        propsJSON: result.props_json,
+                        durationSeconds: result.duration_seconds,
+                        at: hint.composedSeconds
+                    ) {
+                        let msg = isEnglish
+                            ? "Animation generation failed: \(err.localizedDescription)"
+                            : "动画生成失败：\(err.localizedDescription)"
+                        self.finishPresetActionChat(
+                            id: bubbleID,
+                            text: msg,
+                            tone: .failure,
+                            icon: "exclamationmark.triangle.fill"
+                        )
+                        self.bannerMessage = msg
+                        return
+                    }
+                    let okMsg = isEnglish
+                        ? "Generated \(result.template_id) overlay"
+                        : "已生成 \(result.template_id) 动画"
+                    self.finishPresetActionChat(
+                        id: bubbleID,
+                        text: okMsg,
+                        tone: .success,
+                        icon: "checkmark.circle.fill"
+                    )
+                } catch {
+                    let msg: String = (error as? AnimationComposeError)?.errorDescription
+                        ?? error.localizedDescription
+                    print("🎬 [compose] failed: \(msg)")
+                    self.finishPresetActionChat(
+                        id: bubbleID,
+                        text: msg,
+                        tone: .failure,
+                        icon: "exclamationmark.triangle.fill"
+                    )
+                    self.bannerMessage = msg
+                }
+            }
             return
         }
 
@@ -5564,22 +5681,54 @@ final class MediaCoreViewModel: ObservableObject {
         let expiresAt: Date
     }
 
-    /// Group word-level `TranscriptSegment`s (each ≈ one spoken word)
-    /// inside [windowStart, windowEnd] into short phrases, emitting
-    /// one line per phrase prefixed with the phrase's start offset
-    /// relative to `windowStart`. A new phrase starts when either
-    /// the accumulated phrase crosses ~1.5s or there's a silence gap
-    /// > 0.4s between adjacent words — which matches the cadence the
-    /// listener hears as a pause.
-    private static func buildWordBucketTranscript(
+    /// Build a fresh `AnimationComposeClient` from the live relay
+    /// credentials and POST the brief. Returns the server's
+    /// `template_id` + `props_json` + `duration_seconds` choice,
+    /// which the caller hands straight to `generateOverlay(...)`.
+    /// Throws an `AnimationComposeError` (or rethrows) on failure.
+    private func composeAnimationViaRelay(
+        brief: ComposeBrief
+    ) async throws -> ComposeResult {
+        guard let url = URL(string: RelayClient.relayBaseURL) else {
+            throw AnimationComposeError.transport("Invalid relay base URL.")
+        }
+        let jwt = RelaySession.currentBearerToken() ?? ""
+        let dev = UserDefaults.standard.string(forKey: "cutti_relay_dev_token") ?? ""
+        let token: String
+        if !jwt.isEmpty {
+            token = "jwt:\(jwt)"
+        } else if !dev.isEmpty {
+            token = "dev:\(dev)"
+        } else {
+            // No credentials -> surface the same banner copy as the
+            // BYOK gate. The compose endpoint requires auth and would
+            // 401 anyway; failing fast here avoids a useless round-trip.
+            throw AnimationComposeError.relayMessage(
+                L("Sign in to Cutti Cloud to generate animated overlays.")
+            )
+        }
+        let client = AnimationComposeClient(
+            relayBaseURL: url,
+            bearerToken: token
+        )
+        return try await client.compose(brief)
+    }
+
+    /// Group word-level `TranscriptSegment`s (each ~= one spoken word)
+    /// inside [windowStart, windowEnd] into short phrases with a start
+    /// offset relative to `windowStart`. A new phrase starts when
+    /// either the accumulated phrase crosses ~1.5s or there is a
+    /// silence gap > 0.4s between adjacent words. Output is a list of
+    /// `ComposeBrief.TranscriptCue` ready to embed in a brief.
+    private static func buildWordBucketCues(
         words: [TranscriptSegment],
         windowStart: Double,
         windowEnd: Double
-    ) -> String {
+    ) -> [ComposeBrief.TranscriptCue] {
         let inWindow = words
             .filter { $0.startSeconds >= windowStart && $0.startSeconds <= windowEnd }
             .sorted { $0.startSeconds < $1.startSeconds }
-        if inWindow.isEmpty { return "(no transcript in this window)" }
+        if inWindow.isEmpty { return [] }
 
         struct Bucket { var startOffset: Double; var text: String; var lastEnd: Double }
         var buckets: [Bucket] = []
@@ -5611,212 +5760,10 @@ final class MediaCoreViewModel: ObservableObject {
             }
         }
         return buckets.map { b in
-            let clean = b.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return "[+\(String(format: "%.1f", b.startOffset))s] \(clean)"
-        }.joined(separator: "\n")
-    }
-
-    /// Composes the per-call agent instruction sent to the overlay
-    /// agent loop after a user clicks "Generate animation" on a B-roll
-    /// suggestion bubble.
-    ///
-    /// Source-of-truth priority for screen text:
-    ///   1. Stage-1 `userTitle` + parsed `agent_hint` (the distilled
-    ///      structured signals — these are what we want on screen).
-    ///   2. User's hand edit IF it carries structural delimiters (full
-    ///      override of the parsed payload). Edits that look title-only
-    ///      promote to a heading override and KEEP the parsed items.
-    ///   3. Transcript — last-resort, with explicit "no filler / no
-    ///      partial ASR shards" guard.
-    /// `rawPrompt` (the FLUX-style asset description) is intentionally
-    /// dropped from this path when structured signals exist; it bleeds
-    /// asset-description language into headings ("a flowchart showing
-    /// X → Y") which looks awful on the overlay.
-    static func buildOverlayInstructionBody(
-        hint: TimelineCreativeActions.BRollSuggestionHint,
-        rawPrompt: String,
-        transcriptBlock: String,
-        anchorDuration: Double,
-        userDidEdit: Bool,
-        isEnglish: Bool
-    ) -> String {
-        let parsedFromHint = AgentHintParser.parse(hint.agentHint, role: hint.sectionRole)
-        let editStructural = userDidEdit && AgentHintParser.editLooksStructural(rawPrompt)
-
-        // If user did a structural edit, parse THEIR text as the
-        // override; otherwise keep Stage-1's parsed payload.
-        let effectiveParsed: ParsedAgentHint = {
-            guard editStructural else { return parsedFromHint }
-            return AgentHintParser.parse(rawPrompt, role: hint.sectionRole)
-        }()
-        // Title precedence: a non-structural user edit IS the title;
-        // otherwise fall back to Stage-1's userTitle.
-        let effectiveTitle: String? = {
-            if userDidEdit && !editStructural {
-                let trimmed = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? hint.userTitle : trimmed
-            }
-            return hint.userTitle
-        }()
-
-        let structuredBlock = OverlayInstructionScaffold.structuredSignalsBlock(
-            userTitle: effectiveTitle,
-            parsed: effectiveParsed,
-            sectionRole: hint.sectionRole,
-            isEnglish: isEnglish
-        )
-        let durationFormatted = String(format: "%.1f", anchorDuration)
-        let composedFormatted = String(format: "%.2f", hint.composedSeconds)
-        let guardRail = OverlayInstructionScaffold.transcriptGuardRail(isEnglish: isEnglish)
-
-        var sections: [String] = []
-        if isEnglish {
-            sections.append("Generate a single animated overlay at composed_time = \(composedFormatted)s.")
-            sections.append("""
-            ## Anchor window
-            The speaker spends \(durationFormatted)s on this topic. For \
-            sequence-style overlays the overlay must match that runtime: \
-            set `durationSeconds` ≈ \(durationFormatted) (clamped to the \
-            template's allowed range, max 30s).
-            """)
-            if let block = structuredBlock {
-                sections.append("""
-                ## Distilled signals — PRIMARY source for all screen text
-                \(block)
-                """)
-            } else if !rawPrompt.isEmpty {
-                sections.append("""
-                ## Suggestion hint (no structured signals available — \
-                distill into clean labels, do NOT lift verbatim if the \
-                phrasing reads as an asset description)
-                "\(rawPrompt)"
-                """)
-            }
-            sections.append(guardRail)
-            sections.append("""
-            ## Transcript in the anchor window (TIMING REFERENCE — \
-            word-level buckets, timestamps RELATIVE to overlay start, \
-            0 = overlay begins)
-            \(transcriptBlock)
-            """)
-            sections.append("""
-            ## Why this moment benefits from a visual
-            "\(hint.rationale)"
-            """)
-            sections.append(routingDirectives(structured: structuredBlock != nil, isEnglish: true))
-        } else {
-            sections.append("请在 composed_time = \(composedFormatted)s 处生成一个动画 overlay。")
-            sections.append("""
-            ## Anchor 窗口
-            用户在这段话上用了 \(durationFormatted)s。序列类 overlay 的时长必须匹配：`durationSeconds` 设为 ≈ \(durationFormatted)（被模板自身的范围 clamp，上限 30s）。
-            """)
-            if let block = structuredBlock {
-                sections.append("""
-                ## 蒸馏信号 — 屏幕所有文字的**权威来源**
-                \(block)
-                """)
-            } else if !rawPrompt.isEmpty {
-                sections.append("""
-                ## 提示文本（**没有**结构化信号 — 蒸馏成干净的 label，文字若像"素材描述"不要原样使用）
-                "\(rawPrompt)"
-                """)
-            }
-            sections.append(guardRail)
-            sections.append("""
-            ## 窗口内的原文（**仅作为时间参考** — word-level 短句分桶，时间戳**相对于 overlay 开始**，0 = overlay 开播）
-            \(transcriptBlock)
-            """)
-            sections.append("""
-            ## 为什么此处需要视觉辅助
-            "\(hint.rationale)"
-            """)
-            sections.append(routingDirectives(structured: structuredBlock != nil, isEnglish: false))
-        }
-
-        return sections.joined(separator: "\n\n")
-    }
-
-    /// The "how to choose a template + how to fill props" block
-    /// appended to every overlay instruction. The `structured` flag
-    /// flips the SequenceSteps recipe between "lift parsed labels
-    /// verbatim from the distilled signals" (Stage-1 gave us a clean
-    /// payload) and "distill 3-5 noun-phrase labels from the
-    /// transcript" (legacy fallback).
-    private static func routingDirectives(structured: Bool, isEnglish: Bool) -> String {
-        if isEnglish {
-            var s = """
-            ## Pick a template and call `generate_overlay` exactly once
-            Catalog: ChapterTitle, TitleCard, ChatBubble, PromptTyping, \
-            SkillMeter, CodeGen, ContextBar, GitHubCard, TripleTap, \
-            SequenceSteps, Quote, Comparison.
-            Routing nudges (the section-role hint above is usually decisive):
-            - Enumeration ("first… second… third…") → SequenceSteps layout="list"
-            - Step / process ("A → B → C") → SequenceSteps layout="flow"
-            - Dated chronology ("2020…, 2022…, 2024…") → SequenceSteps layout="timeline"
-            - Single memorable line → Quote
-            - Contrast A vs B → Comparison
-            - Standalone title / chapter break (~2–3s) → ChapterTitle or TitleCard \
-              (DO NOT size these to the full anchor window — keep them tight).
-            Do not run any other tools.
-            """
-            if structured {
-                s += "\n\n"
-                s += """
-                For SequenceSteps: lift each item's `label` directly from the \
-                parsed list in the DISTILLED SIGNALS block above (use those \
-                strings verbatim — they were already cleaned by Stage-1). \
-                For each item's `atSeconds`, find the closest matching \
-                phrase in the transcript above and use its relative \
-                timestamp. If no clear correspondence exists, distribute \
-                items evenly across `durationSeconds`.
-                For Quote: use the parsed quote text verbatim as `text`. \
-                For Comparison: map LEFT/RIGHT directly to `leftLabel`/`rightLabel`. \
-                For TitleCard headlining a stat: put the figure in `subtitle`.
-                """
-            } else {
-                s += "\n\n"
-                s += """
-                For SequenceSteps without parsed signals: distill 3–5 clean \
-                noun-phrase or short imperative labels from the transcript \
-                content (NOT verbatim sentence extracts; strip filler, ASR \
-                shards, and opening phatic phrases). Set each item's \
-                `atSeconds` from the relative timestamp of the closest \
-                matching phrase.
-                """
-            }
-            return s
-        } else {
-            var s = """
-            ## 选模板 + 调用一次 `generate_overlay`
-            目录：ChapterTitle / TitleCard / ChatBubble / PromptTyping / SkillMeter / CodeGen / ContextBar / GitHubCard / TripleTap / SequenceSteps / Quote / Comparison。
-            路由提示（上面的 section-role 提示通常是决定性的）：
-            - 列举"第一/第二/第三" → SequenceSteps layout="list"
-            - 流程"A→B→C / 先 X 再 Y" → SequenceSteps layout="flow"
-            - 带日期的年表"2020…, 2022…, 2024…" → SequenceSteps layout="timeline"
-            - 一句金句 → Quote
-            - 两样东西对比"A vs B / 以前 vs 现在" → Comparison
-            - 纯标题卡 / 章节过场（约 2-3s）→ ChapterTitle 或 TitleCard（**不要**撑满整个 anchor 窗口，紧凑）
-            不要调其它工具。
-            """
-            if structured {
-                s += "\n\n"
-                s += """
-                SequenceSteps 的要点（已有蒸馏信号）：
-                - `items[].label` **直接**从上面"蒸馏信号"块里的解析列表抄（Stage-1 已经清洗过，原样使用）
-                - 每个 item 的 `atSeconds`：在字幕里找最接近该 label 的短句的相对时间戳；找不到就在 `durationSeconds` 区间内均匀分布
-                Quote 的要点：parsed quote 的 `text` **原样**作为 `text` 字段。
-                Comparison 的要点：LEFT/RIGHT 直接映射到 `leftLabel`/`rightLabel`。
-                TitleCard 突出数据时：核心数字放 `subtitle`。
-                """
-            } else {
-                s += "\n\n"
-                s += """
-                SequenceSteps 的要点（没有结构化信号）：
-                - `items[].label` 从字幕**蒸馏**成 3–5 条干净的名词短语 / 动作短语（**不要**搬整句字幕，去掉口头禅、ASR 残片和起头语气词）
-                - 每个 item 的 `atSeconds`：用最接近该 label 的字幕短句的相对时间戳
-                """
-            }
-            return s
+            ComposeBrief.TranscriptCue(
+                relativeSec: b.startOffset,
+                text: b.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
     }
 
