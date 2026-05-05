@@ -875,7 +875,7 @@ struct ContentView: View {
                     viewModel.endTrim(index: index)
                 },
                 onSplitAtPlayhead: { seconds in
-                    viewModel.splitAtPlayhead(composedTime: seconds)
+                    viewModel.splitAtPlayheadRespectingSelection(composedTime: seconds)
                 },
                 onMergeSelectedSegments: {
                     viewModel.mergeSelectedSegments()
@@ -1130,7 +1130,7 @@ struct ContentView: View {
         // and overlay hidden button for split only
         .overlay {
             Button {
-                viewModel.splitAtPlayhead(composedTime: playheadSeconds)
+                viewModel.splitAtPlayheadRespectingSelection(composedTime: playheadSeconds)
             } label: { T("Split") }
             .keyboardShortcut("b", modifiers: .command)
             .frame(width: 0, height: 0)

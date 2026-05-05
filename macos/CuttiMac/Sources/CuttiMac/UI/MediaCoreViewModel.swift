@@ -181,7 +181,22 @@ final class MediaCoreViewModel: ObservableObject {
     /// start-time popover in TimelineDock and (2) drive the free-
     /// transform handles in the viewer. Nil when no overlay segment
     /// is active.
-    @Published var selectedOverlaySegmentID: UUID?
+    ///
+    /// Selection is mutually exclusive with V1's `selectedSegmentIDs`
+    /// (didSet below clears V1 when an overlay becomes selected, and
+    /// `handleSegmentClick` clears this when V1 is clicked). That
+    /// invariant lets shortcut actions like Cmd+B (Split) and the
+    /// toolbar split button route deterministically to the lane the
+    /// user is currently editing — sticky cross-track selection used
+    /// to make Cmd+B silently target a clip the user wasn't looking
+    /// at anymore.
+    @Published var selectedOverlaySegmentID: UUID? {
+        didSet {
+            if selectedOverlaySegmentID != nil, !selectedSegmentIDs.isEmpty {
+                clearSegmentSelection()
+            }
+        }
+    }
     /// Toggle subtitle display on the timeline.
     @Published var showSubtitles: Bool
     /// When true, subtitles still render on the S1 timeline lane (so
@@ -544,6 +559,11 @@ final class MediaCoreViewModel: ObservableObject {
         // locked clip could still be chosen and then be silently
         // rejected by every editing action, which is confusing.
         guard !isPrimaryTrackLocked() else { return }
+
+        // V1 ↔ overlay selection is mutually exclusive — picking V1
+        // takes editing focus away from any selected overlay so
+        // Cmd+B / Delete / Inspector all route back to V1.
+        selectedOverlaySegmentID = nil
 
         // Any click on a clip clears cue selection — subtitle selection is
         // mutually exclusive with segment selection.
@@ -2801,7 +2821,204 @@ final class MediaCoreViewModel: ObservableObject {
         rebuildComposition()
     }
 
-    /// Delete the segment at the given index.
+    /// User-facing split entry point that respects which track the
+    /// user is editing. When an overlay segment is selected and the
+    /// playhead is inside its composed range, we route to the overlay
+    /// split (which itself silently noops if the cut is too close to
+    /// either edge); otherwise we fall back to the V1 split.
+    ///
+    /// We don't fall through to V1 just because the cut is near the
+    /// overlay's edge — that would surprise the user by splitting the
+    /// V1 clip underneath when they explicitly selected the overlay.
+    /// Cmd+B and the timeline toolbar's Split button both route
+    /// through here so the same shortcut works for AI-generated
+    /// animations and B-roll on V2+ tracks. The `selectedOverlaySegmentID`
+    /// `didSet` (above) plus the V1-click clear in `handleSegmentClick`
+    /// guarantee the selection isn't cross-track-stale, so this
+    /// dispatcher's "selected overlay wins" rule is unambiguous.
+    func splitAtPlayheadRespectingSelection(composedTime: Double) {
+        if let overlayID = selectedOverlaySegmentID,
+           let composedRange = overlayComposedRange(segmentID: overlayID),
+           composedTime >= composedRange.start,
+           composedTime <= composedRange.end {
+            splitOverlaySegmentAtPlayhead(segmentID: overlayID, composedTime: composedTime)
+            return
+        }
+        splitAtPlayhead(composedTime: composedTime)
+    }
+
+    /// Split the given overlay (V2+) segment at the composed playhead.
+    /// The two halves carry the same `sourceVideoID` and re-slice the
+    /// underlying media: the left half covers `[range.start,
+    /// splitSourceTime]` anchored at the original `placementOffset`,
+    /// and the right half covers `[splitSourceTime, range.end]`
+    /// anchored at `composedTime`. Visual fields (`pipLayout`,
+    /// `freeTransform`, `effects`, `speedRate`, `volumeLevel`) are
+    /// preserved on both halves.
+    ///
+    /// `overlaySpec` is preserved on the LEFT half but dropped on the
+    /// RIGHT. Re-rendering the spec produces a fresh full-duration
+    /// asset starting at source-time 0, so the right half (whose
+    /// `range.startSeconds` is non-zero) would slice into the wrong
+    /// part of the new render. Letting the right half be a plain
+    /// media slice is correct; the user can undo the split if they
+    /// want to keep AI-editing the full clip.
+    ///
+    /// Subtitles on the original (rare for AI animations but allowed
+    /// by the model) are split correctly: cues fully on either side
+    /// land in their half, cues that straddle the cut are clipped at
+    /// the boundary while preserving `translations`, `speakerID`,
+    /// and resetting `runs` / `wordTimings` only when the text
+    /// actually changes (which it doesn't on a clean split).
+    ///
+    /// `linkedSegmentID` (detached-audio link) is dropped on both
+    /// halves to avoid two segments pointing at the same aux clip;
+    /// in practice overlay segments aren't detached-audio paired,
+    /// but the defensive nil keeps the model consistent if they
+    /// ever are.
+    func splitOverlaySegmentAtPlayhead(segmentID: UUID, composedTime: Double) {
+        guard !isSegmentLocked(segmentID) else { return }
+        guard let (tIdx, sIdx) = findOverlaySegmentLocation(segmentID: segmentID) else { return }
+        guard let composedRange = overlayComposedRange(segmentID: segmentID) else { return }
+
+        let original = project.tracks[tIdx].segments[sIdx]
+        let speed = original.normalizedSpeedRate
+        let composedStart = composedRange.start
+        let composedEnd = composedRange.end
+        let minDuration = 0.2
+
+        guard composedTime > composedStart + minDuration,
+              composedTime < composedEnd - minDuration else { return }
+
+        let splitSourceTime = original.range.startSeconds + (composedTime - composedStart) * speed
+        let splitOffsetInSource = splitSourceTime - original.range.startSeconds
+
+        // Subtitle split (correct bilingual data preservation).
+        var leftSubs: [SubtitleEntry] = []
+        var rightSubs: [SubtitleEntry] = []
+        for sub in original.subtitles {
+            let subEnd = sub.relativeStart + sub.relativeDuration
+            if subEnd <= splitOffsetInSource + 0.0001 {
+                leftSubs.append(sub)
+            } else if sub.relativeStart >= splitOffsetInSource - 0.0001 {
+                rightSubs.append(SubtitleEntry(
+                    id: sub.id,
+                    relativeStart: max(0, sub.relativeStart - splitOffsetInSource),
+                    relativeDuration: sub.relativeDuration,
+                    text: sub.text,
+                    speakerID: sub.speakerID,
+                    translations: sub.translations,
+                    runs: sub.runs,
+                    wordTimings: sub.wordTimings
+                ))
+            } else {
+                let leftDur = splitOffsetInSource - sub.relativeStart
+                if leftDur > 0.001 {
+                    leftSubs.append(SubtitleEntry(
+                        id: sub.id,
+                        relativeStart: sub.relativeStart,
+                        relativeDuration: leftDur,
+                        text: sub.text,
+                        speakerID: sub.speakerID,
+                        translations: sub.translations,
+                        runs: nil,
+                        wordTimings: nil
+                    ))
+                }
+                let rightDur = subEnd - splitOffsetInSource
+                if rightDur > 0.001 {
+                    rightSubs.append(SubtitleEntry(
+                        id: UUID(),
+                        relativeStart: 0,
+                        relativeDuration: rightDur,
+                        text: sub.text,
+                        speakerID: sub.speakerID,
+                        translations: sub.translations,
+                        runs: nil,
+                        wordTimings: nil
+                    ))
+                }
+            }
+        }
+
+        let leftRange = TimeRange(
+            startSeconds: original.range.startSeconds,
+            endSeconds: splitSourceTime
+        )
+        var leftSegment = TimelineSegment(
+            id: UUID(),
+            sourceVideoID: original.sourceVideoID,
+            range: leftRange,
+            text: original.text,
+            subtitles: leftSubs,
+            volumeLevel: original.volumeLevel,
+            isVideoHidden: original.isVideoHidden,
+            speedRate: original.speedRate,
+            effects: original.effects,
+            placementOffset: composedStart,
+            alternatives: original.alternatives,
+            linkedSegmentID: nil,
+            pipLayout: original.pipLayout,
+            freeTransform: original.freeTransform,
+            overlaySpec: original.overlaySpec
+        )
+
+        let rightRange = TimeRange(
+            startSeconds: splitSourceTime,
+            endSeconds: original.range.endSeconds
+        )
+        var rightSegment = TimelineSegment(
+            id: UUID(),
+            sourceVideoID: original.sourceVideoID,
+            range: rightRange,
+            text: original.text,
+            subtitles: rightSubs,
+            volumeLevel: original.volumeLevel,
+            isVideoHidden: original.isVideoHidden,
+            speedRate: original.speedRate,
+            effects: original.effects,
+            placementOffset: composedTime,
+            alternatives: original.alternatives,
+            linkedSegmentID: nil,
+            pipLayout: original.pipLayout,
+            freeTransform: original.freeTransform,
+            overlaySpec: nil
+        )
+        // Touch the locals so the compiler keeps the explicit
+        // construction visible if these structs grow new fields.
+        _ = leftSegment.id
+        _ = rightSegment.id
+
+        pushRevision(label: "Split overlay", trigger: .userEdit(description: "split-overlay"))
+        project.tracks[tIdx].segments.replaceSubrange(sIdx...sIdx, with: [leftSegment, rightSegment])
+        selectedOverlaySegmentID = leftSegment.id
+        rebuildComposition()
+    }
+
+    /// Resolve the composed-time `[start, end]` range of an overlay
+    /// segment, mirroring `MultiTrackComposer.plan`'s cursor logic so
+    /// segments that lack an explicit `placementOffset` are placed in
+    /// the running cursor of their track. AI animations always carry
+    /// `placementOffset`, but importing a sequence of B-roll clips
+    /// onto the same overlay track relies on the running-cursor
+    /// fallback and we want Split to work there too.
+    func overlayComposedRange(segmentID: UUID) -> (start: Double, end: Double)? {
+        for track in project.tracks where track.kind == .overlay {
+            var cursor = track.segments.first?.placementOffset ?? 0
+            for seg in track.segments {
+                if let anchor = seg.placementOffset {
+                    cursor = anchor
+                }
+                let start = cursor
+                let end = cursor + seg.durationSeconds
+                if seg.id == segmentID {
+                    return (start, end)
+                }
+                cursor = end
+            }
+        }
+        return nil
+    }
     func deleteSegment(at index: Int) {
         guard index >= 0, index < timelineSegments.count else { return }
         guard !isPrimaryTrackLocked() else { return }
