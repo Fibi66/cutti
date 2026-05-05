@@ -512,11 +512,11 @@ final class AICopilotPresentationTests: XCTestCase {
     func test_highlightRow_isDraggableOnlyWhenEndSecondsPresent() {
         let modern = AICopilotPresentation.HighlightRow(
             sourceVideoID: UUID(), seconds: 1, endSeconds: 3,
-            label: "x", origin: .ai, sequence: 0
+            label: "x", origin: .ai, markerIndex: 0
         )
         let legacy = AICopilotPresentation.HighlightRow(
             sourceVideoID: UUID(), seconds: 1, endSeconds: nil,
-            label: "x", origin: .ai, sequence: 0
+            label: "x", origin: .ai, markerIndex: 0
         )
         XCTAssertTrue(modern.isDraggable)
         XCTAssertFalse(legacy.isDraggable)
@@ -590,10 +590,10 @@ final class AICopilotPresentationTests: XCTestCase {
         XCTAssertNil(AICopilotPresentation.parseHighlightPayload("highlight:\(id):0.0:inf"))
     }
 
-    func test_highlightGroups_assignsUniqueSequenceTiebreaker() {
+    func test_highlightGroups_assignsUniqueMarkerIndexTiebreaker() {
         // Pathological case: two markers with identical (start, end,
-        // label) on the same record. Without the sequence tiebreaker
-        // these would collide as ForEach IDs.
+        // label) on the same record. Without the markerIndex
+        // tiebreaker these would collide as ForEach IDs.
         let snapshot = makeHighlightSnapshot(markers: [
             AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Same"),
             AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Same")
@@ -602,5 +602,76 @@ final class AICopilotPresentationTests: XCTestCase {
         let rows = AICopilotPresentation.highlightGroups(records: [record])[0].highlights
         XCTAssertEqual(rows.count, 2)
         XCTAssertNotEqual(rows[0].id, rows[1].id)
+        XCTAssertNotEqual(rows[0].markerIndex, rows[1].markerIndex)
+    }
+
+    // MARK: - markerIndex semantics (PR 10)
+
+    func test_highlightGroups_markerIndexMatchesRawArrayPosition() {
+        // The Highlights panel removes by markers.remove(at:
+        // markerIndex), so markerIndex MUST equal the marker's
+        // position in the record's *raw* copilot.markers array
+        // (mixed kinds), not its position in the sorted
+        // highlight-only projection.
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .scene,     seconds: 0,  label: "Scene"),       // raw 0
+            AICopilotMarker(kind: .highlight, seconds: 12, endSeconds: 14, label: "Late"), // raw 1
+            AICopilotMarker(kind: .suggestion, seconds: 1, label: "Sug"),         // raw 2
+            AICopilotMarker(kind: .highlight, seconds: 3,  endSeconds: 5,  label: "Early") // raw 3
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let rows = AICopilotPresentation.highlightGroups(records: [record])[0].highlights
+        // Sorted by `seconds`: Early(3) before Late(12)
+        XCTAssertEqual(rows.map(\.label), ["Early", "Late"])
+        // But markerIndex preserves raw-array position
+        XCTAssertEqual(rows[0].markerIndex, 3)
+        XCTAssertEqual(rows[1].markerIndex, 1)
+    }
+
+    func test_highlightGroups_totalOrderResolvesTiesDeterministically() {
+        // Two highlights with identical seconds + endSeconds but
+        // different (origin, label, markerIndex) must produce a
+        // stable order under any input permutation. We verify by
+        // constructing two snapshots with the markers in opposite
+        // order and asserting the row sequence is identical.
+        let mAI = AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "AI", origin: .ai)
+        let mManual = AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Manual", origin: .manual)
+
+        let r1 = makeRecord(snapshot: makeHighlightSnapshot(markers: [mAI, mManual]))
+        let r2 = makeRecord(snapshot: makeHighlightSnapshot(markers: [mManual, mAI]))
+        let rows1 = AICopilotPresentation.highlightGroups(records: [r1])[0].highlights
+        let rows2 = AICopilotPresentation.highlightGroups(records: [r2])[0].highlights
+
+        // Order is deterministic by (origin, label) regardless of
+        // input array order.
+        XCTAssertEqual(rows1.map(\.origin), rows2.map(\.origin))
+        XCTAssertEqual(rows1.map(\.label), rows2.map(\.label))
+    }
+
+    func test_highlightRow_fingerprintCarriesAllNonKindFields() {
+        let row = AICopilotPresentation.HighlightRow(
+            sourceVideoID: UUID(), seconds: 12.5, endSeconds: 18.25,
+            label: "Quote", origin: .manual, markerIndex: 4
+        )
+        let fp = row.fingerprint
+        XCTAssertEqual(fp.seconds, 12.5)
+        XCTAssertEqual(fp.endSeconds, 18.25)
+        XCTAssertEqual(fp.origin, .manual)
+        XCTAssertEqual(fp.label, "Quote")
+    }
+
+    func test_highlightGroups_mixedAIAndManualRendersInTimeOrder() {
+        // Manual highlights and AI highlights both surface in the
+        // same panel, sorted together by start time. Verifies PR 10
+        // doesn't bucket manual into a separate visual section.
+        let snapshot = makeHighlightSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 10, endSeconds: 12, label: "AI late",  origin: .ai),
+            AICopilotMarker(kind: .highlight, seconds: 1,  endSeconds: 3,  label: "Manual early", origin: .manual),
+            AICopilotMarker(kind: .highlight, seconds: 5,  endSeconds: 7,  label: "AI mid",   origin: .ai)
+        ])
+        let record = makeRecord(snapshot: snapshot)
+        let rows = AICopilotPresentation.highlightGroups(records: [record])[0].highlights
+        XCTAssertEqual(rows.map(\.label), ["Manual early", "AI mid", "AI late"])
+        XCTAssertEqual(rows.map(\.origin), [.manual, .ai, .ai])
     }
 }

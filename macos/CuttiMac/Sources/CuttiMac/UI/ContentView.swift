@@ -454,6 +454,16 @@ struct ContentView: View {
                 playheadSeconds = 0
                 durationSeconds = 0
                 viewModel.select(recordID: id)
+            },
+            onSaveSegmentsToHighlights: { [weak viewModel] segmentIDs in
+                viewModel?.saveTimelineSegmentsToHighlights(segmentIDs)
+            },
+            onRemoveHighlight: { [weak viewModel] row in
+                viewModel?.removeHighlight(
+                    recordID: row.sourceVideoID,
+                    markerIndex: row.markerIndex,
+                    fingerprint: row.fingerprint
+                )
             }
         )
         if flexSection == .highlights {
@@ -605,6 +615,12 @@ struct ContentView: View {
                     sourceEnd: end,
                     at: index
                 )
+            },
+            onSaveSegmentToHighlights: { [weak viewModel] segmentID in
+                viewModel?.saveTimelineSegmentsToHighlights([segmentID])
+            },
+            canSaveSegmentToHighlights: { [weak viewModel] segmentID in
+                viewModel?.canSaveSegmentToHighlights(segmentID: segmentID) ?? false
             },
             onInsertMediaIntoOverlayTrack: { [weak viewModel] mediaID, trackID, composedStart in
                 viewModel?.insertMediaIntoOverlayTrack(mediaID: mediaID, trackID: trackID, composedStart: composedStart)

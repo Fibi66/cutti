@@ -148,6 +148,17 @@ struct TimelineCreativeActions {
     /// to insert before. Mirrors `onInsertMediaAtPrimaryIndex` but
     /// inserts a slice of the source instead of the full clip.
     var onInsertSourceSliceAtPrimaryIndex: (UUID, Double, Double, Int) -> Void = { _, _, _, _ in }
+    /// Save a single V1 segment to the Highlights panel (the
+    /// "Save to Highlights" context-menu entry-point). The view
+    /// model maps composed segment → source range and writes a
+    /// `.manual`-origin marker.
+    var onSaveSegmentToHighlights: (UUID) -> Void = { _ in }
+    /// Predicate gating the visibility/enabled-state of the
+    /// "Save to Highlights" affordance. Returns false when the V1
+    /// segment doesn't exist, its source has no AI snapshot, or the
+    /// span would be too short to save. Wired so the menu item
+    /// disables itself rather than failing post-click.
+    var canSaveSegmentToHighlights: (UUID) -> Bool = { _ in false }
     /// Called when the user drops a MediaBrowser record onto an existing
     /// overlay (V2+) lane. `trackID` identifies the target overlay lane;
     /// `composedStart` is the drop x-coordinate translated into composed

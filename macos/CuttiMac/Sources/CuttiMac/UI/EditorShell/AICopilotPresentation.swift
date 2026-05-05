@@ -163,6 +163,21 @@ enum AICopilotPresentation {
 
     // MARK: - Highlights aggregation
 
+    /// Stable identity fingerprint for a highlight marker. Comprises
+    /// every load-bearing AICopilotMarker field except `kind` (which
+    /// is always `.highlight` here). Used by the panel's
+    /// "Remove from Highlights" path to defend against stale row →
+    /// new marker dispatches racing with `score_hook_candidates`
+    /// reruns: the dispatcher checks both `markerIndex` and the
+    /// fingerprint before mutating, so a markerIndex that no longer
+    /// addresses the same content is a no-op.
+    struct HighlightFingerprint: Equatable {
+        let seconds: Double
+        let endSeconds: Double?
+        let origin: AICopilotMarker.Origin
+        let label: String
+    }
+
     /// One highlight marker pinned to its source record. The Highlights
     /// panel renders these as draggable rows.
     struct HighlightRow: Equatable, Hashable, Identifiable {
@@ -171,23 +186,38 @@ enum AICopilotPresentation {
         let endSeconds: Double?
         let label: String
         let origin: AICopilotMarker.Origin
-        /// Position of the marker within its source record's sorted
-        /// highlights list. Used solely as a tiebreaker for the
-        /// SwiftUI `id` so that two pathological markers with the
-        /// same (record, time, label) still produce distinct row
-        /// identities — duplicate ForEach IDs are undefined in
-        /// SwiftUI even when "shouldn't happen in practice".
-        let sequence: Int
+        /// Position of the marker in the *owning record's raw
+        /// `copilot.markers` array* — i.e. its persistent index in the
+        /// manifest, not its position in the sorted-highlights-only
+        /// projection. Doubles as both a stable SwiftUI ID component
+        /// and the canonical removal key (`removeHighlight` does
+        /// `markers.remove(at: markerIndex)` after a fingerprint
+        /// recheck). Using the raw-array index avoids the
+        /// sort-key-tie ambiguity that a presentation-order index
+        /// would suffer from.
+        let markerIndex: Int
 
         /// Stable identity across re-renders. We don't have a server-
         /// assigned marker ID, so we composite the load-bearing fields
-        /// plus the in-snapshot sequence as a tiebreaker.
+        /// plus the in-snapshot raw-array index as a tiebreaker.
         var id: String {
             let endText = endSeconds.map { String(format: "%.6f", $0) } ?? "nil"
-            return "\(sourceVideoID.uuidString)|\(String(format: "%.6f", seconds))|\(endText)|\(sequence)|\(label)"
+            return "\(sourceVideoID.uuidString)|\(String(format: "%.6f", seconds))|\(endText)|\(markerIndex)|\(origin.rawValue)|\(label)"
         }
 
         var isDraggable: Bool { endSeconds != nil }
+
+        /// Snapshot of the marker's content used by `removeHighlight`
+        /// to verify the markerIndex still addresses the same content
+        /// at execute time.
+        var fingerprint: HighlightFingerprint {
+            HighlightFingerprint(
+                seconds: seconds,
+                endSeconds: endSeconds,
+                origin: origin,
+                label: label
+            )
+        }
     }
 
     /// All highlights from one source record, sorted by start time.
@@ -204,24 +234,45 @@ enum AICopilotPresentation {
     /// time within each group. Records without highlights are omitted.
     /// Group ordering follows the input `records` array so the panel
     /// matches the Media list above it.
+    ///
+    /// Sort comparator establishes a total order
+    /// (`seconds`, `endSeconds ?? 0`, `origin`, `label`, `markerIndex`)
+    /// so identity is deterministic across re-renders even when
+    /// multiple highlights tie on the leading keys. The
+    /// `markerIndex` we emit on each row matches the marker's
+    /// position in the record's raw `copilot.markers` array — NOT
+    /// the row's index in this sorted projection — so "remove the
+    /// marker behind this row" can target the manifest unambiguously.
     static func highlightGroups(records: [MediaAssetRecord]) -> [HighlightGroup] {
         var result: [HighlightGroup] = []
         for record in records {
             guard let snapshot = record.copilot else { continue }
-            let sortedMarkers = snapshot.markers
-                .filter { $0.kind == .highlight }
-                .sorted { lhs, rhs in
-                    if lhs.seconds != rhs.seconds { return lhs.seconds < rhs.seconds }
-                    return (lhs.endSeconds ?? 0) < (rhs.endSeconds ?? 0)
+            // Capture each highlight together with its raw-array
+            // index in `markers` so we can carry that index through
+            // sorting + filtering into `HighlightRow.markerIndex`.
+            let highlightsWithIndex: [(Int, AICopilotMarker)] = snapshot.markers
+                .enumerated()
+                .compactMap { (idx, marker) in
+                    marker.kind == .highlight ? (idx, marker) : nil
                 }
-            let rows = sortedMarkers.enumerated().map { (index, marker) in
+            let sorted = highlightsWithIndex.sorted { lhs, rhs in
+                let l = lhs.1, r = rhs.1
+                if l.seconds != r.seconds { return l.seconds < r.seconds }
+                let lEnd = l.endSeconds ?? 0
+                let rEnd = r.endSeconds ?? 0
+                if lEnd != rEnd { return lEnd < rEnd }
+                if l.origin.rawValue != r.origin.rawValue { return l.origin.rawValue < r.origin.rawValue }
+                if l.label != r.label { return l.label < r.label }
+                return lhs.0 < rhs.0
+            }
+            let rows = sorted.map { (markerIndex, marker) in
                 HighlightRow(
                     sourceVideoID: record.id,
                     seconds: marker.seconds,
                     endSeconds: marker.endSeconds,
                     label: marker.label,
                     origin: marker.origin,
-                    sequence: index
+                    markerIndex: markerIndex
                 )
             }
             guard !rows.isEmpty else { continue }

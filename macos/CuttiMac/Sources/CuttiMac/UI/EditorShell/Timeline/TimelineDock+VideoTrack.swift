@@ -345,6 +345,11 @@ extension TimelineDock {
                                 }
                             }
                             Divider()
+                            Button {
+                                creativeActions.onSaveSegmentToHighlights(segment.id)
+                            } label: { T("Save to Highlights") }
+                            .disabled(!creativeActions.canSaveSegmentToHighlights(segment.id))
+                            Divider()
                             Button(segment.isVideoHidden ? (segIsImage ? L("Show Image") : L("Show Video")) : (segIsImage ? L("Hide Image") : L("Hide Video"))) {
                                 creativeActions.onToggleSegmentVideoHidden(segment.id)
                             }

@@ -4197,6 +4197,240 @@ final class MediaCoreViewModel: ObservableObject {
         )
     }
 
+    // MARK: - Manual highlights (PR 10)
+
+    /// Returns true if the V1 segment identified by `segmentID` can
+    /// be saved to Highlights right now. Used to gate the
+    /// "Save to Highlights" context-menu item and the
+    /// drop-on-Highlights-panel target so the affordances are
+    /// disabled rather than failing post-interaction. Mirrors the
+    /// validation gauntlet inside `addManualHighlight` so a green
+    /// affordance always succeeds.
+    func canSaveSegmentToHighlights(segmentID: UUID) -> Bool {
+        guard let segment = timelineSegments.first(where: { $0.id == segmentID }) else { return false }
+        guard let record = records.first(where: { $0.id == segment.sourceVideoID }) else { return false }
+        guard record.copilot != nil else { return false }
+        guard let analysis = record.analysis, analysis.durationSeconds > 0.1 else { return false }
+        let span = max(0, segment.range.endSeconds - segment.range.startSeconds)
+        return span >= 0.2
+    }
+
+    /// Append a `.manual`-origin `.highlight` marker to the source
+    /// record's snapshot. Validates against the source's analyzed
+    /// duration so we never persist a degenerate marker. Persists to
+    /// the manifest when a `ProjectStore` is configured; otherwise
+    /// (test mode) mutates the in-memory `records` array only.
+    ///
+    /// In-memory state is updated synchronously regardless so the
+    /// Highlights panel rerenders immediately. The async manifest
+    /// write reloads `records` on completion to settle any divergence
+    /// (in practice the result is identical).
+    func addManualHighlight(
+        recordID: UUID,
+        sourceStart: Double,
+        sourceEnd: Double,
+        label: String
+    ) {
+        guard let recIdx = records.firstIndex(where: { $0.id == recordID }) else {
+            bannerMessage = L("Can't save highlight — media not found.")
+            return
+        }
+        let record = records[recIdx]
+        guard var snapshot = record.copilot else {
+            bannerMessage = L("Can't save highlight — run AI analysis first.")
+            return
+        }
+        guard let analysis = record.analysis, analysis.durationSeconds > 0.1 else {
+            bannerMessage = L("Can't save highlight — analysis not ready.")
+            return
+        }
+        let clampedStart = max(0, min(sourceStart, analysis.durationSeconds))
+        let clampedEnd = max(clampedStart, min(sourceEnd, analysis.durationSeconds))
+        guard clampedEnd - clampedStart >= 0.2 else {
+            bannerMessage = L("Can't save highlight — selection is too short.")
+            return
+        }
+        let marker = AICopilotMarker(
+            kind: .highlight,
+            seconds: clampedStart,
+            endSeconds: clampedEnd,
+            label: Self.normalizedHighlightLabel(label),
+            origin: .manual
+        )
+        snapshot.markers.append(marker)
+        records[recIdx].copilot = snapshot
+        bannerMessage = L("Highlight saved.")
+        persistMarkerAppend(recordID: recordID, markers: [marker])
+    }
+
+    /// Bulk version of `addManualHighlight` for the
+    /// drag-segments-onto-Highlights-panel drop. Validates each
+    /// segment, groups the resulting markers by source record so we
+    /// hit the manifest just once per record, and emits a single
+    /// summary banner. Segments whose source has no snapshot /
+    /// analysis are silently skipped (the drop affordance was gated
+    /// upstream; we count them as `skipped` for the summary).
+    func saveTimelineSegmentsToHighlights(_ segmentIDs: [UUID]) {
+        guard !segmentIDs.isEmpty else { return }
+        let segmentsByID = Dictionary(uniqueKeysWithValues: timelineSegments.map { ($0.id, $0) })
+        var perRecord: [UUID: [AICopilotMarker]] = [:]
+        var saved = 0
+        var skipped = 0
+        for segID in segmentIDs {
+            guard let seg = segmentsByID[segID] else { skipped += 1; continue }
+            guard let record = records.first(where: { $0.id == seg.sourceVideoID }) else {
+                skipped += 1; continue
+            }
+            guard record.copilot != nil else { skipped += 1; continue }
+            guard let analysis = record.analysis, analysis.durationSeconds > 0.1 else {
+                skipped += 1; continue
+            }
+            let clampedStart = max(0, min(seg.range.startSeconds, analysis.durationSeconds))
+            let clampedEnd = max(clampedStart, min(seg.range.endSeconds, analysis.durationSeconds))
+            guard clampedEnd - clampedStart >= 0.2 else { skipped += 1; continue }
+            let marker = AICopilotMarker(
+                kind: .highlight,
+                seconds: clampedStart,
+                endSeconds: clampedEnd,
+                label: Self.normalizedHighlightLabel(seg.text),
+                origin: .manual
+            )
+            perRecord[seg.sourceVideoID, default: []].append(marker)
+            saved += 1
+        }
+        for (recordID, markers) in perRecord {
+            guard let recIdx = records.firstIndex(where: { $0.id == recordID }) else { continue }
+            guard var snap = records[recIdx].copilot else { continue }
+            snap.markers.append(contentsOf: markers)
+            records[recIdx].copilot = snap
+        }
+        if saved == 0 {
+            bannerMessage = L("Couldn't save any highlights — check the analysis status.")
+        } else if saved == 1 && skipped == 0 {
+            bannerMessage = L("Highlight saved.")
+        } else if skipped == 0 {
+            bannerMessage = L("Saved %d highlights.", saved)
+        } else {
+            bannerMessage = L("Saved %d highlights (%d skipped).", saved, skipped)
+        }
+        guard let store, !perRecord.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            do {
+                var manifest = try store.loadManifest()
+                for (recordID, markers) in perRecord {
+                    guard let idx = manifest.media.firstIndex(where: { $0.id == recordID }),
+                          var snap = manifest.media[idx].copilot else { continue }
+                    snap.markers.append(contentsOf: markers)
+                    manifest.media[idx].copilot = snap
+                }
+                try store.saveManifest(manifest)
+                await self?.loadRecords()
+            } catch {
+                self?.bannerMessage = L("Failed to save highlights: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Removes the highlight at `markerIndex` in the record's raw
+    /// `copilot.markers` array, but ONLY if the marker at that
+    /// position still matches `fingerprint`. The fingerprint check
+    /// defends against a `score_hook_candidates` rerun racing with
+    /// the user's right-click → Remove flow: if the marker at that
+    /// index has changed (e.g. AI markers were replaced en masse),
+    /// the call is a no-op + reload so the panel resyncs to the new
+    /// state instead of removing the wrong marker.
+    func removeHighlight(
+        recordID: UUID,
+        markerIndex: Int,
+        fingerprint: AICopilotPresentation.HighlightFingerprint
+    ) {
+        guard let recIdx = records.firstIndex(where: { $0.id == recordID }) else {
+            bannerMessage = L("Can't remove highlight — media not found.")
+            return
+        }
+        guard var snap = records[recIdx].copilot,
+              markerIndex >= 0,
+              markerIndex < snap.markers.count else {
+            bannerMessage = L("Highlight no longer exists.")
+            return
+        }
+        let m = snap.markers[markerIndex]
+        guard m.kind == .highlight,
+              m.seconds == fingerprint.seconds,
+              m.endSeconds == fingerprint.endSeconds,
+              m.origin == fingerprint.origin,
+              m.label == fingerprint.label else {
+            bannerMessage = L("Highlight has changed. Try again.")
+            return
+        }
+        snap.markers.remove(at: markerIndex)
+        records[recIdx].copilot = snap
+        bannerMessage = L("Highlight removed.")
+        guard let store else { return }
+        Task { @MainActor [weak self] in
+            do {
+                var manifest = try store.loadManifest()
+                guard let idx = manifest.media.firstIndex(where: { $0.id == recordID }),
+                      var snap = manifest.media[idx].copilot,
+                      markerIndex >= 0,
+                      markerIndex < snap.markers.count else {
+                    await self?.loadRecords()
+                    return
+                }
+                let dm = snap.markers[markerIndex]
+                guard dm.kind == .highlight,
+                      dm.seconds == fingerprint.seconds,
+                      dm.endSeconds == fingerprint.endSeconds,
+                      dm.origin == fingerprint.origin,
+                      dm.label == fingerprint.label else {
+                    await self?.loadRecords()
+                    return
+                }
+                snap.markers.remove(at: markerIndex)
+                manifest.media[idx].copilot = snap
+                try store.saveManifest(manifest)
+                await self?.loadRecords()
+            } catch {
+                self?.bannerMessage = L("Failed to remove highlight: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Single-newline collapse + 60-char trim used by both the
+    /// single-segment and bulk save paths to keep persisted labels
+    /// readable. Empty inputs fall back to a generic
+    /// "Manual highlight" so rows never render as blank.
+    private static func normalizedHighlightLabel(_ raw: String) -> String {
+        let collapsed = raw
+            .split(whereSeparator: { $0.isNewline || $0 == "\t" })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        let body = collapsed.isEmpty ? L("Manual highlight") : collapsed
+        return String(body.prefix(60))
+    }
+
+    /// Async manifest writer for the single-marker append path. Reads
+    /// fresh manifest so concurrent analysis writes don't get
+    /// clobbered, applies the append, saves, then reloads. No-op when
+    /// there's no `ProjectStore` (test mode); the in-memory record
+    /// has already been mutated by the caller.
+    private func persistMarkerAppend(recordID: UUID, markers: [AICopilotMarker]) {
+        guard let store, !markers.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            do {
+                var manifest = try store.loadManifest()
+                guard let idx = manifest.media.firstIndex(where: { $0.id == recordID }),
+                      var snap = manifest.media[idx].copilot else { return }
+                snap.markers.append(contentsOf: markers)
+                manifest.media[idx].copilot = snap
+                try store.saveManifest(manifest)
+                await self?.loadRecords()
+            } catch {
+                self?.bannerMessage = L("Failed to save highlight: %@", error.localizedDescription)
+            }
+        }
+    }
+
     /// Append a new overlay segment carrying `mediaID` to the existing
     /// overlay track identified by `trackID`, anchored at
     /// `composedStart` seconds. Invoked by the drop-on-lane path so

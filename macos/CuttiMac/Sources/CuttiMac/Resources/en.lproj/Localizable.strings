@@ -257,6 +257,29 @@
 "Can't add highlight — selection is out of range." = "Can't add highlight — selection is out of range.";
 "Insert highlight" = "Insert highlight";
 
+/* HighlightsPanel — PR 10 (manual highlights) */
+"Save to Highlights" = "Save to Highlights";
+"Reveal in source" = "Reveal in source";
+"Remove from Highlights" = "Remove from Highlights";
+"AI" = "AI";
+"Manual" = "Manual";
+"Manual highlight" = "Manual highlight";
+"Highlight saved." = "Highlight saved.";
+"Highlight removed." = "Highlight removed.";
+"Saved %d highlights." = "Saved %d highlights.";
+"Saved %d highlights (%d skipped)." = "Saved %d highlights (%d skipped).";
+"Highlight has changed. Try again." = "Highlight has changed. Try again.";
+"Highlight no longer exists." = "Highlight no longer exists.";
+"Couldn't save any highlights — check the analysis status." = "Couldn't save any highlights — check the analysis status.";
+"Can't save highlight — media not found." = "Can't save highlight — media not found.";
+"Can't save highlight — run AI analysis first." = "Can't save highlight — run AI analysis first.";
+"Can't save highlight — analysis not ready." = "Can't save highlight — analysis not ready.";
+"Can't save highlight — selection is too short." = "Can't save highlight — selection is too short.";
+"Can't remove highlight — media not found." = "Can't remove highlight — media not found.";
+"Failed to save highlight: %@" = "Failed to save highlight: %@";
+"Failed to save highlights: %@" = "Failed to save highlights: %@";
+"Failed to remove highlight: %@" = "Failed to remove highlight: %@";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI workflows";
 "No matching workflow" = "No matching workflow";

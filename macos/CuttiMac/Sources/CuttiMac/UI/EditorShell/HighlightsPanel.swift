@@ -5,7 +5,9 @@ import CuttiKit
 /// across all source records — the destination for ⌘⇧3 hook
 /// candidates and (PR 10+) any user-saved excerpts. Read-only in PR 9:
 /// users can click a row to jump to its source clip, or drag it onto
-/// the timeline to insert that span as a new V1 segment.
+/// the timeline to insert that span as a new V1 segment. PR 10 adds
+/// the inverse direction: drag a V1 segment onto the panel to save it
+/// as a manual highlight.
 ///
 /// Vertically positioned between History and AI Log in the right
 /// column. Empty state shows a "run ⌘⇧3" prompt so the panel still
@@ -17,6 +19,20 @@ struct HighlightsPanel: View {
     let projectRoot: URL?
     @Binding var isExpanded: Bool
     let onSelectRecord: (UUID) -> Void
+    /// Bulk save callback fired when a V1 segment (or selection of
+    /// segments) is dropped onto the panel. Caller maps each segment
+    /// ID to a source range + writes a `.manual` highlight via
+    /// `MediaCoreViewModel.saveTimelineSegmentsToHighlights`.
+    let onSaveSegmentsToHighlights: ([UUID]) -> Void
+    /// Per-row removal callback fired by the row context menu's
+    /// "Remove from Highlights" action. Carries the row identity so
+    /// the VM can do a fingerprint recheck before mutating.
+    let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
+
+    /// Drives the drop-target visual feedback (border + tint) on the
+    /// outer panel container. Bound to `.dropDestination(...)`'s
+    /// `isTargeted` callback.
+    @State private var isDropTargeted: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,7 +49,8 @@ struct HighlightsPanel: View {
                                     group: group,
                                     records: records,
                                     projectRoot: projectRoot,
-                                    onSelectRecord: onSelectRecord
+                                    onSelectRecord: onSelectRecord,
+                                    onRemoveHighlight: onRemoveHighlight
                                 )
                             }
                         }
@@ -44,6 +61,46 @@ struct HighlightsPanel: View {
             }
         }
         .background(EditorShellStyle.panelBackground)
+        // Drop target on the WHOLE panel (not just the body) so the
+        // user can save a V1 segment even when the section is
+        // collapsed — successful drops auto-expand to confirm receipt.
+        // Accepts bare segment UUIDs (single-segment drag) and
+        // `multi:UUID|UUID|...` payloads (multi-selection drag);
+        // rejects `media:` (whole-clip drop is meaningless here) and
+        // `highlight:` (the panel doesn't accept its own rows back).
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(EditorShellStyle.accentSolid, lineWidth: isDropTargeted ? 2 : 0)
+                .padding(2)
+                .allowsHitTesting(false)
+        )
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            if payload.hasPrefix("media:") || payload.hasPrefix("highlight:") {
+                return false
+            }
+            let ids: [UUID]
+            if payload.hasPrefix("multi:") {
+                let body = String(payload.dropFirst("multi:".count))
+                ids = body
+                    .split(separator: "|", omittingEmptySubsequences: true)
+                    .compactMap { UUID(uuidString: String($0)) }
+            } else if let id = UUID(uuidString: payload) {
+                ids = [id]
+            } else {
+                return false
+            }
+            guard !ids.isEmpty else { return false }
+            onSaveSegmentsToHighlights(ids)
+            if !isExpanded {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded = true
+                }
+            }
+            return true
+        } isTargeted: { hovering in
+            isDropTargeted = hovering
+        }
     }
 
     private var header: some View {
@@ -102,6 +159,7 @@ private struct HighlightGroupView: View {
     let records: [MediaAssetRecord]
     let projectRoot: URL?
     let onSelectRecord: (UUID) -> Void
+    let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -126,7 +184,8 @@ private struct HighlightGroupView: View {
                     row: row,
                     records: records,
                     projectRoot: projectRoot,
-                    onSelectRecord: onSelectRecord
+                    onSelectRecord: onSelectRecord,
+                    onRemoveHighlight: onRemoveHighlight
                 )
             }
         }
@@ -140,6 +199,7 @@ private struct HighlightRowView: View {
     let records: [MediaAssetRecord]
     let projectRoot: URL?
     let onSelectRecord: (UUID) -> Void
+    let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
 
     var body: some View {
         let content = HStack(alignment: .top, spacing: 8) {
@@ -156,9 +216,12 @@ private struct HighlightRowView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(EditorShellStyle.textPrimary)
                     .lineLimit(2)
-                Text(timecodeText)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(EditorShellStyle.textTertiary)
+                HStack(spacing: 4) {
+                    OriginBadge(origin: row.origin)
+                    Text(timecodeText)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(EditorShellStyle.textTertiary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -173,6 +236,13 @@ private struct HighlightRowView: View {
             onSelectRecord(row.sourceVideoID)
         }
         .help(helpText)
+        .contextMenu {
+            Button { onSelectRecord(row.sourceVideoID) } label: { T("Reveal in source") }
+            Divider()
+            Button(L("Remove from Highlights"), role: .destructive) {
+                onRemoveHighlight(row)
+            }
+        }
 
         if row.isDraggable, let end = row.endSeconds {
             content.draggable(
@@ -235,5 +305,31 @@ private struct HighlightRowView: View {
             return L("Drag onto the timeline to insert this highlight as a new clip")
         }
         return L("Click to reveal in source")
+    }
+}
+
+// MARK: - Origin badge
+
+/// Compact `[AI]` / `[Manual]` chip rendered next to the timecode on
+/// each row so the user can tell at a glance which highlights are
+/// auto-generated (and thus replaceable on the next ⌘⇧3 run) vs.
+/// hand-curated (permanent until the user removes them).
+private struct OriginBadge: View {
+    let origin: AICopilotMarker.Origin
+
+    var body: some View {
+        let isManual = origin == .manual
+        let label: String = isManual ? L("Manual") : L("AI")
+        Text(label)
+            .font(.system(size: 9, weight: .semibold, design: .default))
+            .foregroundStyle(isManual ? Color.black : EditorShellStyle.textSecondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(isManual
+                          ? EditorShellStyle.accentSolid.opacity(0.85)
+                          : Color.white.opacity(0.08))
+            )
     }
 }

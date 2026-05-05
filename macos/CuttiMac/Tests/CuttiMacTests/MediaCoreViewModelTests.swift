@@ -1099,6 +1099,275 @@ final class MediaCoreViewModelTests: XCTestCase {
         XCTAssertEqual(vm.bannerMessage, L("Can't add highlight — analysis not ready."))
     }
 
+    // MARK: - Manual highlights (PR 10)
+
+    private func makeHighlightCopilotSnapshot(markers: [AICopilotMarker] = []) -> AICopilotSnapshot {
+        AICopilotSnapshot(
+            semanticTags: [],
+            summary: nil,
+            transcriptPreview: nil,
+            suggestedInSeconds: nil,
+            suggestedOutSeconds: nil,
+            issues: [],
+            suggestions: [],
+            markers: markers
+        )
+    }
+
+    private func makeRecordWithSnapshot(
+        id: UUID = UUID(),
+        markers: [AICopilotMarker] = []
+    ) -> MediaAssetRecord {
+        MediaAssetRecord(
+            id: id,
+            sourcePath: "/tmp/\(id.uuidString).mp4",
+            fingerprint: SourceFingerprint(fileSize: 1000, modifiedAt: Date(), sha256Prefix: "abc"),
+            status: .ready,
+            analysis: AnalysisSummary(durationSeconds: 300, width: 1920, height: 1080, nominalFPS: 30, hasAudio: true),
+            derived: DerivedAssetState(proxyRelativePath: "media/proxies/sample.mov", thumbnailsReady: false, waveformsReady: false),
+            errorMessage: nil,
+            usedFallbackTranscoder: false,
+            copilot: makeHighlightCopilotSnapshot(markers: markers)
+        )
+    }
+
+    func test_addManualHighlight_appendsManualOriginMarker() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+
+        vm.addManualHighlight(recordID: record.id, sourceStart: 12, sourceEnd: 18, label: "Best line")
+
+        let markers = vm.records[0].copilot?.markers ?? []
+        XCTAssertEqual(markers.count, 1)
+        XCTAssertEqual(markers[0].kind, .highlight)
+        XCTAssertEqual(markers[0].origin, .manual)
+        XCTAssertEqual(markers[0].seconds, 12, accuracy: 0.001)
+        XCTAssertEqual(markers[0].endSeconds, 18)
+        XCTAssertEqual(markers[0].label, "Best line")
+        XCTAssertEqual(vm.bannerMessage, L("Highlight saved."))
+    }
+
+    func test_addManualHighlight_clampsToSourceDuration() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+
+        // Source duration is 300; ask for 295–600 → clamp to 295–300.
+        vm.addManualHighlight(recordID: record.id, sourceStart: 295, sourceEnd: 600, label: "")
+        let markers = vm.records[0].copilot?.markers ?? []
+        XCTAssertEqual(markers.count, 1)
+        XCTAssertEqual(markers[0].seconds, 295, accuracy: 0.001)
+        XCTAssertEqual(markers[0].endSeconds, 300)
+        // Empty label falls back to the localized "Manual highlight" placeholder.
+        XCTAssertEqual(markers[0].label, L("Manual highlight"))
+    }
+
+    func test_addManualHighlight_rejectsUnknownRecord() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        vm.records = []
+        vm.addManualHighlight(recordID: UUID(), sourceStart: 0, sourceEnd: 1, label: "x")
+        XCTAssertEqual(vm.bannerMessage, L("Can't save highlight — media not found."))
+    }
+
+    func test_addManualHighlight_rejectsWhenSpanTooShort() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        vm.addManualHighlight(recordID: record.id, sourceStart: 10, sourceEnd: 10.05, label: "x")
+        XCTAssertTrue(vm.records[0].copilot?.markers.isEmpty ?? false)
+        XCTAssertEqual(vm.bannerMessage, L("Can't save highlight — selection is too short."))
+    }
+
+    func test_addManualHighlight_rejectsRecordWithoutSnapshot() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecord()  // no copilot snapshot
+        vm.records = [record]
+        vm.addManualHighlight(recordID: record.id, sourceStart: 0, sourceEnd: 5, label: "x")
+        XCTAssertEqual(vm.bannerMessage, L("Can't save highlight — run AI analysis first."))
+    }
+
+    func test_addManualHighlight_truncatesLongLabels() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        let long = String(repeating: "字", count: 100)
+        vm.addManualHighlight(recordID: record.id, sourceStart: 5, sourceEnd: 8, label: long)
+        let label = vm.records[0].copilot?.markers.first?.label ?? ""
+        // Cap is 60 chars; result should be shorter than input.
+        XCTAssertLessThanOrEqual(label.count, 60)
+    }
+
+    func test_addManualHighlight_preservesOtherMarkerKinds() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot(markers: [
+            AICopilotMarker(kind: .scene, seconds: 0, label: "Scene A"),
+            AICopilotMarker(kind: .highlight, seconds: 1, endSeconds: 3, label: "AI", origin: .ai)
+        ])
+        vm.records = [record]
+        vm.addManualHighlight(recordID: record.id, sourceStart: 5, sourceEnd: 8, label: "Mine")
+        let kinds = vm.records[0].copilot?.markers.map(\.kind) ?? []
+        XCTAssertEqual(kinds, [.scene, .highlight, .highlight])
+        XCTAssertEqual(vm.records[0].copilot?.markers.last?.origin, .manual)
+    }
+
+    func test_saveTimelineSegmentsToHighlights_bulkSavesAcrossRecords() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let r1 = makeRecordWithSnapshot()
+        let r2 = makeRecordWithSnapshot()
+        vm.records = [r1, r2]
+        vm.timelineSegments = [
+            TimelineSegment(id: UUID(), sourceVideoID: r1.id, range: TimeRange(startSeconds: 1, endSeconds: 4), text: "A1", subtitles: []),
+            TimelineSegment(id: UUID(), sourceVideoID: r1.id, range: TimeRange(startSeconds: 10, endSeconds: 12), text: "A2", subtitles: []),
+            TimelineSegment(id: UUID(), sourceVideoID: r2.id, range: TimeRange(startSeconds: 5, endSeconds: 8), text: "B1", subtitles: [])
+        ]
+        let allIDs = vm.timelineSegments.map(\.id)
+        vm.saveTimelineSegmentsToHighlights(allIDs)
+
+        let r1Markers = vm.records.first(where: { $0.id == r1.id })?.copilot?.markers ?? []
+        let r2Markers = vm.records.first(where: { $0.id == r2.id })?.copilot?.markers ?? []
+        XCTAssertEqual(r1Markers.count, 2)
+        XCTAssertEqual(r2Markers.count, 1)
+        XCTAssertTrue(r1Markers.allSatisfy { $0.origin == .manual && $0.kind == .highlight })
+        XCTAssertEqual(vm.bannerMessage, L("Saved %d highlights.", 3))
+    }
+
+    func test_saveTimelineSegmentsToHighlights_ignoresMissingSegments() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let r1 = makeRecordWithSnapshot()
+        vm.records = [r1]
+        vm.timelineSegments = []
+        vm.saveTimelineSegmentsToHighlights([UUID(), UUID()])
+        XCTAssertTrue(vm.records[0].copilot?.markers.isEmpty ?? true)
+        XCTAssertEqual(vm.bannerMessage, L("Couldn't save any highlights — check the analysis status."))
+    }
+
+    func test_saveTimelineSegmentsToHighlights_skipsSegmentsWithMissingSnapshot() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let withSnap = makeRecordWithSnapshot()
+        let withoutSnap = makeRecord()  // no copilot
+        vm.records = [withSnap, withoutSnap]
+        let segWithSnap = TimelineSegment(id: UUID(), sourceVideoID: withSnap.id, range: TimeRange(startSeconds: 1, endSeconds: 4), text: "Good", subtitles: [])
+        let segWithoutSnap = TimelineSegment(id: UUID(), sourceVideoID: withoutSnap.id, range: TimeRange(startSeconds: 1, endSeconds: 4), text: "Skip", subtitles: [])
+        vm.timelineSegments = [segWithSnap, segWithoutSnap]
+        vm.saveTimelineSegmentsToHighlights([segWithSnap.id, segWithoutSnap.id])
+
+        XCTAssertEqual(vm.records.first(where: { $0.id == withSnap.id })?.copilot?.markers.count, 1)
+        XCTAssertNil(vm.records.first(where: { $0.id == withoutSnap.id })?.copilot)
+        XCTAssertEqual(vm.bannerMessage, L("Saved %d highlights (%d skipped).", 1, 1))
+    }
+
+    func test_canSaveSegmentToHighlights_truthTable() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let withSnap = makeRecordWithSnapshot()
+        let withoutSnap = makeRecord()
+        vm.records = [withSnap, withoutSnap]
+
+        let goodSeg = TimelineSegment(id: UUID(), sourceVideoID: withSnap.id, range: TimeRange(startSeconds: 1, endSeconds: 4), text: "ok", subtitles: [])
+        let noSnapSeg = TimelineSegment(id: UUID(), sourceVideoID: withoutSnap.id, range: TimeRange(startSeconds: 1, endSeconds: 4), text: "no", subtitles: [])
+        let tinySeg = TimelineSegment(id: UUID(), sourceVideoID: withSnap.id, range: TimeRange(startSeconds: 10, endSeconds: 10.05), text: "tiny", subtitles: [])
+        let orphanSeg = TimelineSegment(id: UUID(), sourceVideoID: UUID(), range: TimeRange(startSeconds: 1, endSeconds: 4), text: "orphan", subtitles: [])
+        vm.timelineSegments = [goodSeg, noSnapSeg, tinySeg, orphanSeg]
+
+        XCTAssertTrue(vm.canSaveSegmentToHighlights(segmentID: goodSeg.id))
+        XCTAssertFalse(vm.canSaveSegmentToHighlights(segmentID: noSnapSeg.id))
+        XCTAssertFalse(vm.canSaveSegmentToHighlights(segmentID: tinySeg.id))
+        XCTAssertFalse(vm.canSaveSegmentToHighlights(segmentID: orphanSeg.id))
+        XCTAssertFalse(vm.canSaveSegmentToHighlights(segmentID: UUID()))
+    }
+
+    func test_removeHighlight_removesByIndexWhenFingerprintMatches() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot(markers: [
+            AICopilotMarker(kind: .scene, seconds: 0, label: "Scene"),
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Hook", origin: .ai)
+        ])
+        vm.records = [record]
+        let fp = AICopilotPresentation.HighlightFingerprint(
+            seconds: 5, endSeconds: 8, origin: .ai, label: "Hook"
+        )
+        vm.removeHighlight(recordID: record.id, markerIndex: 1, fingerprint: fp)
+
+        let kinds = vm.records[0].copilot?.markers.map(\.kind) ?? []
+        XCTAssertEqual(kinds, [.scene])
+        XCTAssertEqual(vm.bannerMessage, L("Highlight removed."))
+    }
+
+    func test_removeHighlight_isNoOpWhenFingerprintMismatch() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "AI replaced", origin: .ai)
+        ])
+        vm.records = [record]
+        // Stale fingerprint pointing at a label that no longer matches.
+        let staleFP = AICopilotPresentation.HighlightFingerprint(
+            seconds: 5, endSeconds: 8, origin: .ai, label: "Old AI"
+        )
+        vm.removeHighlight(recordID: record.id, markerIndex: 0, fingerprint: staleFP)
+
+        XCTAssertEqual(vm.records[0].copilot?.markers.count, 1)
+        XCTAssertEqual(vm.bannerMessage, L("Highlight has changed. Try again."))
+    }
+
+    func test_removeHighlight_isNoOpForOutOfRangeIndex() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Hook")
+        ])
+        vm.records = [record]
+        let fp = AICopilotPresentation.HighlightFingerprint(seconds: 5, endSeconds: 8, origin: .ai, label: "Hook")
+        vm.removeHighlight(recordID: record.id, markerIndex: 99, fingerprint: fp)
+        XCTAssertEqual(vm.records[0].copilot?.markers.count, 1)
+        XCTAssertEqual(vm.bannerMessage, L("Highlight no longer exists."))
+    }
+
+    func test_removeHighlight_preservesUnrelatedMarkers() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot(markers: [
+            AICopilotMarker(kind: .highlight, seconds: 1, endSeconds: 3, label: "First", origin: .ai),
+            AICopilotMarker(kind: .scene, seconds: 2, label: "Scene"),
+            AICopilotMarker(kind: .highlight, seconds: 5, endSeconds: 8, label: "Second", origin: .manual),
+            AICopilotMarker(kind: .suggestion, seconds: 6, label: "Sug")
+        ])
+        vm.records = [record]
+        // Remove the second highlight (markerIndex == 2 in raw array).
+        let fp = AICopilotPresentation.HighlightFingerprint(
+            seconds: 5, endSeconds: 8, origin: .manual, label: "Second"
+        )
+        vm.removeHighlight(recordID: record.id, markerIndex: 2, fingerprint: fp)
+
+        let remaining = vm.records[0].copilot?.markers ?? []
+        XCTAssertEqual(remaining.count, 3)
+        XCTAssertEqual(remaining.map(\.kind), [.highlight, .scene, .suggestion])
+        XCTAssertEqual(remaining[0].label, "First")
+    }
+
+    func test_manualHighlight_survivesScoreHookCandidatesRerun() {
+        // Manual highlights must NEVER be wiped by a
+        // score_hook_candidates rerun. We simulate the dispatcher's
+        // mutation directly: filter out AI highlights, append the
+        // new AI shortlist, and verify our manual marker stayed.
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        vm.addManualHighlight(recordID: record.id, sourceStart: 5, sourceEnd: 8, label: "Mine")
+        // Inject an AI marker as if a previous run had landed.
+        var snap = vm.records[0].copilot!
+        snap.markers.append(AICopilotMarker(kind: .highlight, seconds: 50, endSeconds: 53, label: "Old AI", origin: .ai))
+        vm.records[0].copilot = snap
+
+        // Rerun: dispatcher's filter step keeps non-AI-highlight markers.
+        var rerun = vm.records[0].copilot!
+        rerun.markers = rerun.markers.filter { !($0.kind == .highlight && $0.origin == .ai) }
+        rerun.markers.append(AICopilotMarker(kind: .highlight, seconds: 100, endSeconds: 103, label: "New AI", origin: .ai))
+        vm.records[0].copilot = rerun
+
+        let labels = vm.records[0].copilot?.markers.map(\.label) ?? []
+        XCTAssertTrue(labels.contains("Mine"))
+        XCTAssertTrue(labels.contains("New AI"))
+        XCTAssertFalse(labels.contains("Old AI"))
+    }
+
     func test_setSegmentVolume_clampsAndUpdates() {
         let spy = SpyPlaybackCore()
         let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))

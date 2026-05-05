@@ -257,6 +257,29 @@
 "Can't add highlight — selection is out of range." = "无法添加精选片段 —— 时间区间越界。";
 "Insert highlight" = "插入精选片段";
 
+/* HighlightsPanel — PR 10 (manual highlights) */
+"Save to Highlights" = "保存到精选片段";
+"Reveal in source" = "在源片段中查看";
+"Remove from Highlights" = "从精选片段移除";
+"AI" = "AI";
+"Manual" = "手动";
+"Manual highlight" = "手动精选";
+"Highlight saved." = "已保存到精选片段。";
+"Highlight removed." = "已从精选片段移除。";
+"Saved %d highlights." = "已保存 %d 条精选片段。";
+"Saved %d highlights (%d skipped)." = "已保存 %1$d 条（跳过 %2$d 条）。";
+"Highlight has changed. Try again." = "精选片段已变化，请重试。";
+"Highlight no longer exists." = "该精选片段已不存在。";
+"Couldn't save any highlights — check the analysis status." = "未能保存任何精选片段，请检查分析状态。";
+"Can't save highlight — media not found." = "无法保存精选片段 —— 未找到媒体。";
+"Can't save highlight — run AI analysis first." = "无法保存精选片段 —— 请先运行 AI 分析。";
+"Can't save highlight — analysis not ready." = "无法保存精选片段 —— 分析未就绪。";
+"Can't save highlight — selection is too short." = "无法保存精选片段 —— 选择区间过短。";
+"Can't remove highlight — media not found." = "无法移除精选片段 —— 未找到媒体。";
+"Failed to save highlight: %@" = "保存精选片段失败：%@";
+"Failed to save highlights: %@" = "保存精选片段失败：%@";
+"Failed to remove highlight: %@" = "移除精选片段失败：%@";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI 工作流";
 "No matching workflow" = "无匹配工作流";
