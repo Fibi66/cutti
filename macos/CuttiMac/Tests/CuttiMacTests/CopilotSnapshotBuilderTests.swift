@@ -23,7 +23,8 @@ final class CopilotSnapshotBuilderTests: XCTestCase {
             sceneBoundaries: [],
             hasTalkingHead: true,
             audioIssues: [],
-            silentRanges: [0.0...0.95, 2.30...5.0]
+            silentRanges: [0.0...0.95, 2.30...5.0],
+            audioEnergyCurve: nil
         )
 
         let decision = LLMEditorService.EditDecision(
@@ -62,7 +63,8 @@ final class CopilotSnapshotBuilderTests: XCTestCase {
             sceneBoundaries: [],
             hasTalkingHead: true,
             audioIssues: [],
-            silentRanges: [0.0...0.10, 0.60...2.10, 2.60...5.0]
+            silentRanges: [0.0...0.10, 0.60...2.10, 2.60...5.0],
+            audioEnergyCurve: nil
         )
 
         let decision = LLMEditorService.EditDecision(

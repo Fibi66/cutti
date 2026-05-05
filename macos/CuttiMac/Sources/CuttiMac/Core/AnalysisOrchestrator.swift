@@ -89,7 +89,9 @@ struct AnalysisOrchestrator: Sendable {
                 issues: [],
                 averageLoudnessDB: 0,
                 silentRanges: [],
-                peakLoudnessDB: 0
+                peakLoudnessDB: 0,
+                windowRMSValues: [],
+                windowSeconds: 0.5
             )
         }
 
@@ -117,6 +119,13 @@ struct AnalysisOrchestrator: Sendable {
             silentRanges: audioResult.silentRanges
         )
 
+        let energyCurve: AudioEnergyCurve? = audioResult.windowRMSValues.isEmpty
+            ? nil
+            : AudioEnergyCurve(
+                values: audioResult.windowRMSValues,
+                windowSeconds: audioResult.windowSeconds
+            )
+
         return LocalAnalysisResult(
             transcript: refinedTranscript,
             rawWordTranscript: timingTranscript,
@@ -124,7 +133,8 @@ struct AnalysisOrchestrator: Sendable {
             sceneBoundaries: sceneResult.sceneBoundaries,
             hasTalkingHead: sceneResult.hasTalkingHead,
             audioIssues: audioResult.issues,
-            silentRanges: audioResult.silentRanges
+            silentRanges: audioResult.silentRanges,
+            audioEnergyCurve: energyCurve
         )
     }
 

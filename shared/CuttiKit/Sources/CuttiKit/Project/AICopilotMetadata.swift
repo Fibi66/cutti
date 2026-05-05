@@ -106,6 +106,13 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
     /// user can still run a real first cut after diarization. `nil` /
     /// `false` means a normal First Cut snapshot.
     public var isTranscribeOnly: Bool?
+    /// Per-window RMS energy curve covering the entire **source** audio
+    /// (uniformly sampled). Persisted alongside the transcript so any
+    /// downstream analyser (hook scoring, monologue detection, energy
+    /// dips) can query loudness at a given timestamp without re-reading
+    /// raw PCM. `nil` on snapshots produced by pipelines that predate
+    /// the field. See `AudioEnergyCurve.valueAt(seconds:)` for lookup.
+    public var audioEnergyCurve: AudioEnergyCurve?
     public init(
         semanticTags: [String],
         summary: String? = nil,
@@ -124,7 +131,8 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
         bRollSuggestions: [BRollSuggestion]? = nil,
         chapters: [VideoChapter]? = nil,
         chapterBarStyle: ChapterBarStyle? = nil,
-        isTranscribeOnly: Bool? = nil
+        isTranscribeOnly: Bool? = nil,
+        audioEnergyCurve: AudioEnergyCurve? = nil
     ) {
         self.semanticTags = semanticTags
         self.summary = summary
@@ -144,8 +152,70 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
         self.chapters = chapters
         self.chapterBarStyle = chapterBarStyle
         self.isTranscribeOnly = isTranscribeOnly
+        self.audioEnergyCurve = audioEnergyCurve
     }
 
+}
+
+/// Per-window RMS audio energy curve attached to an `AICopilotSnapshot`.
+///
+/// Values are **linear RMS** in roughly `[0, 1]` (not dB, not normalized
+/// to a global peak). The original `AudioQualityService` pipeline computes
+/// these for silence detection then discards them; we now persist them so
+/// hook scoring, monologue/energy-dip detection, and any future
+/// loudness-aware AI tool can look up "how loud is the audio at time t"
+/// without re-reading PCM samples.
+///
+/// Storage cost is small even for long files: at the current 0.5s window,
+/// a 60-minute episode is 7200 floats ≈ 29 KB JSON-encoded. We do not
+/// quantise; consumers that need a normalized value should divide by
+/// `globalPeak`.
+public struct AudioEnergyCurve: Codable, Equatable, Sendable {
+    /// Per-window linear RMS values, sampled left-to-right across the
+    /// full source audio at `windowSeconds` granularity.
+    public var values: [Float]
+    /// Seconds covered by each window. Always > 0 when `values` is
+    /// non-empty. Typically `0.5`.
+    public var windowSeconds: Double
+
+    public init(values: [Float], windowSeconds: Double) {
+        self.values = values
+        self.windowSeconds = windowSeconds
+    }
+
+    /// Linear-interpolated RMS at the given source timestamp. Returns
+    /// `0` for empty curves and for timestamps outside the sampled
+    /// range. Negative `seconds` is treated as out-of-range, not as an
+    /// index into a wraparound — callers should clamp at the call site
+    /// if they want a different semantics.
+    public func valueAt(seconds: Double) -> Double {
+        guard !values.isEmpty, windowSeconds > 0, seconds >= 0 else { return 0 }
+        let idx = seconds / windowSeconds
+        let i0 = Int(idx.rounded(.down))
+        guard i0 >= 0, i0 < values.count else { return 0 }
+        let i1 = Swift.min(i0 + 1, values.count - 1)
+        let frac = idx - Double(i0)
+        return Double(values[i0]) * (1 - frac) + Double(values[i1]) * frac
+    }
+
+    /// Maximum RMS within `[startSeconds, endSeconds]`. Used by hook
+    /// scoring to ask "did the speaker peak inside this cue?". Both
+    /// bounds are clamped to the curve; an empty / inverted range
+    /// returns `0`.
+    public func peakIn(startSeconds: Double, endSeconds: Double) -> Double {
+        guard !values.isEmpty, windowSeconds > 0, endSeconds > startSeconds else { return 0 }
+        let lo = Swift.max(0, Int((Swift.max(0, startSeconds) / windowSeconds).rounded(.down)))
+        let hi = Swift.min(values.count - 1, Int((endSeconds / windowSeconds).rounded(.up)))
+        guard lo <= hi else { return 0 }
+        return Double(values[lo...hi].max() ?? 0)
+    }
+
+    /// Global peak across the whole curve. Divide `peakIn(...)` by this
+    /// to get a `[0, 1]` normalised "loudness vs the rest of the file"
+    /// score. Returns `0` for empty curves.
+    public var globalPeak: Double {
+        Double(values.max() ?? 0)
+    }
 }
 
 /// RGBA color in sRGB-ish space, components in 0…1. Codable so it can

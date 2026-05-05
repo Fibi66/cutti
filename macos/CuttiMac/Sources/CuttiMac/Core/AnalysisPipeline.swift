@@ -31,6 +31,11 @@ struct LocalAnalysisResult: Sendable {
     let hasTalkingHead: Bool
     let audioIssues: [AICopilotIssue]
     let silentRanges: [ClosedRange<Double>]
+    /// Per-window linear RMS curve covering the source audio. Optional
+    /// because `AnalysisOrchestrator`'s audio fallback path produces a
+    /// degraded (empty curve) result when audio analysis fails. `nil`
+    /// here means the audio task threw and was swallowed.
+    let audioEnergyCurve: AudioEnergyCurve?
 }
 
 // MARK: - Pipeline protocol

@@ -28,7 +28,8 @@ struct CopilotSnapshotBuilder: Sendable {
             suggestions: [],
             markers: buildSceneMarkers(local),
             transcript: local.transcript.isEmpty ? nil : local.transcript,
-            wordTranscript: local.rawWordTranscript.isEmpty ? nil : local.rawWordTranscript
+            wordTranscript: local.rawWordTranscript.isEmpty ? nil : local.rawWordTranscript,
+            audioEnergyCurve: local.audioEnergyCurve
         )
     }
 
@@ -247,7 +248,8 @@ struct CopilotSnapshotBuilder: Sendable {
             keptAlternativesPerRange: keptAlternatives.isEmpty ? nil : keptAlternatives,
             transcript: local.transcript.isEmpty ? nil : local.transcript,
             wordTranscript: local.rawWordTranscript.isEmpty ? nil : local.rawWordTranscript,
-            editLog: editLog
+            editLog: editLog,
+            audioEnergyCurve: local.audioEnergyCurve
         )
     }
 

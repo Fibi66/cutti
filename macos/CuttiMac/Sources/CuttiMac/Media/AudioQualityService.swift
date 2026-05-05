@@ -44,6 +44,16 @@ struct AudioQualityService: Sendable {
         let averageLoudnessDB: Double
         let silentRanges: [ClosedRange<Double>]
         let peakLoudnessDB: Double
+        /// Per-window linear RMS values covering the full audio track,
+        /// preserved for downstream consumers (hook scoring, energy
+        /// visualisation). Older callers can ignore this field; new
+        /// ones build an `AudioEnergyCurve` from `(values, windowSeconds)`.
+        let windowRMSValues: [Float]
+        /// Window size in seconds the RMS values were sampled at.
+        /// Mirrors `AudioQualityService.windowSeconds`; surfaced so a
+        /// consumer can build an `AudioEnergyCurve` without having to
+        /// know how the analyser was configured.
+        let windowSeconds: Double
     }
 
     // MARK: - Public
@@ -61,7 +71,9 @@ struct AudioQualityService: Sendable {
                 )],
                 averageLoudnessDB: -.infinity,
                 silentRanges: [],
-                peakLoudnessDB: -.infinity
+                peakLoudnessDB: -.infinity,
+                windowRMSValues: [],
+                windowSeconds: windowSeconds
             )
         }
 
@@ -99,7 +111,9 @@ struct AudioQualityService: Sendable {
                 issues: [AICopilotIssue(severity: .warning, title: "Empty audio", detail: "Audio track contains no samples.")],
                 averageLoudnessDB: -.infinity,
                 silentRanges: [],
-                peakLoudnessDB: -.infinity
+                peakLoudnessDB: -.infinity,
+                windowRMSValues: [],
+                windowSeconds: windowSeconds
             )
         }
 
@@ -174,7 +188,9 @@ struct AudioQualityService: Sendable {
                 issues: [],
                 averageLoudnessDB: -.infinity,
                 silentRanges: [],
-                peakLoudnessDB: -.infinity
+                peakLoudnessDB: -.infinity,
+                windowRMSValues: [],
+                windowSeconds: windowSeconds
             )
         }
 
@@ -218,7 +234,9 @@ struct AudioQualityService: Sendable {
             issues: issues,
             averageLoudnessDB: Double(avgDB),
             silentRanges: silentRanges,
-            peakLoudnessDB: Double(peakDB)
+            peakLoudnessDB: Double(peakDB),
+            windowRMSValues: windowRMSValues,
+            windowSeconds: windowSeconds
         )
     }
 
