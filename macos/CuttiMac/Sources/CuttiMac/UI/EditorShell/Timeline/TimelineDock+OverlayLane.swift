@@ -29,7 +29,7 @@ extension TimelineDock {
         pps: CGFloat,
         totalDuration: Double
     ) -> some View {
-        let imageOnly = isImageOnlyOverlay(row)
+        let visualOnly = isVisualOnlyOverlay(row)
         return VStack(spacing: trackSpacing) {
             // Filmstrip sub-row — hosts the draggable pills.
             overlayVideoRow(
@@ -40,11 +40,12 @@ extension TimelineDock {
             )
             .frame(height: overlayVideoHeight)
 
-            if !imageOnly {
+            if !visualOnly {
                 // Audio waveform sub-row — per-pill waveforms so the user
                 // can see the audio shape of each B-roll clip, just like
-                // on the primary track. Skipped entirely for image-only
-                // lanes (images have no audio track).
+                // on the primary track. Skipped for visual-only lanes
+                // (still images and silent AI-rendered overlays — neither
+                // has an audio track to draw).
                 overlayAudioRow(
                     row: row,
                     width: width,
@@ -56,8 +57,8 @@ extension TimelineDock {
                 // Overlay media has no attached caption track yet, so this
                 // row is visually a placeholder; it keeps the layout in
                 // lockstep with V1 so users know it's a real track stack.
-                // Image-only lanes skip this too — there's nothing to
-                // caption.
+                // Visual-only lanes skip this too — still images and
+                // AI-rendered overlays have nothing to caption.
                 if showSubtitles {
                     overlaySubtitleRow(width: width)
                         .frame(height: overlaySubtitleHeight)

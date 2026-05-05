@@ -284,17 +284,27 @@ struct TimelineDock: View {
         return h
     }
 
-    /// Rows whose every segment is backed by an image asset have no
-    /// audio and no caption track, so the lane collapses to just the
-    /// filmstrip (no A/S sub-rows, no gutter labels for them).
-    func isImageOnlyOverlay(_ row: TimelineCreativeActions.OverlayRow) -> Bool {
+    /// Rows whose every segment is "visual-only" — either a still image
+    /// or an AI-generated Remotion overlay (transparent ProRes 4444 .mov,
+    /// silent and uncaptioned). These rows have no meaningful audio and
+    /// no caption track, so the lane collapses to just the filmstrip
+    /// (no A/S sub-rows, no gutter labels for them). Mixed rows (e.g.
+    /// a regular B-roll clip dragged onto the same track) fall through
+    /// to the full A/V/S layout.
+    func isVisualOnlyOverlay(_ row: TimelineCreativeActions.OverlayRow) -> Bool {
         !row.segments.isEmpty && row.segments.allSatisfy { seg in
-            records.first(where: { $0.id == seg.sourceVideoID })?.kind == .image
+            // AI-rendered overlays carry their own `overlaySpec` (surfaced
+            // via `isAIEditable`); they're silent transparent renders, so
+            // showing an empty waveform / placeholder caption row is just
+            // visual noise.
+            if seg.isAIEditable { return true }
+            // Still images — no audio track, no captions.
+            return records.first(where: { $0.id == seg.sourceVideoID })?.kind == .image
         }
     }
 
     func heightForOverlayRow(_ row: TimelineCreativeActions.OverlayRow) -> CGFloat {
-        isImageOnlyOverlay(row) ? overlayVideoHeight : overlayTrackHeight
+        isVisualOnlyOverlay(row) ? overlayVideoHeight : overlayTrackHeight
     }
 
     var primarySelectedSegmentIndex: Int? {
@@ -768,7 +778,7 @@ struct TimelineDock: View {
                             ForEach(Array(creativeActions.overlayRows.enumerated()), id: \.element.id) { idx, row in
                                 let trackNum = idx + 2
                                 let trackID = row.id
-                                let imageOnly = isImageOnlyOverlay(row)
+                                let visualOnly = isVisualOnlyOverlay(row)
                                 VStack(alignment: .trailing, spacing: trackSpacing) {
                                     trackLabel(
                                         "V\(trackNum)",
@@ -779,7 +789,7 @@ struct TimelineDock: View {
                                         onToggleEye: { creativeActions.onToggleTrackMute(trackID) },
                                         onToggleLock: { creativeActions.onToggleTrackLocked(trackID) }
                                     )
-                                    if !imageOnly && showSubtitles {
+                                    if !visualOnly && showSubtitles {
                                         trackLabel(
                                             "S\(trackNum)",
                                             icon: "text.quote",
@@ -787,7 +797,7 @@ struct TimelineDock: View {
                                         )
                                         .contextMenu { subtitleLaneContextMenu() }
                                     }
-                                    if !imageOnly {
+                                    if !visualOnly {
                                         trackLabel(
                                             "A\(trackNum)",
                                             icon: "waveform",
