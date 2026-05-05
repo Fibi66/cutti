@@ -60,25 +60,74 @@ enum RealSpeakerDiarizationService {
         }
 
         let raw = try diarizer.process(samples: samples)
-        return collapseMinorSpeakers(raw)
+        logRawDiarization(url: url, raw: raw, threshold: clusteringThreshold)
+        let collapsed = collapseMinorSpeakers(raw)
+        logCollapseResult(raw: raw, collapsed: collapsed)
+        return collapsed
+    }
+
+    /// Print a one-line summary of the raw clustering result so we can
+    /// see if the embedding stage is the bottleneck (e.g. only 1 cluster
+    /// for an obvious 2-speaker recording → lower `clusteringThreshold`
+    /// next time). Per-speaker airtime + share helps eyeball whether
+    /// the post-processing collapse will fire.
+    private static func logRawDiarization(
+        url: URL,
+        raw: [SherpaSpeakerSegment],
+        threshold: Float
+    ) {
+        var totals: [Int: Double] = [:]
+        var grand: Double = 0
+        for s in raw {
+            let d = max(0, s.end - s.start)
+            totals[s.speaker, default: 0] += d
+            grand += d
+        }
+        let perSpk = totals.keys.sorted().map { id -> String in
+            let dur = totals[id] ?? 0
+            let pct = grand > 0 ? Int((dur / grand) * 100) : 0
+            return "spk\(id)=\(String(format: "%.1f", dur))s/\(pct)%"
+        }.joined(separator: " ")
+        print("🗣 [diarize] raw \(url.lastPathComponent) threshold=\(threshold) clusters=\(totals.count) segments=\(raw.count) total=\(String(format: "%.1f", grand))s \(perSpk)")
+    }
+
+    /// Print the after-collapse summary so we can tell whether
+    /// `collapseMinorSpeakers` was responsible for an unexpected
+    /// 1-speaker result, vs the embedding stage.
+    private static func logCollapseResult(
+        raw: [SherpaSpeakerSegment],
+        collapsed: [SherpaSpeakerSegment]
+    ) {
+        let rawClusters = Set(raw.map(\.speaker)).count
+        let outClusters = Set(collapsed.map(\.speaker)).count
+        if rawClusters != outClusters {
+            print("🗣 [diarize] collapseMinorSpeakers: \(rawClusters) → \(outClusters) cluster(s) (segments \(raw.count) → \(collapsed.count))")
+        } else {
+            print("🗣 [diarize] collapseMinorSpeakers: kept \(outClusters) cluster(s) (no merging applied)")
+        }
     }
 
     /// Post-process the raw diarization to merge away spurious clusters
     /// that survive the embedding model on clean single-speaker audio.
     ///
-    /// Strategy (80/20 rule): if the biggest cluster already covers
-    /// `dominanceFraction` (default 0.8 = 80%) of total speech, fold
-    /// every other cluster into it — a real second speaker in a
-    /// two-person conversation always holds well over 20% of airtime,
-    /// so this is conservative. Additionally, any individual cluster
-    /// under `minFraction` of the dominant AND under `minDuration`
-    /// seconds is always merged regardless of the overall ratio, to
-    /// catch the occasional tiny third-speaker artifact.
+    /// Strategy: only force-merge everything down to one speaker when
+    /// the dominant cluster is *overwhelmingly* dominant
+    /// (`dominanceFraction = 0.97` by default). At lower dominance
+    /// (anywhere up to 96%) we keep the multi-speaker result — a real
+    /// interview with a host at 15% airtime and a guest at 85% would
+    /// have collapsed to one speaker under the previous 0.8 threshold.
+    ///
+    /// Below the force-collapse line, individual minor clusters are
+    /// dropped only if they are BOTH below `minFraction` of the
+    /// dominant total AND below `minDuration` seconds — i.e. truly
+    /// micro-clusters from pitch shifts / noise / a single laugh.
+    /// Anything ≥ 5% of the dominant or ≥ 2s of total speech survives,
+    /// which catches real second/third speakers in panel discussions.
     static func collapseMinorSpeakers(
         _ segments: [SherpaSpeakerSegment],
-        dominanceFraction: Double = 0.8,
-        minFraction: Double = 0.25,
-        minDuration: Double = 6.0
+        dominanceFraction: Double = 0.97,
+        minFraction: Double = 0.05,
+        minDuration: Double = 2.0
     ) -> [SherpaSpeakerSegment] {
         guard !segments.isEmpty else { return segments }
 
