@@ -81,6 +81,18 @@ struct WorkflowPresetButton: View {
             .opacity(0)
             .frame(width: 0, height: 0)
         )
+        .background(
+            // ⌘⇧3 → Pick an opening hook
+            Button {
+                if let preset = AgentWorkflowPreset.all.first(where: { $0.id == "gen.hook" }),
+                   case let .seedPrompt(text) = preset.action {
+                    onSeedPrompt(text, false)
+                }
+            } label: { T("Seed opening hook prompt shortcut") }
+            .keyboardShortcut("3", modifiers: [.command, .shift])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+        )
     }
 
     private var menuBody: some View {

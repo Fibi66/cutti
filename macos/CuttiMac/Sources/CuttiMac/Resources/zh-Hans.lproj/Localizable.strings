@@ -798,6 +798,8 @@
 "AI splits the cut into titled chapters and burns a YouTube-style progress bar" = "AI 把剪辑拆成带标题的章节并烧录 YouTube 风格的进度条";
 "Suggest animated title cards" = "推荐动画标题卡";
 "AI picks moments for Remotion ChapterTitle overlays and generates them on approval" = "AI 选出适合放章节标题动效的时刻，确认后再生成";
+"Pick an opening hook" = "挑一句开场金句";
+"AI scores hook candidates from the recordings; you pick which one to splice in" = "AI 给所有素材的开场金句候选打分，你挑一条插到开头";
 "Generate AI image" = "生成 AI 图片";
 "Describe an image and drop it into the Media Browser" = "描述一张图并落到素材库里";
 "Summarize the video" = "总结视频";
@@ -826,6 +828,7 @@
 "Suggest 3 English title candidates based on the transcript." = "基于转写内容，给出 3 个候选标题。";
 "Review the current cut and pick 3–5 moments best suited for a ChapterTitle animated title card (chapter starts, topic shifts, emphasis sections, etc.). First list each suggestion with: composed_time (seconds), title, optional subtitle, theme (dark/light/accent), and a brief reason. After the user confirms, call the generate_overlay tool for each accepted suggestion (template_id=\"ChapterTitle\", props_json filled per the fields above, durationSeconds defaults to 2.5). After generation, remind the user they can double-click the overlay in the Inspector to fine-tune copy or theme." = "审视当前剪辑，挑出 3–5 个最适合插入 ChapterTitle 动画标题卡的时间点（章节开头、话题切换、强调段落等）。先用列表给出每个建议：composed_time（秒）、title、可选 subtitle、theme（dark/light/accent），并简述理由。等用户确认后，对每个被采纳的建议调用 generate_overlay 工具（template_id=\"ChapterTitle\"，props_json 按上述字段填，durationSeconds 默认 2.5）。生成后提醒用户可以双击 overlay 在 Inspector 里继续微调文案或主题。";
 "Write a 3-4 sentence English summary of the current video." = "用 3–4 句话总结当前视频的内容。";
+"Pick the best opening hook (cold-open teaser) from the recordings. Call score_hook_candidates with top_k=5, present the candidates with their punch reasoning so I can pick one, and after I confirm a choice call add_hook_teaser with that candidate's source_video_id, source_start, and source_end. Do not pick or apply automatically — always wait for my reply." = "在所有素材里给我挑一条最有冲击力的开场金句。先调 score_hook_candidates（top_k=5），把候选清单连同理由读给我听让我挑哪一条；我确认之后再调 add_hook_teaser（参数从我挑中的那条取 source_video_id / source_start / source_end）。不要自己替我挑或者直接 apply——每一步都等我回答。";
 "Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size." = "添加双语字幕。识别当前字幕的源语言：若是中文，则把每一条字幕翻译成英文；否则翻译成简体中文。然后启用双语样式，把译文以 75% 字号显示在原文下方。";
 "Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size." = "把每一条字幕翻译成英文，然后启用双语样式，把英文译文以 75% 字号显示在原文下方。";
 "Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size." = "把每一条字幕翻译成简体中文，然后启用双语样式，把中文译文以 75% 字号显示在原文下方。";

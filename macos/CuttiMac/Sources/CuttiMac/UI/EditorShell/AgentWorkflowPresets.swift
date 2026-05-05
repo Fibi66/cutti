@@ -250,6 +250,23 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             action: .runChapterGeneration
         ),
         .init(
+            id: "gen.hook",
+            title: "Pick an opening hook",
+            subtitle: "AI scores hook candidates from the recordings; you pick which one to splice in",
+            systemImage: "quote.opening",
+            group: .generative,
+            action: .seedPrompt(
+                L("Pick the best opening hook (cold-open teaser) from the "
+                + "recordings. Call score_hook_candidates with top_k=5, "
+                + "present the candidates with their punch reasoning so I "
+                + "can pick one, and after I confirm a choice call "
+                + "add_hook_teaser with that candidate's source_video_id, "
+                + "source_start, and source_end. Do not pick or apply "
+                + "automatically — always wait for my reply.")
+            ),
+            shortcutLabel: "⌘⇧3"
+        ),
+        .init(
             id: "gen.overlayTitles",
             title: "Suggest animated title cards",
             subtitle: "AI picks moments for Remotion ChapterTitle overlays and generates them on approval",
