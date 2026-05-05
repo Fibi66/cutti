@@ -47,7 +47,8 @@
 /* Relay errors */
 "Please sign in from Settings." = "请从「设置」登录。";
 "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti." = "使用 AI 功能前请先验证邮箱。查看收件箱，点击 Cutti 发送的验证链接。";
-"You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "本月 AI 额度已用完（%@）。升级到付费方案可获得更多额度，或等到下个月 1 号额度重置。";
+"You've used your AI credits for this month (%1$@). %2$@. Upgrade to a paid plan for more." = "本月 AI 额度已用完（%1$@）。%2$@。升级到付费方案可获得更多额度。";
+"You've used your AI credits for this month (%@). Upgrade to a paid plan for more." = "本月 AI 额度已用完（%@）。升级到付费方案可获得更多额度。";
 "Animation rendering is temporarily unavailable. Please try again in a moment." = "动画渲染服务暂时不可用，请稍后再试。";
 "Image generation is temporarily unavailable. Please try again in a moment." = "图片生成服务暂时不可用，请稍后再试。";
 "AI is temporarily unavailable. Please try again in a moment." = "AI 服务暂时不可用，请稍后再试。";
@@ -358,6 +359,7 @@
 "%@: %@" = "%@：%@";
 "Delete suggestion" = "删除建议";
 "Prompt" = "提示词";
+"Describe the animation" = "描述动画内容";
 "Dismiss" = "忽略";
 "Generate from this suggestion. Edit the prompt above to steer the result." = "根据此建议生成。可修改上方提示词来调整结果。";
 "Generation is unavailable in this build." = "此版本暂不支持生成功能。";
@@ -445,6 +447,10 @@
 "✓ Flip Vertical" = "✓ 垂直翻转";
 "Flip Vertical" = "垂直翻转";
 "Reset Effects" = "重置效果";
+"Restore %@s cut before this clip" = "恢复前面剪掉的 %@ 秒";
+"Restore %@s cut after this clip" = "恢复后面剪掉的 %@ 秒";
+"Source clip not available — can't restore." = "找不到源视频，无法恢复。";
+"Inserted recovered footage as a new clip — adjacent segments had different effects, so they couldn't be merged." = "已将恢复的片段作为新片段插入——相邻两段使用了不同的效果设置，无法合并。";
 
 /* TranscriptView */
 "Transcript" = "转录文本";
@@ -652,7 +658,7 @@
 "Experimental" = "实验性";
 "Experimental: animation generation" = "实验性功能：动画生成";
 "Generate anyway" = "继续生成";
-"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?" = "动画生成仍处于实验阶段——AI 生成的动画可能不稳定、质量参差，甚至无法渲染，每次尝试都会消耗云端额度。是否继续？";
+"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt consumes a large amount of cloud credits. Continue?" = "动画生成仍处于实验阶段——AI 生成的动画可能不稳定、质量参差，甚至无法渲染，且每次尝试都会消耗大量云端额度。是否继续？";
 "Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits." = "动画生成可能产出不稳定或质量较差的结果。每次尝试都会消耗云端额度。";
 "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline" = "描述一段动画（例如计数器、柱状图），生成后落到时间线上";
 "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead." = "描述你想要的动画。系统会基于技能包生成一段全新的 Remotion 合成，并在当前播放头位置渲染为透明动画。";
@@ -684,6 +690,7 @@
 "Insert segment" = "插入片段";
 "Manual save" = "手动保存";
 "Merge segments" = "合并片段";
+"Restore cut" = "恢复剪掉的内容";
 "Move subtitle" = "移动字幕";
 "Reattach audio" = "重新连接音频";
 "Remove chapter bar" = "移除章节进度条";
@@ -797,6 +804,26 @@
 "Translate subtitles to Chinese and render below" = "把字幕翻译为中文并放在原文下方";
 "Translate subtitles to…" = "翻译字幕到…";
 "Fill in the target language, then send" = "填入目标语言后发送";
+
+/* AI workflow preset prompts (full text seeded into the chat composer
+   when the user clicks a preset). The English key is the canonical
+   prompt the LLM sees for English-locale users; the Chinese value is
+   what Chinese-locale users see in their composer (and edit before
+   sending). The LLM understands both languages equally well. */
+"Find every filler word in the transcript (uh, um, you know, like, so, etc.) and remove them." = "找出转写里所有口癖词（uh、um、嗯、啊、那个、就是 等）并删除。";
+"Identify every distinct voice in the video and label who says what." = "识别视频里的每一位说话人，并在转写文本中标注每句话是谁说的。";
+"Identify each speaker in the video, then mute every line spoken by <fill in which speaker>." = "识别视频里的每一位说话人，然后把 <填入哪位说话人> 说的每一句台词静音。";
+"Identify each speaker in the video, then list every line spoken by <fill in which speaker>." = "识别视频里的每一位说话人，然后列出 <填入哪位说话人> 说过的每一句话。";
+"List every span in the video where no face is visible on screen." = "列出视频里画面中没有人脸的所有时间段。";
+"Find every span that is near-black or looks like the lens was covered." = "找出视频里所有接近黑屏或看起来镜头被遮住的时间段。";
+"Review the current cut and mark the moments where a B-roll clip or visual overlay would strengthen the story." = "复看当前剪辑，标出适合插入 B-roll 素材或视觉叠层来增强叙事的时刻。";
+"Suggest 3 English title candidates based on the transcript." = "基于转写内容，给出 3 个候选标题。";
+"Review the current cut and pick 3–5 moments best suited for a ChapterTitle animated title card (chapter starts, topic shifts, emphasis sections, etc.). First list each suggestion with: composed_time (seconds), title, optional subtitle, theme (dark/light/accent), and a brief reason. After the user confirms, call the generate_overlay tool for each accepted suggestion (template_id=\"ChapterTitle\", props_json filled per the fields above, durationSeconds defaults to 2.5). After generation, remind the user they can double-click the overlay in the Inspector to fine-tune copy or theme." = "审视当前剪辑，挑出 3–5 个最适合插入 ChapterTitle 动画标题卡的时间点（章节开头、话题切换、强调段落等）。先用列表给出每个建议：composed_time（秒）、title、可选 subtitle、theme（dark/light/accent），并简述理由。等用户确认后，对每个被采纳的建议调用 generate_overlay 工具（template_id=\"ChapterTitle\"，props_json 按上述字段填，durationSeconds 默认 2.5）。生成后提醒用户可以双击 overlay 在 Inspector 里继续微调文案或主题。";
+"Write a 3-4 sentence English summary of the current video." = "用 3–4 句话总结当前视频的内容。";
+"Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size." = "添加双语字幕。识别当前字幕的源语言：若是中文，则把每一条字幕翻译成英文；否则翻译成简体中文。然后启用双语样式，把译文以 75% 字号显示在原文下方。";
+"Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size." = "把每一条字幕翻译成英文，然后启用双语样式，把英文译文以 75% 字号显示在原文下方。";
+"Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size." = "把每一条字幕翻译成简体中文，然后启用双语样式，把中文译文以 75% 字号显示在原文下方。";
+"Translate every subtitle cue to <fill in target language>, then enable bilingual style with the translation below the original at 75% size." = "把每一条字幕翻译成 <填入目标语言>，然后启用双语样式，把译文以 75% 字号显示在原文下方。";
 
 /* Built-in sound-effects library */
 "Sound effects" = "音效库";

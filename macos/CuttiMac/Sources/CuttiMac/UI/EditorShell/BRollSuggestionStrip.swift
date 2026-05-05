@@ -99,7 +99,7 @@ struct BRollSuggestionStrip: View {
                 pendingAnimationConfirmation = nil
             }
         } message: { _ in
-            Text(L("Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?"))
+            Text(L("Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt consumes a large amount of cloud credits. Continue?"))
         }
     }
 
@@ -219,13 +219,22 @@ struct BRollSuggestionStrip: View {
     }
 
     private func popoverBody(for hint: TimelineCreativeActions.BRollSuggestionHint) -> some View {
-        // Seed the editable textfield from the crisp `userTitle` when
-        // available, falling back to the longer `prompt` for legacy
-        // suggestions. The user's edit is what they actually want to
-        // see on the overlay; the verbose `prompt` and `rationale` sit
-        // in the popover body as context (and as inspiration for the
-        // downstream agent).
-        let seed = hint.userTitle ?? hint.prompt
+        // Seed the editable field with BOTH the crisp `userTitle`
+        // headline AND the longer scene description (`prompt`), joined
+        // by a blank line. Earlier versions exposed only the headline
+        // as editable and rendered `prompt` as static text below — but
+        // the brief that ships to the agent never carried `prompt`,
+        // so users couldn't actually steer the generation. Now the
+        // whole scene description is editable and travels to the
+        // agent verbatim as `userEdit` (the strongest signal in the
+        // server prompt).
+        let headline = (hint.userTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = hint.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let seed: String = {
+            if !headline.isEmpty, !body.isEmpty, headline != body { return "\(headline)\n\n\(body)" }
+            if !headline.isEmpty { return headline }
+            return body
+        }()
         let editedBinding = Binding<String>(
             get: { editedPrompts[hint.id] ?? seed },
             set: { editedPrompts[hint.id] = $0 }
@@ -255,23 +264,15 @@ struct BRollSuggestionStrip: View {
                         .help(L("Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits."))
                 }
             }
-            // Editable prompt: the user can tweak the AI's suggestion
-            // before kicking off the expensive generation step.
-            TextField(L("Prompt"), text: editedBinding, axis: .vertical)
+            // Editable scene prompt. The user can rewrite the whole
+            // description before kicking off the expensive generation
+            // step; whatever they type is forwarded to the agent as
+            // `userEdit` (the strongest signal in the compose prompt).
+            TextField(L("Describe the animation"), text: editedBinding, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-                .lineLimit(2...6)
+                .lineLimit(3...12)
                 .font(.system(size: 12))
                 .disabled(isGenerating)
-            // For new suggestions where `userTitle` was the seed, also
-            // surface the longer `prompt` as a muted subtitle so the
-            // user sees the full scene description without losing the
-            // crisp editable headline.
-            if hint.userTitle != nil, !hint.prompt.isEmpty {
-                Text(hint.prompt)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if !hint.rationale.isEmpty {
                 Text(hint.rationale)
                     .font(.system(size: 11))
@@ -327,7 +328,7 @@ struct BRollSuggestionStrip: View {
             }
         }
         .padding(10)
-        .frame(width: 280, alignment: .leading)
+        .frame(width: 340, alignment: .leading)
     }
 
     private func generateButtonLabel(for kind: BRollSuggestion.Kind, generating: Bool) -> String {

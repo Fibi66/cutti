@@ -583,6 +583,20 @@ struct ContentView: View {
             onOpenOverlayInspector: { [weak viewModel] segmentID in
                 viewModel?.inspectorOverlaySegmentID = segmentID
             },
+            onRestoreCutBefore: { [weak viewModel] index in
+                guard let viewModel else { return }
+                viewModel.restoreCutBetween(leftIndex: index - 1, rightIndex: index)
+            },
+            onRestoreCutAfter: { [weak viewModel] index in
+                guard let viewModel else { return }
+                viewModel.restoreCutBetween(leftIndex: index, rightIndex: index + 1)
+            },
+            restorableGapBefore: { [weak viewModel] index in
+                viewModel?.gapBeforeSegment(at: index)
+            },
+            restorableGapAfter: { [weak viewModel] index in
+                viewModel?.gapAfterSegment(at: index)
+            },
             availableBRollMedia: brollOptions,
             overlayRows: overlayRows,
             detachedAudioRows: detachedAudioRows,

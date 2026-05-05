@@ -43,6 +43,20 @@ struct EditorSessionContainer: View {
             canGoBack: !viewModel.isAnalyzing && !viewModel.isExporting && !viewModel.isImporting,
             onBack: onBack
         )
+        // Stop the project's video the moment SwiftUI tears down this
+        // container — both on "back to dashboard" (activeProjectID set
+        // to nil) and on `.id(projectID)`-driven swap to a different
+        // project's container. Without this, the `MediaCoreViewModel`
+        // can outlive the view briefly (held by in-flight Tasks /
+        // observers), and even after it's released the AVPlayer's
+        // audio pipeline continues until something explicitly pauses
+        // it — leaving the previous clip's audio droning on under the
+        // dashboard or the next project. Pausing here stops the
+        // audio synchronously regardless of when the VM finally
+        // deallocates.
+        .onDisappear {
+            viewModel.player?.pause()
+        }
     }
 }
 
@@ -130,7 +144,7 @@ private struct EditorWithBackButton: View {
             .padding(.leading, EditorShellStyle.trafficLightInset)
             .padding(.trailing, EditorShellStyle.panelPadding)
             .padding(.vertical, 8)
-            .background(EditorShellStyle.backgroundApp)
+            .background(TitleBarDragRegion(color: EditorShellStyle.backgroundApp))
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(EditorShellStyle.borderSubtle)

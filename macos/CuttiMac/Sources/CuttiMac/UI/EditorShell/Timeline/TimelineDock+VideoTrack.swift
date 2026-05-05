@@ -373,6 +373,16 @@ extension TimelineDock {
                                     creativeActions.onAddCrossfadeFromPrevious(index, 0.5)
                                 } label: { T("Add Crossfade from Previous (0.5s)") }
                             }
+                            if let gapBefore = creativeActions.restorableGapBefore(index) {
+                                Button(L("Restore %@s cut before this clip", formatRestoreGap(gapBefore))) {
+                                    creativeActions.onRestoreCutBefore(index)
+                                }
+                            }
+                            if let gapAfter = creativeActions.restorableGapAfter(index) {
+                                Button(L("Restore %@s cut after this clip", formatRestoreGap(gapAfter))) {
+                                    creativeActions.onRestoreCutAfter(index)
+                                }
+                            }
                             Divider()
                             Menu(L("Transform")) {
                                 Button { onRotate(index) } label: { T("Rotate 90°") }
@@ -476,6 +486,17 @@ extension TimelineDock {
             }
         }
         .frame(width: width, height: videoTrackHeight, alignment: .leading)
+    }
+
+    /// Format a restorable-gap duration for the right-click menu
+    /// label. Sub-10s gaps get one decimal ("2.4"), longer gaps
+    /// round to whole seconds ("12") — the surrounding string
+    /// supplies the unit suffix per locale.
+    func formatRestoreGap(_ seconds: Double) -> String {
+        if seconds < 10 {
+            return String(format: "%.1f", seconds)
+        }
+        return String(Int(seconds.rounded()))
     }
 
 }

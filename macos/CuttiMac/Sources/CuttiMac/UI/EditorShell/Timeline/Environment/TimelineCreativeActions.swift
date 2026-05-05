@@ -198,6 +198,24 @@ struct TimelineCreativeActions {
     /// the segment id so the shell can open the floating Inspector
     /// panel. No-op for overlays that weren't AI-generated.
     var onOpenOverlayInspector: (UUID) -> Void = { _ in }
+    /// Restore the source-time gap immediately BEFORE the segment at
+    /// `index` — i.e. merge segment[index-1] and segment[index] back
+    /// into one (or insert a new clip filling the gap when their
+    /// effects differ). See `MediaCoreViewModel.restoreCutBetween`
+    /// for behaviour. The view model decides the merge-vs-insert
+    /// branch; the UI just dispatches the index.
+    var onRestoreCutBefore: (Int) -> Void = { _ in }
+    /// Symmetric to `onRestoreCutBefore`: restore the gap AFTER the
+    /// segment at `index` (between segment[index] and segment[index+1]).
+    var onRestoreCutAfter: (Int) -> Void = { _ in }
+    /// Source-time gap (in seconds) that would be restored by
+    /// `onRestoreCutBefore(index)`, or nil when no restorable cut is
+    /// adjacent. The context menu uses the optional return to decide
+    /// whether to surface the menu item, and the value to format the
+    /// label ("Restore 2.4s cut before this clip").
+    var restorableGapBefore: (Int) -> Double? = { _ in nil }
+    /// Symmetric to `restorableGapBefore`.
+    var restorableGapAfter: (Int) -> Double? = { _ in nil }
     var availableBRollMedia: [BRollOption] = []
     var overlayRows: [OverlayRow] = []
     var detachedAudioRows: [DetachedAudioRow] = []

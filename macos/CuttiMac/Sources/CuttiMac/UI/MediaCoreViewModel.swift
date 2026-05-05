@@ -6219,7 +6219,8 @@ final class MediaCoreViewModel: ObservableObject {
         }
 
         // Treat the user's textfield edit as authoritative when it
-        // genuinely differs from the popover seed (`userTitle ?? prompt`).
+        // genuinely differs from the popover seed (`userTitle` joined
+        // with `prompt`, mirroring `BRollSuggestionStrip.popoverBody`).
         // If they kept the seed, cleared the field, or didn't pass an
         // edit at all, fall back to the existing transcript-driven
         // extraction. The two cases drive very different agent
@@ -6227,8 +6228,14 @@ final class MediaCoreViewModel: ObservableObject {
         // source of truth for screen text; not-edited → the transcript
         // drives item labels and the suggestion is just inspiration.
         let trimmedEdit = editedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let popoverSeed = (hint.userTitle ?? hint.prompt)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let popoverSeed: String = {
+            let headline = (hint.userTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = hint.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !headline.isEmpty, !body.isEmpty, headline != body {
+                return "\(headline)\n\n\(body)"
+            }
+            return headline.isEmpty ? body : headline
+        }()
         let userDidEdit: Bool = {
             guard let e = trimmedEdit, !e.isEmpty else { return false }
             return e != popoverSeed

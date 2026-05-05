@@ -47,7 +47,8 @@
 /* Relay errors */
 "Please sign in from Settings." = "Please sign in from Settings.";
 "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti." = "Please verify your email address before using AI features. Check your inbox for the verification link from Cutti.";
-"You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets." = "You've used your AI credits for this month (%@). Upgrade to a paid plan for more, or wait until the 1st of next month when your quota resets.";
+"You've used your AI credits for this month (%1$@). %2$@. Upgrade to a paid plan for more." = "You've used your AI credits for this month (%1$@). %2$@. Upgrade to a paid plan for more.";
+"You've used your AI credits for this month (%@). Upgrade to a paid plan for more." = "You've used your AI credits for this month (%@). Upgrade to a paid plan for more.";
 "Animation rendering is temporarily unavailable. Please try again in a moment." = "Animation rendering is temporarily unavailable. Please try again in a moment.";
 "Image generation is temporarily unavailable. Please try again in a moment." = "Image generation is temporarily unavailable. Please try again in a moment.";
 "AI is temporarily unavailable. Please try again in a moment." = "AI is temporarily unavailable. Please try again in a moment.";
@@ -359,8 +360,8 @@
 "%@: %@" = "%@: %@";
 "Delete suggestion" = "Delete suggestion";
 "Prompt" = "Prompt";
+"Describe the animation" = "Describe the animation";
 "Dismiss" = "Dismiss";
-"Generate from this suggestion. Edit the prompt above to steer the result." = "Generate from this suggestion. Edit the prompt above to steer the result.";
 "Generation is unavailable in this build." = "Generation is unavailable in this build.";
 
 /* ViewerStage */
@@ -446,6 +447,10 @@
 "✓ Flip Vertical" = "✓ Flip Vertical";
 "Flip Vertical" = "Flip Vertical";
 "Reset Effects" = "Reset Effects";
+"Restore %@s cut before this clip" = "Restore %@s cut before this clip";
+"Restore %@s cut after this clip" = "Restore %@s cut after this clip";
+"Source clip not available — can't restore." = "Source clip not available — can't restore.";
+"Inserted recovered footage as a new clip — adjacent segments had different effects, so they couldn't be merged." = "Inserted recovered footage as a new clip — adjacent segments had different effects, so they couldn't be merged.";
 
 /* TranscriptView */
 "Transcript" = "Transcript";
@@ -653,7 +658,7 @@
 "Experimental" = "Experimental";
 "Experimental: animation generation" = "Experimental: animation generation";
 "Generate anyway" = "Generate anyway";
-"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?" = "Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt costs cloud credits. Continue?";
+"Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt consumes a large amount of cloud credits. Continue?" = "Animation generation is experimental — the AI may produce unstable, low-quality, or unrenderable animations, and each attempt consumes a large amount of cloud credits. Continue?";
 "Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits." = "Animation generation may produce unstable or low-quality results. Each attempt costs cloud credits.";
 "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline" = "Describe a Remotion overlay (e.g. counter, bar chart) and drop it on the timeline";
 "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead." = "Describe the animation. A fresh Remotion composition is generated from the skill pack and rendered as a transparent overlay at the playhead.";
@@ -685,6 +690,7 @@
 "Insert segment" = "Insert segment";
 "Manual save" = "Manual save";
 "Merge segments" = "Merge segments";
+"Restore cut" = "Restore cut";
 "Move subtitle" = "Move subtitle";
 "Reattach audio" = "Reattach audio";
 "Remove chapter bar" = "Remove chapter bar";
@@ -798,6 +804,22 @@
 "Translate subtitles to Chinese and render below" = "Translate subtitles to Chinese and render below";
 "Translate subtitles to…" = "Translate subtitles to…";
 "Fill in the target language, then send" = "Fill in the target language, then send";
+
+/* AI workflow preset prompts (full text seeded into the chat composer). */
+"Find every filler word in the transcript (uh, um, you know, like, so, etc.) and remove them." = "Find every filler word in the transcript (uh, um, you know, like, so, etc.) and remove them.";
+"Identify every distinct voice in the video and label who says what." = "Identify every distinct voice in the video and label who says what.";
+"Identify each speaker in the video, then mute every line spoken by <fill in which speaker>." = "Identify each speaker in the video, then mute every line spoken by <fill in which speaker>.";
+"Identify each speaker in the video, then list every line spoken by <fill in which speaker>." = "Identify each speaker in the video, then list every line spoken by <fill in which speaker>.";
+"List every span in the video where no face is visible on screen." = "List every span in the video where no face is visible on screen.";
+"Find every span that is near-black or looks like the lens was covered." = "Find every span that is near-black or looks like the lens was covered.";
+"Review the current cut and mark the moments where a B-roll clip or visual overlay would strengthen the story." = "Review the current cut and mark the moments where a B-roll clip or visual overlay would strengthen the story.";
+"Suggest 3 English title candidates based on the transcript." = "Suggest 3 English title candidates based on the transcript.";
+"Review the current cut and pick 3–5 moments best suited for a ChapterTitle animated title card (chapter starts, topic shifts, emphasis sections, etc.). First list each suggestion with: composed_time (seconds), title, optional subtitle, theme (dark/light/accent), and a brief reason. After the user confirms, call the generate_overlay tool for each accepted suggestion (template_id=\"ChapterTitle\", props_json filled per the fields above, durationSeconds defaults to 2.5). After generation, remind the user they can double-click the overlay in the Inspector to fine-tune copy or theme." = "Review the current cut and pick 3–5 moments best suited for a ChapterTitle animated title card (chapter starts, topic shifts, emphasis sections, etc.). First list each suggestion with: composed_time (seconds), title, optional subtitle, theme (dark/light/accent), and a brief reason. After the user confirms, call the generate_overlay tool for each accepted suggestion (template_id=\"ChapterTitle\", props_json filled per the fields above, durationSeconds defaults to 2.5). After generation, remind the user they can double-click the overlay in the Inspector to fine-tune copy or theme.";
+"Write a 3-4 sentence English summary of the current video." = "Write a 3-4 sentence English summary of the current video.";
+"Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size." = "Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size.";
+"Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size." = "Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size.";
+"Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size." = "Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size.";
+"Translate every subtitle cue to <fill in target language>, then enable bilingual style with the translation below the original at 75% size." = "Translate every subtitle cue to <fill in target language>, then enable bilingual style with the translation below the original at 75% size.";
 
 /* Built-in sound-effects library */
 "Sound effects" = "Sound effects";

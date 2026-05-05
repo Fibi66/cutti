@@ -91,21 +91,31 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
     /// Canonical prompts for subtitle / translation workflows, reused by
     /// both the AI workflow menu and the Timeline's S-lane context menu
     /// so the two entry points stay semantically identical.
+    ///
+    /// Wrapped in `L()` so that Chinese-locale users get a Chinese prompt
+    /// pre-filled in the chat composer (the LLM understands both, but
+    /// the user often wants to tweak the prompt before sending — they
+    /// shouldn't have to read English to do that).
     enum SubtitlePrompts {
-        static let bilingualZhEn =
-            "Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size."
+        static var bilingualZhEn: String {
+            L("Add bilingual subtitles. Detect the source language of the current subtitles: if it is Chinese, translate every cue to English; otherwise translate every cue to Simplified Chinese. Then enable bilingual style with the translation rendered below the original at 75% size.")
+        }
 
-        static let translateToEnglish =
-            "Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size."
+        static var translateToEnglish: String {
+            L("Translate every subtitle cue to English, then enable bilingual style with the English translation below the original at 75% size.")
+        }
 
-        static let translateToChinese =
-            "Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size."
+        static var translateToChinese: String {
+            L("Translate every subtitle cue to Simplified Chinese (zh-Hans), then enable bilingual style with the Chinese translation below the original at 75% size.")
+        }
 
-        static let translateToCustom =
-            "Translate every subtitle cue to <fill in target language>, then enable bilingual style with the translation below the original at 75% size."
+        static var translateToCustom: String {
+            L("Translate every subtitle cue to <fill in target language>, then enable bilingual style with the translation below the original at 75% size.")
+        }
     }
 
-    static let all: [AgentWorkflowPreset] = [
+    static var all: [AgentWorkflowPreset] {
+        [
         // MARK: Smart cutting
         .init(
             id: "smart.full",
@@ -147,8 +157,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             systemImage: "scissors",
             group: .smartCut,
             action: .seedPrompt(
-                "Find every filler word in the transcript "
-                + "(uh, um, you know, like, so, etc.) and remove them."
+                L("Find every filler word in the transcript "
+                + "(uh, um, you know, like, so, etc.) and remove them.")
             ),
             shortcutLabel: "⌘⇧2"
         ),
@@ -160,7 +170,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Split the transcript by who's talking",
             systemImage: "person.2.wave.2",
             group: .speaker,
-            action: .seedPrompt("Identify every distinct voice in the video and label who says what.")
+            action: .seedPrompt(L("Identify every distinct voice in the video and label who says what."))
         ),
         .init(
             id: "speaker.mute",
@@ -169,8 +179,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             systemImage: "speaker.slash",
             group: .speaker,
             action: .seedPrompt(
-                "Identify each speaker in the video, then mute every line "
-                + "spoken by <fill in which speaker>."
+                L("Identify each speaker in the video, then mute every line "
+                + "spoken by <fill in which speaker>.")
             )
         ),
         .init(
@@ -180,8 +190,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             systemImage: "text.bubble",
             group: .speaker,
             action: .seedPrompt(
-                "Identify each speaker in the video, then list every line "
-                + "spoken by <fill in which speaker>."
+                L("Identify each speaker in the video, then list every line "
+                + "spoken by <fill in which speaker>.")
             )
         ),
 
@@ -192,7 +202,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Spans with no face on screen",
             systemImage: "person.slash",
             group: .vision,
-            action: .seedPrompt("List every span in the video where no face is visible on screen.")
+            action: .seedPrompt(L("List every span in the video where no face is visible on screen."))
         ),
         .init(
             id: "vision.black",
@@ -200,7 +210,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Near-black or covered-lens regions",
             systemImage: "square.fill",
             group: .vision,
-            action: .seedPrompt("Find every span that is near-black or looks like the lens was covered.")
+            action: .seedPrompt(L("Find every span that is near-black or looks like the lens was covered."))
         ),
         .init(
             id: "vision.autoPiP",
@@ -219,8 +229,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             systemImage: "sparkles.rectangle.stack",
             group: .generative,
             action: .seedPrompt(
-                "Review the current cut and mark the moments where a B-roll "
-                + "clip or visual overlay would strengthen the story."
+                L("Review the current cut and mark the moments where a B-roll "
+                + "clip or visual overlay would strengthen the story.")
             )
         ),
         .init(
@@ -229,7 +239,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Candidate titles from the transcript",
             systemImage: "text.cursor",
             group: .generative,
-            action: .seedPrompt("Suggest 3 English title candidates based on the transcript.")
+            action: .seedPrompt(L("Suggest 3 English title candidates based on the transcript."))
         ),
         .init(
             id: "gen.chapters",
@@ -246,12 +256,16 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             systemImage: "sparkles.tv",
             group: .generative,
             action: .seedPrompt(
-                "审视当前剪辑，挑出 3–5 个最适合插入 ChapterTitle 动画标题卡的时间点"
-                + "（章节开头、话题切换、强调段落等）。先用列表给出每个建议："
-                + "composed_time（秒）、title、可选 subtitle、theme（dark/light/accent），"
-                + "并简述理由。等用户确认后，对每个被采纳的建议调用 generate_overlay 工具"
-                + "（template_id=\"ChapterTitle\"，props_json 按上述字段填，durationSeconds 默认 2.5）。"
-                + "生成后提醒用户可以双击 overlay 在 Inspector 里继续微调文案或主题。"
+                L("Review the current cut and pick 3–5 moments best suited for a "
+                + "ChapterTitle animated title card (chapter starts, topic shifts, "
+                + "emphasis sections, etc.). First list each suggestion with: "
+                + "composed_time (seconds), title, optional subtitle, "
+                + "theme (dark/light/accent), and a brief reason. After the user "
+                + "confirms, call the generate_overlay tool for each accepted "
+                + "suggestion (template_id=\"ChapterTitle\", props_json filled per "
+                + "the fields above, durationSeconds defaults to 2.5). After "
+                + "generation, remind the user they can double-click the overlay "
+                + "in the Inspector to fine-tune copy or theme.")
             )
         ),
         .init(
@@ -268,7 +282,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Short paragraph describing what it's about",
             systemImage: "doc.text.magnifyingglass",
             group: .generative,
-            action: .seedPrompt("Write a 3-4 sentence English summary of the current video.")
+            action: .seedPrompt(L("Write a 3-4 sentence English summary of the current video."))
         ),
 
         // MARK: Subtitles
@@ -304,7 +318,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             group: .subtitles,
             action: .seedPrompt(SubtitlePrompts.translateToCustom)
         ),
-    ]
+        ]
+    }
 
     static func byGroup() -> [(Group, [AgentWorkflowPreset])] {
         Group.allCases.map { g in

@@ -43,7 +43,7 @@ struct ProjectDashboardView: View {
                 .padding(.leading, max(40, EditorShellStyle.trafficLightInset))
                 .padding(.trailing, 40)
                 .padding(.vertical, 24)
-                .background(EditorShellStyle.chromeBackground)
+                .background(TitleBarDragRegion(color: EditorShellStyle.chromeBackground))
 
                 Divider()
 
