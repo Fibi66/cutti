@@ -1,8 +1,18 @@
 # cutti
 
-AI-powered video editing app for macOS **and iOS** (iPhone + iPad universal).
-Import your footage, click Start — cutti's AI handles transcription, scene
-analysis, and edit suggestions.
+AI-powered video editing app for **macOS**. Import your footage, click
+Start — cutti's AI handles transcription, scene analysis, and edit
+suggestions.
+
+> **Status**
+> - **macOS** — usable. Pre-built DMGs are published to
+>   [Releases](https://github.com/Fibi66/cutti/releases).
+> - **iOS** (iPhone + iPad) — **work in progress, not usable yet.** The
+>   `ios/CuttiMobile/` target builds against the simulator so the
+>   shared kit (`shared/CuttiKit/`) keeps cross-platform parity, but
+>   the iOS UI is incomplete and most features are stubbed out. Don't
+>   expect a working app from it. There's no TestFlight build and no
+>   ETA — the macOS app is the focus right now.
 
 ## Minimum requirements (macOS)
 
@@ -38,7 +48,13 @@ release into the SwiftPM cache. WhisperKit model weights (~1.5 GB) are
 downloaded automatically on first **launch** into
 `macos/CuttiMac/Models/` (gitignored).
 
-### 2. Build & run iOS
+### 2. Build iOS (contributors only — UI is incomplete)
+
+The iOS target exists so the shared kit (`shared/CuttiKit/`) doesn't
+drift out of cross-platform parity. **It does not currently produce a
+usable app** — most surfaces are stubs. Build it only if you're
+working on `CuttiKit` and need to verify your changes still link on
+iOS.
 
 ```bash
 cd ios/CuttiMobile
@@ -48,10 +64,10 @@ open CuttiMobile.xcodeproj
 
 For **Simulator** builds: works out of the box.
 
-For **device / TestFlight / App Store** builds: open `project.yml`, set
-`DEVELOPMENT_TEAM` to your own Apple Developer Team ID and change
-`bundleIdPrefix` to your own reverse-DNS prefix, then re-run
-`xcodegen generate`.
+For **device** builds: open `project.yml`, set `DEVELOPMENT_TEAM` to
+your own Apple Developer Team ID and change `bundleIdPrefix` to your
+own reverse-DNS prefix, then re-run `xcodegen generate`. There is
+intentionally no TestFlight or App Store build pipeline yet.
 
 ## Testing
 
