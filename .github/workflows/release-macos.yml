@@ -53,7 +53,7 @@ concurrency:
 jobs:
   release:
     name: Build, sign, notarize, publish
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:
@@ -86,11 +86,12 @@ jobs:
       - name: Select Xcode
         run: |
           set -euo pipefail
-          # Project requires swift-tools-version 6.0 → Xcode 16+.
-          # Pick the highest Xcode_16.* available on the runner.
-          XCODE_PATH=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          # Project requires Swift 6.3+ (the strict-concurrency diagnostics
+          # in newer Xcode are looser than 6.0/6.1). Xcode 26 ships Swift
+          # 6.3, so pick the highest Xcode_26.* available on the runner.
+          XCODE_PATH=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [[ -z "$XCODE_PATH" ]]; then
-            echo "No Xcode 16+ found on this runner. Available:" >&2
+            echo "No Xcode 26+ found on this runner. Available:" >&2
             ls /Applications | grep -i xcode >&2
             exit 1
           fi
