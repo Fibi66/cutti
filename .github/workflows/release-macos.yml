@@ -165,22 +165,18 @@ jobs:
           "$SPARKLE_BIN_DIR/sign_update" --help >/dev/null
           "$SPARKLE_BIN_DIR/generate_keys" --help >/dev/null
 
-      - name: Import Sparkle EdDSA private key into build keychain
+      - name: Stage Sparkle EdDSA private key as file
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          KEY_FILE=$RUNNER_TEMP/sparkle-private.txt
-          # generate_keys -f expects exactly the 44-char base64 line, no
-          # surrounding whitespace.
+          # sign_update on a fresh CI keychain hangs trying to unlock the
+          # keychain interactively. Pass the key via -f <file> instead.
+          # The file is removed by the cleanup step at the end of the job.
+          KEY_FILE="$RUNNER_TEMP/sparkle-private.txt"
           printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
-          # Auto-confirm any "key already exists?" prompt with 'y'.
-          # (On a fresh keychain there should be no such prompt.)
-          yes | generate_keys -f "$KEY_FILE" || true
-          rm "$KEY_FILE"
-          # Sanity: sign_update can find the key when invoked with no args
-          # (it'll print usage), but a real test happens in the release
-          # script.
+          chmod 600 "$KEY_FILE"
+          echo "SPARKLE_ED_PRIVATE_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
 
       - name: Download vendor xcframeworks
         env:
@@ -219,3 +215,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "${SPARKLE_ED_PRIVATE_KEY_FILE:-}" 2>/dev/null || true

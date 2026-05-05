@@ -148,7 +148,15 @@ xcrun stapler staple "$DMG"
 
 # ---------- 4. EdDSA sign for Sparkle ----------
 echo "==> Signing update with Sparkle EdDSA key"
-SIGN_LINE="$(sign_update "$DMG")"
+# CI on a clean keychain hangs on the keychain-based path because
+# sign_update silently prompts for unlock when launched from a non-UI
+# session. If SPARKLE_ED_PRIVATE_KEY_FILE is set, read the private key
+# from that file (44-char base64) and skip the keychain entirely.
+if [[ -n "${SPARKLE_ED_PRIVATE_KEY_FILE:-}" ]]; then
+  SIGN_LINE="$(sign_update -f "$SPARKLE_ED_PRIVATE_KEY_FILE" "$DMG")"
+else
+  SIGN_LINE="$(sign_update "$DMG")"
+fi
 # Output looks like:  sparkle:edSignature="..." length="12345"
 echo "$SIGN_LINE"
 
