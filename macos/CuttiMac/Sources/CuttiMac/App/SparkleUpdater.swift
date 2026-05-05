@@ -51,11 +51,29 @@ final class SparkleUpdater: ObservableObject {
             // updates itself.
             self.controller = nil
         case .direct:
-            self.controller = SPUStandardUpdaterController(
-                startingUpdater: true,
-                updaterDelegate: nil,
-                userDriverDelegate: nil
-            )
+            // Defensive: if the bundle is missing or has an empty
+            // `SUPublicEDKey`, Sparkle's `start()` shows a fatal alert
+            // ("The updater failed to start" / "The provided EdDSA key
+            // could not be decoded") on every launch. That happens when
+            // a contributor packages a local Cutti.app without exporting
+            // SPARKLE_PUBLIC_ED_KEY before running scripts/package-macos.sh.
+            // Skip Sparkle entirely in that case — the Updates UI will
+            // hide itself just like on the App Store path.
+            let edKey = (Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey")
+                as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if edKey.isEmpty {
+                NSLog(
+                    "[Cutti] SUPublicEDKey is missing or empty in Info.plist — disabling Sparkle. "
+                    + "Set SPARKLE_PUBLIC_ED_KEY before running scripts/package-macos.sh to enable in-app updates."
+                )
+                self.controller = nil
+            } else {
+                self.controller = SPUStandardUpdaterController(
+                    startingUpdater: true,
+                    updaterDelegate: nil,
+                    userDriverDelegate: nil
+                )
+            }
         }
 
         if let updater = controller?.updater {
