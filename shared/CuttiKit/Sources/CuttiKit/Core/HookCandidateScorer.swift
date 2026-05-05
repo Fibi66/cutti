@@ -69,6 +69,15 @@ public struct HookCandidate: Codable, Equatable, Sendable {
     /// Short human-readable summary of why this candidate ranks where it
     /// does, e.g. `"5.2s · 中段 · 高能量 · 0 填充词"`. UI / logs only.
     public let reason: String
+    /// Stage-2 LLM rerank "punch" score on a 1–10 scale. Set by the
+    /// optional rerank engine; `nil` when the rerank step was skipped
+    /// or fell back to stage-1. Kept distinct from `scoreOverall` so
+    /// logs preserve the heuristic-vs-taste split.
+    public var llmPunchScore: Double?
+    /// Stage-2 LLM 1–2 sentence reasoning for the rerank decision, in
+    /// the candidate's own language. `nil` when rerank was skipped /
+    /// fell back. Surfaced verbatim in the candidate-card UI (PR 6).
+    public var llmReasoning: String?
 
     public init(
         sourceVideoID: UUID,
@@ -81,7 +90,9 @@ public struct HookCandidate: Codable, Equatable, Sendable {
         scorePosition: Double,
         scoreAntiFiller: Double,
         scoreEnergy: Double,
-        reason: String
+        reason: String,
+        llmPunchScore: Double? = nil,
+        llmReasoning: String? = nil
     ) {
         self.sourceVideoID = sourceVideoID
         self.sourceName = sourceName
@@ -94,6 +105,8 @@ public struct HookCandidate: Codable, Equatable, Sendable {
         self.scoreAntiFiller = scoreAntiFiller
         self.scoreEnergy = scoreEnergy
         self.reason = reason
+        self.llmPunchScore = llmPunchScore
+        self.llmReasoning = llmReasoning
     }
 }
 

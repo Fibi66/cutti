@@ -11791,8 +11791,12 @@ final class MediaCoreViewModel: ObservableObject {
                     checkpointID: nil
                 )
             }
-            let topKRaw = (args["top_k"] as? Int) ?? Int((args["top_k"] as? Double) ?? 20)
-            let topK = max(1, min(50, topKRaw))
+            // top_k now means FINAL count after stage-2 rerank. Default 5
+            // (was 20 in PR 3 before the rerank existed). Stage-1 internally
+            // pulls a larger pool so the LLM has something to rerank.
+            let topKRaw = (args["top_k"] as? Int) ?? Int((args["top_k"] as? Double) ?? 5)
+            let finalCount = max(1, min(20, topKRaw))
+            let stage1Pool = max(20, finalCount * 4)
             let minDuration = (args["min_duration"] as? Double) ?? 2.5
             let maxDuration = (args["max_duration"] as? Double) ?? 10.0
             let idealDuration = (args["ideal_duration"] as? Double) ?? 5.0
@@ -11810,14 +11814,28 @@ final class MediaCoreViewModel: ObservableObject {
             }
             let sources = AgentHook.collectSources(from: records)
             let extraTerms = (args["extra_filler_terms"] as? [String]) ?? []
-            let (candidates, stats) = HookCandidateScorer.scoreSources(
+            let (stage1Candidates, stats) = HookCandidateScorer.scoreSources(
                 sources,
                 fillerTerms: AgentDefaults.fillerWords + extraTerms,
                 bounds: bounds,
-                topK: topK
+                topK: stage1Pool
             )
+            // Stage-2 LLM rerank. Skipped silently when the LLM client
+            // can't be configured (BYOK without key); falls back to
+            // stage-1 ordering on parse / network / timeout failure.
+            let rerankResult: HookCandidateRerankEngine.Result
+            if stage1Candidates.count >= 2,
+               let config = OpenAIConfiguration.fromEnvironment() {
+                let engine = HookCandidateRerankEngine(client: OpenAIClient(configuration: config))
+                rerankResult = await engine.rerank(stageOne: stage1Candidates, topK: finalCount)
+            } else {
+                rerankResult = HookCandidateRerankEngine.Result(
+                    candidates: Array(stage1Candidates.prefix(finalCount)),
+                    status: .skipped
+                )
+            }
             let summary: String
-            if candidates.isEmpty {
+            if rerankResult.candidates.isEmpty {
                 if stats.sourcesScanned == 0 {
                     summary = "🎯 还没有可分析的素材"
                 } else if stats.sourcesWithoutTranscript == stats.sourcesScanned {
@@ -11826,12 +11844,19 @@ final class MediaCoreViewModel: ObservableObject {
                     summary = "🎯 没找到合适的开场金句候选"
                 }
             } else {
-                summary = "🎯 找到 \(candidates.count) 条开场金句候选"
+                let suffix: String
+                switch rerankResult.status {
+                case .ok:       suffix = "（AI 已挑选）"
+                case .fallback: suffix = "（AI 暂不可用，仅启发式排序）"
+                case .skipped:  suffix = ""
+                }
+                summary = "🎯 找到 \(rerankResult.candidates.count) 条开场金句候选\(suffix)"
             }
             return AgentToolOutcome(
                 resultJSON: AgentToolJSON.encode(AgentHook.Result(
-                    candidates: candidates,
-                    stats: stats
+                    candidates: rerankResult.candidates,
+                    stats: stats,
+                    rerankStatus: rerankResult.status.rawValue
                 )),
                 userSummary: summary,
                 checkpointID: nil

@@ -21,6 +21,12 @@ enum AgentHook {
     struct Result: Codable, Equatable, Sendable {
         let candidates: [HookCandidate]
         let stats: HookCandidateStats
+        /// Stage-2 LLM rerank outcome: `"ok"`, `"skipped"` (rerank not
+        /// attempted — too few candidates / no LLM client), or
+        /// `"fallback"` (rerank attempted but failed). `"ok"` means
+        /// `candidates[*].llmPunchScore` and `llmReasoning` are
+        /// populated; the other two states leave them `nil`.
+        let rerankStatus: String
     }
 
     /// Build `[HookSource]` from the project's media records. Sources
@@ -63,22 +69,28 @@ enum AgentHook {
             name: "score_hook_candidates",
             description: """
                 Rank "opening-hook" / cold-open teaser candidates across every \
-                source recording in the project. Returns top-K candidates with \
-                per-dimension sub-scores (length, position, anti-filler, energy) \
-                and a 1-line reason. Use this when the user asks the AI to \
-                CHOOSE a punchy line for the cold open (e.g. "AI 自己挑一句开场金句", \
-                "帮我挑个 hook"). Don't use it when the user has already pointed at \
-                a specific line — for those, find_by_transcript is the right tool. \
-                The tool only inspects raw recordings; it does NOT mutate the \
-                timeline. Pair the result with insertSourceClip (via edit_timeline) \
-                to actually splice the chosen candidate into the cold-open slot.
+                source recording in the project. Two-stage: stage-1 deterministic \
+                scorer (length, position, anti-filler, energy) shortlists \
+                candidates; stage-2 LLM rerank picks the final top_k by \
+                short-form-video-producer rubric (self-contained, anti-spoiler, \
+                punchy, etc.) and attaches a 1–10 punch_score and 1–2-sentence \
+                reasoning to each. When stage-2 isn't available (no LLM client \
+                / quota / network), result.rerank_status = "fallback" or \
+                "skipped" and only stage-1 ordering is returned. Use this when \
+                the user asks the AI to CHOOSE a punchy line for the cold open \
+                (e.g. "AI 自己挑一句开场金句", "帮我挑个 hook"). Don't use it when \
+                the user has already pointed at a specific line — for those, \
+                find_by_transcript is the right tool. The tool only inspects raw \
+                recordings; it does NOT mutate the timeline. Pair the result \
+                with insertSourceClip (via edit_timeline) to actually splice the \
+                chosen candidate into the cold-open slot.
                 """,
             parameters: .init(
                 type: "object",
                 properties: [
                     "top_k": .init(
                         type: "integer",
-                        description: "Number of candidates to return (default 20, capped at 50).",
+                        description: "Final number of candidates to return AFTER stage-2 LLM rerank (default 5, capped at 20). Stage-1 internally pulls a larger pool — you don't need to manage that.",
                         items: nil
                     ),
                     "min_duration": .init(
