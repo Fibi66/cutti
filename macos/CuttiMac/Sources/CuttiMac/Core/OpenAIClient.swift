@@ -325,6 +325,12 @@ struct OpenAIClient: Sendable {
         case agent
         /// Mechanical translation of subtitles. Cheap.
         case translate
+        /// Remotion overlay generation (animation skill chat path).
+        /// Pro on smart — the codegen / template-pick step needs the
+        /// stronger model. Tagged distinctly from `creative` so the
+        /// per-feature dashboard can split B-roll suggestions from
+        /// animation work.
+        case animation
     }
 
     func chatCompletion(

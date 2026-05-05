@@ -39,6 +39,16 @@ struct RemotionRenderRequest: Sendable, Equatable {
     var width: Int = 1920
     var height: Int = 1080
     var fps: Int = 30
+
+    /// Per-feature attribution forwarded to the relay so the admin
+    /// dashboard can split AI-driven animation renders from any
+    /// future manual / template-picker renders. Defaults to
+    /// `"animation"` because every render call site today is downstream
+    /// of an AI `generate_overlay` tool call.
+    ///
+    /// Only consumed by `CloudRemotionRenderer`; `LocalRemotionRenderer`
+    /// (dev build, no metering) ignores it.
+    var task: String? = "animation"
 }
 
 // MARK: - Errors

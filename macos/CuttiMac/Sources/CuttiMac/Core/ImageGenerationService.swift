@@ -85,21 +85,28 @@ actor ImageGenerationService {
 
     /// Generate an image and return decoded PNG bytes. Throws
     /// `ImageGenerationError` on any failure.
+    ///
+    /// `task` is forwarded to the relay as the `task` field on the
+    /// request body so the admin dashboard can split image-gen credit
+    /// spend by feature. Defaults to `"image_gen"`; pass a more
+    /// specific tag (e.g. `"image_chapter_card"`) when a call site
+    /// wants finer-grained attribution.
     func generate(
         prompt: String,
-        size: ImageGenerationSize = .square1024
+        size: ImageGenerationSize = .square1024,
+        task: String? = "image_gen"
     ) async throws -> Data {
         #if os(macOS)
         switch CuttiSettings.aiProvider() {
         case .cuttiCloud:
-            return try await generateViaCuttiRelay(prompt: prompt, size: size)
+            return try await generateViaCuttiRelay(prompt: prompt, size: size, task: task)
         case .custom:
             return try await generateViaCustomProvider(prompt: prompt, size: size)
         }
         #else
         // iOS is subscription-only: image generation always goes through
         // the cutti relay. The BYOK code path is compiled out.
-        return try await generateViaCuttiRelay(prompt: prompt, size: size)
+        return try await generateViaCuttiRelay(prompt: prompt, size: size, task: task)
         #endif
     }
 
@@ -107,7 +114,8 @@ actor ImageGenerationService {
 
     private func generateViaCuttiRelay(
         prompt: String,
-        size: ImageGenerationSize
+        size: ImageGenerationSize,
+        task: String? = nil
     ) async throws -> Data {
         // `configurationFromDefaults()` is now safe to call from any
         // actor — credentials live in a lock-protected snapshot — so we
@@ -141,15 +149,24 @@ actor ImageGenerationService {
             request.setValue(token, forHTTPHeaderField: "X-Cutti-Dev-Token")
         }
 
-        let body: [String: Any] = [
-            "prompt": prompt,
-            // Send the abstract aspect; the relay owns the mapping to
-            // whatever actual pixel dimensions the current upstream
-            // model supports. Do NOT send width/height — old shipped
-            // .app builds that hardcoded pixel values is exactly what
-            // this refactor avoids.
-            "aspect": size.rawValue,
-        ]
+        let body: [String: Any] = {
+            var b: [String: Any] = [
+                "prompt": prompt,
+                // Send the abstract aspect; the relay owns the mapping to
+                // whatever actual pixel dimensions the current upstream
+                // model supports. Do NOT send width/height — old shipped
+                // .app builds that hardcoded pixel values is exactly what
+                // this refactor avoids.
+                "aspect": size.rawValue,
+            ]
+            if let tag = task, !tag.isEmpty {
+                // Per-feature attribution. Validated against an allowlist
+                // regex on the relay; older backends ignore unknown keys
+                // so this is safe to send unconditionally.
+                b["task"] = tag
+            }
+            return b
+        }()
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = 120
 

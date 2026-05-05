@@ -82,7 +82,7 @@ struct CloudRemotionRenderer: RemotionOverlayRendering {
             req.setValue(bearerToken, forHTTPHeaderField: "X-Cutti-Dev-Token")
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "template_id": request.templateID,
             "props_json": request.propsJSON,
             "duration_seconds": request.durationSeconds,
@@ -90,6 +90,13 @@ struct CloudRemotionRenderer: RemotionOverlayRendering {
             "height": request.height,
             "fps": request.fps,
         ]
+        if let tag = request.task, !tag.isEmpty {
+            // Per-feature attribution. The relay validates this against
+            // an allowlist regex; unknown values are silently dropped
+            // server-side, so sending it here is safe even on older
+            // backends that ignore it.
+            body["task"] = tag
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         let (data, response) = try await session.data(for: req)
