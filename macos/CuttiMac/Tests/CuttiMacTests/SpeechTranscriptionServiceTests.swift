@@ -2,7 +2,7 @@ import XCTest
 @testable import CuttiMac
 
 final class SpeechTranscriptionServiceTests: XCTestCase {
-    func test_resolvedSpeechProfile_defaultsToAppleSpeech_forChinese() {
+    func test_resolvedSpeechProfile_defaultsToWhisper_forChinese() {
         let defaults = UserDefaults(suiteName: #function)!
         defaults.removePersistentDomain(forName: #function)
         defaults.set(EditorLanguagePreference.chinese.rawValue, forKey: CuttiSettings.editorLanguageKey)
@@ -12,8 +12,14 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
             fallbackLocale: Locale(identifier: "en-US")
         )
 
-        XCTAssertEqual(profile.primaryBackend, .appleSpeech)
-        XCTAssertEqual(profile.fallbackBackend, .whisperKit)
+        // Whisper is now the primary backend for every language —
+        // Apple SFSpeech accumulates per-segment timing drift on long
+        // Chinese files which made the editor's subtitle timing drift
+        // by several seconds in the final cut. See
+        // `EditorLanguagePreference.resolvedPrimaryBackend` for the
+        // full rationale.
+        XCTAssertEqual(profile.primaryBackend, .whisperKit)
+        XCTAssertEqual(profile.fallbackBackend, .appleSpeech)
         XCTAssertEqual(profile.whisperLanguageCode, "zh")
     }
 
@@ -37,11 +43,16 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
         defaults.removePersistentDomain(forName: #function)
         defaults.set(EditorLanguagePreference.automatic.rawValue, forKey: CuttiSettings.editorLanguageKey)
 
+        // Whisper is now the primary backend regardless of the
+        // fallback locale; both Chinese-leaning and English-leaning
+        // automatic profiles route to WhisperKit first. The locale
+        // still drives `whisperLanguageCode` so Whisper is told which
+        // language to expect.
         let chineseProfile = CuttiSettings.resolvedSpeechProfile(
             defaults: defaults,
             fallbackLocale: Locale(identifier: "zh-CN")
         )
-        XCTAssertEqual(chineseProfile.primaryBackend, .appleSpeech)
+        XCTAssertEqual(chineseProfile.primaryBackend, .whisperKit)
 
         let englishProfile = CuttiSettings.resolvedSpeechProfile(
             defaults: defaults,
