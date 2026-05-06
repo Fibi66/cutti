@@ -280,6 +280,17 @@
 "Failed to save highlights: %@" = "Failed to save highlights: %@";
 "Failed to remove highlight: %@" = "Failed to remove highlight: %@";
 
+/* HighlightsPanel — PR 11 (use-as-hook button) */
+"Use as opening hook" = "Use as opening hook";
+"Use as opening hook — insert this highlight at the start of the timeline" = "Use as opening hook — insert this highlight at the start of the timeline";
+"Use-as-hook is unavailable right now" = "Use-as-hook is unavailable right now";
+"Wait for the current AI run to finish before using a highlight as a hook." = "Wait for the current AI run to finish before using a highlight as a hook.";
+"Detach the scope chips above the chat box to use a highlight as a hook." = "Detach the scope chips above the chat box to use a highlight as a hook.";
+"This highlight is missing an end time and can't be used as a hook." = "This highlight is missing an end time and can't be used as a hook.";
+"Source clip for this highlight is no longer in the project." = "Source clip for this highlight is no longer in the project.";
+"Pre-flight rejected:\n%@" = "Pre-flight rejected:\n%@";
+"Pending opening hook — review and Apply in chat." = "Pending opening hook — review and Apply in chat.";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI workflows";
 "No matching workflow" = "No matching workflow";

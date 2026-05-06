@@ -4431,6 +4431,168 @@ final class MediaCoreViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Use-as-hook (PR 11)
+
+    /// Whether the per-row ⚡ "Use as hook" button on a Highlights panel
+    /// row should be enabled. Mirrors all gates the dispatcher applies
+    /// to `add_hook_teaser`:
+    ///   - the marker must carry an `endSeconds` (legacy markers
+    ///     persisted before PR 8 are excluded — they have no span).
+    ///   - the source record must still be present and a video.
+    ///   - chat scope chips must be empty (matches the
+    ///     `add_hook_teaser` dispatcher's scope guard).
+    ///   - no agent run is currently in flight (avoid interleaving a
+    ///     UI-driven proposal with `emittedProposalThisTurn`
+    ///     accounting and live-narration in `runAgentLoop`).
+    func canUseHighlightAsHook(_ row: AICopilotPresentation.HighlightRow) -> Bool {
+        guard row.endSeconds != nil else { return false }
+        guard chatAttachmentScope.isEmpty else { return false }
+        guard !isChatProcessing else { return false }
+        return records.contains { $0.id == row.sourceVideoID && $0.kind == .video }
+    }
+
+    /// Insert a Pending opening-hook proposal seeded from a Highlights
+    /// row, bypassing the LLM round-trip. Equivalent to the
+    /// `add_hook_teaser` dispatcher path but invoked directly from the
+    /// row's ⚡ button. Like the LLM path, this never auto-applies — the
+    /// user must click Apply on the resulting card.
+    ///
+    /// On success: a `ProposedBatch` lands at the head of
+    /// `pendingProposals`, an assistant chat bubble (anchored to the
+    /// proposal via `proposedBatchID`) is appended to render the card,
+    /// and a brief banner confirms the action. On any rejection
+    /// (scope chips, missing record, validation errors, active agent
+    /// run), `bannerMessage` carries the reason and the call is a
+    /// no-op.
+    func useHighlightAsHook(_ row: AICopilotPresentation.HighlightRow) {
+        guard !isChatProcessing else {
+            bannerMessage = L("Wait for the current AI run to finish before using a highlight as a hook.")
+            return
+        }
+        guard chatAttachmentScope.isEmpty else {
+            bannerMessage = L("Detach the scope chips above the chat box to use a highlight as a hook.")
+            return
+        }
+        guard let endSeconds = row.endSeconds, endSeconds > row.seconds else {
+            bannerMessage = L("This highlight is missing an end time and can't be used as a hook.")
+            return
+        }
+        guard let record = records.first(where: { $0.id == row.sourceVideoID }),
+              record.kind == .video else {
+            bannerMessage = L("Source clip for this highlight is no longer in the project.")
+            return
+        }
+
+        let sourceName = record.sourcePath.components(separatedBy: "/").last
+        let duration = endSeconds - row.seconds
+        let trimmedLabel = row.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explanation: String = {
+            if trimmedLabel.isEmpty {
+                return String(
+                    format: "Add opening hook teaser (%.1fs%@)",
+                    duration,
+                    sourceName.map { " from \($0)" } ?? ""
+                )
+            }
+            return String(format: "Add opening hook: %@ (%.1fs)", trimmedLabel, duration)
+        }()
+        let inputs = AgentHook.HookTeaserInputs(
+            sourceVideoID: row.sourceVideoID,
+            sourceName: sourceName,
+            sourceStart: row.seconds,
+            sourceEnd: endSeconds,
+            audioTailSeconds: 0.4,
+            fadeInSeconds: 0.15,
+            explanation: explanation
+        )
+
+        let toolCallID = "ui-use-as-hook-\(UUID().uuidString)"
+        switch proposeHookFromInputs(inputs, toolCallID: toolCallID) {
+        case .failure(.validation(let bullets)):
+            let joined = bullets.prefix(3).map { "• \($0)" }.joined(separator: "\n")
+            bannerMessage = L("Pre-flight rejected:\n%@", joined)
+        case .success(let result):
+            // Anchor a chat bubble to the proposal so the existing
+            // ProposedBatchCard render path lights up — same as the
+            // agent loop does for LLM-driven hook proposals. We mirror
+            // the agent loop's `extractLeadingIcon` step so this bubble
+            // looks identical to one produced by `add_hook_teaser`.
+            let (cleanContent, icon, tone) = Self.extractLeadingIcon(from: result.bubbleSummary)
+            let bubble = EditorChatMessage(
+                role: .assistant,
+                content: cleanContent,
+                proposedBatchID: result.proposal.id,
+                iconSystemName: icon,
+                iconTone: tone
+            )
+            chatMessages.append(bubble)
+            Task { try? await chatStore?.append(bubble) }
+            bannerMessage = L("Pending opening hook — review and Apply in chat.")
+        }
+    }
+
+    /// Outcome carrier for `proposeHookFromInputs`. Bundles the
+    /// ProposedBatch (already inserted into `pendingProposals`) plus a
+    /// pre-built emoji-prefixed user-facing summary so the dispatcher
+    /// callsite can return it directly and the UI callsite can pass it
+    /// through `extractLeadingIcon`.
+    struct HookProposalSuccess {
+        let proposal: ProposedBatch
+        let bubbleSummary: String
+    }
+
+    /// Failure carrier for `proposeHookFromInputs`. Right now the only
+    /// rejection that can happen here is `AIActionValidator` reporting
+    /// errors against the proposed batch — input parsing and
+    /// scope/record gates are the caller's responsibility.
+    enum HookProposalError: Error, Equatable {
+        case validation([String])
+    }
+
+    /// Shared validate → dry-run → ProposedBatch.make → insert pipeline
+    /// used by both the LLM-driven `add_hook_teaser` dispatcher and the
+    /// UI-driven `useHighlightAsHook` entry point. Inserts the proposal
+    /// at the head of `pendingProposals` on success.
+    private func proposeHookFromInputs(
+        _ inputs: AgentHook.HookTeaserInputs,
+        toolCallID: String
+    ) -> Swift.Result<HookProposalSuccess, HookProposalError> {
+        let batch = AgentHook.buildHookBatch(inputs)
+        let validation = AIActionValidator.validate(
+            batch: batch,
+            segments: timelineSegments,
+            knownSourceVideoIDs: Set(records.map(\.id))
+        )
+        if validation.hasErrors {
+            return .failure(.validation(validation.errors.prefix(5).map(\.message)))
+        }
+        let dryRun = AIActionExecutor.apply(
+            batch: batch,
+            to: timelineSegments,
+            baseSubtitleStyle: subtitleStyle,
+            transcriptLookup: { ranges, sourceID in
+                self.subtitleEntries(for: ranges, sourceVideoID: sourceID)
+            }
+        )
+        let proposal = ProposedBatch.make(
+            toolCallID: toolCallID,
+            batch: batch,
+            before: timelineSegments,
+            dryRun: dryRun
+        )
+        pendingProposals.insert(proposal, at: 0)
+        let duration = inputs.sourceEnd - inputs.sourceStart
+        let bubbleSummary = String(
+            format: "🎯 Pending opening hook — %.1fs%@",
+            duration,
+            inputs.sourceName.map { " from \($0)" } ?? ""
+        )
+        return .success(HookProposalSuccess(
+            proposal: proposal,
+            bubbleSummary: bubbleSummary
+        ))
+    }
+
     /// Append a new overlay segment carrying `mediaID` to the existing
     /// overlay track identified by `trackID`, anchored at
     /// `composedStart` seconds. Invoked by the drop-on-lane path so
@@ -12541,52 +12703,28 @@ final class MediaCoreViewModel: ObservableObject {
                     checkpointID: nil
                 )
             case .success(let inputs):
-                let batch = AgentHook.buildHookBatch(inputs)
-                let validation = AIActionValidator.validate(
-                    batch: batch,
-                    segments: timelineSegments,
-                    knownSourceVideoIDs: Set(records.map(\.id))
-                )
-                if validation.hasErrors {
-                    let bullets = validation.errors.prefix(5).map { "• \($0.message)" }.joined(separator: "\n")
+                switch proposeHookFromInputs(inputs, toolCallID: toolCall.id) {
+                case .failure(.validation(let bullets)):
+                    let joined = bullets.map { "• \($0)" }.joined(separator: "\n")
                     return AgentToolOutcome(
-                        resultJSON: AgentToolJSON.encodeError("Pre-flight rejected: \(bullets)"),
-                        userSummary: "⚠️ Pre-flight rejected:\n\(bullets)",
+                        resultJSON: AgentToolJSON.encodeError("Pre-flight rejected: \(joined)"),
+                        userSummary: "⚠️ Pre-flight rejected:\n\(joined)",
                         checkpointID: nil
                     )
+                case .success(let result):
+                    let duration = inputs.sourceEnd - inputs.sourceStart
+                    return AgentToolOutcome(
+                        resultJSON: AgentToolJSON.encode(AddHookTeaserToolResult(
+                            status: "pending_user_apply",
+                            durationSeconds: duration,
+                            requiresUserConfirmation: true,
+                            nextSteps: "Wait for the user to click Apply on the proposal card before any overlay/SFX follow-up. Do not propose more edits in this turn."
+                        )),
+                        userSummary: result.bubbleSummary,
+                        checkpointID: nil,
+                        proposedBatchID: result.proposal.id
+                    )
                 }
-                let dryRun = AIActionExecutor.apply(
-                    batch: batch,
-                    to: timelineSegments,
-                    baseSubtitleStyle: subtitleStyle,
-                    transcriptLookup: { ranges, sourceID in
-                        self.subtitleEntries(for: ranges, sourceVideoID: sourceID)
-                    }
-                )
-                let proposal = ProposedBatch.make(
-                    toolCallID: toolCall.id,
-                    batch: batch,
-                    before: timelineSegments,
-                    dryRun: dryRun
-                )
-                pendingProposals.insert(proposal, at: 0)
-                let duration = inputs.sourceEnd - inputs.sourceStart
-                let bubble = String(
-                    format: "🎯 Pending opening hook — %.1fs%@",
-                    duration,
-                    inputs.sourceName.map { " from \($0)" } ?? ""
-                )
-                return AgentToolOutcome(
-                    resultJSON: AgentToolJSON.encode(AddHookTeaserToolResult(
-                        status: "pending_user_apply",
-                        durationSeconds: duration,
-                        requiresUserConfirmation: true,
-                        nextSteps: "Wait for the user to click Apply on the proposal card before any overlay/SFX follow-up. Do not propose more edits in this turn."
-                    )),
-                    userSummary: bubble,
-                    checkpointID: nil,
-                    proposedBatchID: proposal.id
-                )
             }
 
         case "run_first_cut":

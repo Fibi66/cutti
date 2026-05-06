@@ -28,6 +28,16 @@ struct HighlightsPanel: View {
     /// "Remove from Highlights" action. Carries the row identity so
     /// the VM can do a fingerprint recheck before mutating.
     let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
+    /// Per-row "Use as hook" callback fired by the lightning button.
+    /// VM assembles a `HookTeaserInputs` from the row and inserts a
+    /// Pending opening-hook ProposedBatch — equivalent to the LLM
+    /// calling `add_hook_teaser` with this highlight's coords.
+    let onUseAsHook: (AICopilotPresentation.HighlightRow) -> Void
+    /// Predicate gating the lightning button's enabled state. Returns
+    /// false during active agent runs, when scope chips are attached,
+    /// or when the source record is missing — see
+    /// `MediaCoreViewModel.canUseHighlightAsHook` for the truth table.
+    let canUseAsHook: (AICopilotPresentation.HighlightRow) -> Bool
 
     /// Drives the drop-target visual feedback (border + tint) on the
     /// outer panel container. Bound to `.dropDestination(...)`'s
@@ -50,7 +60,9 @@ struct HighlightsPanel: View {
                                     records: records,
                                     projectRoot: projectRoot,
                                     onSelectRecord: onSelectRecord,
-                                    onRemoveHighlight: onRemoveHighlight
+                                    onRemoveHighlight: onRemoveHighlight,
+                                    onUseAsHook: onUseAsHook,
+                                    canUseAsHook: canUseAsHook
                                 )
                             }
                         }
@@ -160,6 +172,8 @@ private struct HighlightGroupView: View {
     let projectRoot: URL?
     let onSelectRecord: (UUID) -> Void
     let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
+    let onUseAsHook: (AICopilotPresentation.HighlightRow) -> Void
+    let canUseAsHook: (AICopilotPresentation.HighlightRow) -> Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -185,7 +199,9 @@ private struct HighlightGroupView: View {
                     records: records,
                     projectRoot: projectRoot,
                     onSelectRecord: onSelectRecord,
-                    onRemoveHighlight: onRemoveHighlight
+                    onRemoveHighlight: onRemoveHighlight,
+                    onUseAsHook: onUseAsHook,
+                    canUseAsHook: canUseAsHook
                 )
             }
         }
@@ -200,6 +216,8 @@ private struct HighlightRowView: View {
     let projectRoot: URL?
     let onSelectRecord: (UUID) -> Void
     let onRemoveHighlight: (AICopilotPresentation.HighlightRow) -> Void
+    let onUseAsHook: (AICopilotPresentation.HighlightRow) -> Void
+    let canUseAsHook: (AICopilotPresentation.HighlightRow) -> Bool
 
     var body: some View {
         let content = HStack(alignment: .top, spacing: 8) {
@@ -224,6 +242,14 @@ private struct HighlightRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            // ⚡ "Use as hook" button. Hidden for legacy markers
+            // without `endSeconds` (no span = nothing to insert);
+            // disabled for transient blockers (active agent run /
+            // scope chips / missing record), surfaced via `.help`.
+            if row.endSeconds != nil {
+                useAsHookButton
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
@@ -238,6 +264,12 @@ private struct HighlightRowView: View {
         .help(helpText)
         .contextMenu {
             Button { onSelectRecord(row.sourceVideoID) } label: { T("Reveal in source") }
+            if row.endSeconds != nil {
+                Button(L("Use as opening hook")) {
+                    onUseAsHook(row)
+                }
+                .disabled(!canUseAsHook(row))
+            }
             Divider()
             Button(L("Remove from Highlights"), role: .destructive) {
                 onRemoveHighlight(row)
@@ -267,6 +299,36 @@ private struct HighlightRowView: View {
         } else {
             content
         }
+    }
+
+    /// Compact lightning button rendered on the right of each row.
+    /// Tap creates a Pending opening-hook ProposedBatch from this
+    /// exact span — same end-state as the LLM calling
+    /// `add_hook_teaser`. The wrapping `Button` style strips macOS's
+    /// default chrome so the icon sits flush against the row.
+    private var useAsHookButton: some View {
+        let enabled = canUseAsHook(row)
+        return Button {
+            onUseAsHook(row)
+        } label: {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(enabled
+                                 ? EditorShellStyle.accentSolid
+                                 : EditorShellStyle.textTertiary)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(enabled
+                              ? EditorShellStyle.accentSolid.opacity(0.12)
+                              : Color.white.opacity(0.04))
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(enabled
+              ? L("Use as opening hook — insert this highlight at the start of the timeline")
+              : L("Use-as-hook is unavailable right now"))
     }
 
     /// Label shown in the row body. Falls back to a generic

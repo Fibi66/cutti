@@ -280,6 +280,17 @@
 "Failed to save highlights: %@" = "保存精选片段失败：%@";
 "Failed to remove highlight: %@" = "移除精选片段失败：%@";
 
+/* HighlightsPanel — PR 11 (use-as-hook button) */
+"Use as opening hook" = "用作开场金句";
+"Use as opening hook — insert this highlight at the start of the timeline" = "用作开场金句 — 将此片段插入时间线最前面";
+"Use-as-hook is unavailable right now" = "当前无法用作开场金句";
+"Wait for the current AI run to finish before using a highlight as a hook." = "请等待当前 AI 任务结束后再用作开场金句。";
+"Detach the scope chips above the chat box to use a highlight as a hook." = "请先取消聊天框上方的附件再用作开场金句。";
+"This highlight is missing an end time and can't be used as a hook." = "此精选片段缺少结束时间，无法用作开场金句。";
+"Source clip for this highlight is no longer in the project." = "此精选片段的源视频已不在项目中。";
+"Pre-flight rejected:\n%@" = "预检失败：\n%@";
+"Pending opening hook — review and Apply in chat." = "已生成开场金句提案 — 请到聊天面板确认并 Apply。";
+
 /* WorkflowPresetButton */
 "AI workflows" = "AI 工作流";
 "No matching workflow" = "无匹配工作流";

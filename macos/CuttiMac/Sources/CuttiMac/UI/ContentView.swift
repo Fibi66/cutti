@@ -464,6 +464,12 @@ struct ContentView: View {
                     markerIndex: row.markerIndex,
                     fingerprint: row.fingerprint
                 )
+            },
+            onUseAsHook: { [weak viewModel] row in
+                viewModel?.useHighlightAsHook(row)
+            },
+            canUseAsHook: { [weak viewModel] row in
+                viewModel?.canUseHighlightAsHook(row) ?? false
             }
         )
         if flexSection == .highlights {

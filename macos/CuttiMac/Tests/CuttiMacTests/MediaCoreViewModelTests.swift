@@ -1368,6 +1368,192 @@ final class MediaCoreViewModelTests: XCTestCase {
         XCTAssertFalse(labels.contains("Old AI"))
     }
 
+    // MARK: - Use as hook (PR 11)
+
+    private func makeHookableHighlightRow(
+        recordID: UUID,
+        start: Double = 12,
+        end: Double? = 18,
+        label: String = "Hookable line",
+        origin: AICopilotMarker.Origin = .manual,
+        markerIndex: Int = 0
+    ) -> AICopilotPresentation.HighlightRow {
+        AICopilotPresentation.HighlightRow(
+            sourceVideoID: recordID,
+            seconds: start,
+            endSeconds: end,
+            label: label,
+            origin: origin,
+            markerIndex: markerIndex
+        )
+    }
+
+    func test_canUseHighlightAsHook_truthTable() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+
+        // Happy path — endSeconds set, scope empty, not processing,
+        // record exists.
+        let good = makeHookableHighlightRow(recordID: record.id)
+        XCTAssertTrue(vm.canUseHighlightAsHook(good))
+
+        // Legacy marker: no endSeconds → false.
+        let legacy = makeHookableHighlightRow(recordID: record.id, end: nil)
+        XCTAssertFalse(vm.canUseHighlightAsHook(legacy))
+
+        // Unknown record → false.
+        let orphan = makeHookableHighlightRow(recordID: UUID())
+        XCTAssertFalse(vm.canUseHighlightAsHook(orphan))
+
+        // Active agent run → false.
+        vm.isChatProcessing = true
+        XCTAssertFalse(vm.canUseHighlightAsHook(good))
+        vm.isChatProcessing = false
+        XCTAssertTrue(vm.canUseHighlightAsHook(good))
+    }
+
+    func test_useHighlightAsHook_insertsPendingProposalAndChatBubble() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+
+        let row = makeHookableHighlightRow(recordID: record.id, start: 5, end: 12, label: "Killer line")
+        let bubblesBefore = vm.chatMessages.count
+        let proposalsBefore = vm.pendingProposals.count
+
+        vm.useHighlightAsHook(row)
+
+        XCTAssertEqual(vm.pendingProposals.count, proposalsBefore + 1, "Proposal should be inserted")
+        // Proposal sits at index 0 — top of the queue.
+        let proposal = vm.pendingProposals[0]
+        XCTAssertEqual(proposal.batch.actions.count, 1)
+        if case let .insertSourceClip(srcID, srcStart, srcEnd, insertAt, _, _) = proposal.batch.actions[0] {
+            XCTAssertEqual(srcID, record.id)
+            XCTAssertEqual(srcStart, 5, accuracy: 0.0001)
+            XCTAssertEqual(srcEnd, 12, accuracy: 0.0001)
+            XCTAssertEqual(insertAt, 0, accuracy: 0.0001)
+        } else {
+            XCTFail("Expected an insertSourceClip action")
+        }
+        // Synthetic toolCallID is namespaced so we can tell it apart
+        // from LLM-driven proposals if anyone needs to.
+        XCTAssertTrue(proposal.toolCallID.hasPrefix("ui-use-as-hook-"))
+
+        // Chat bubble linking to the proposal so the card renders.
+        XCTAssertEqual(vm.chatMessages.count, bubblesBefore + 1)
+        let bubble = vm.chatMessages.last!
+        XCTAssertEqual(bubble.proposedBatchID, proposal.id)
+        XCTAssertEqual(bubble.role, .assistant)
+        XCTAssertEqual(bubble.iconSystemName, "target")
+        XCTAssertFalse(bubble.content.contains("🎯"), "Leading emoji should be stripped by extractLeadingIcon")
+
+        // User-facing banner confirms the insert.
+        XCTAssertNotNil(vm.bannerMessage)
+    }
+
+    func test_useHighlightAsHook_isNoOpWhenScopeChipsAttached() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        // Add a timeline segment + matching chat attachment so
+        // `chatAttachmentScope` resolves to non-empty.
+        let segID = UUID()
+        vm.timelineSegments = [
+            TimelineSegment(
+                id: segID,
+                sourceVideoID: record.id,
+                range: TimeRange(startSeconds: 0, endSeconds: 5),
+                text: "",
+                subtitles: []
+            )
+        ]
+        vm.chatAttachments = [
+            ChatAttachment(
+                segmentID: segID,
+                composedStart: 0,
+                composedEnd: 5,
+                sourceVideoID: record.id,
+                sourceStartSeconds: 0
+            )
+        ]
+        XCTAssertFalse(vm.chatAttachmentScope.entries.isEmpty)
+
+        let row = makeHookableHighlightRow(recordID: record.id)
+        XCTAssertFalse(vm.canUseHighlightAsHook(row))
+
+        vm.useHighlightAsHook(row)
+        XCTAssertTrue(vm.pendingProposals.isEmpty)
+        XCTAssertTrue(vm.chatMessages.isEmpty)
+        XCTAssertNotNil(vm.bannerMessage)
+    }
+
+    func test_useHighlightAsHook_isNoOpWhenAgentIsProcessing() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        vm.isChatProcessing = true
+
+        let row = makeHookableHighlightRow(recordID: record.id)
+        XCTAssertFalse(vm.canUseHighlightAsHook(row))
+
+        vm.useHighlightAsHook(row)
+        XCTAssertTrue(vm.pendingProposals.isEmpty)
+        XCTAssertTrue(vm.chatMessages.isEmpty)
+        XCTAssertNotNil(vm.bannerMessage)
+    }
+
+    func test_useHighlightAsHook_isNoOpWhenRecordMissing() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        // No records loaded — row points at an orphan UUID.
+        let row = makeHookableHighlightRow(recordID: UUID())
+
+        vm.useHighlightAsHook(row)
+        XCTAssertTrue(vm.pendingProposals.isEmpty)
+        XCTAssertTrue(vm.chatMessages.isEmpty)
+        XCTAssertNotNil(vm.bannerMessage)
+    }
+
+    func test_useHighlightAsHook_isNoOpWhenEndSecondsMissing() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        let legacy = makeHookableHighlightRow(recordID: record.id, end: nil)
+
+        vm.useHighlightAsHook(legacy)
+        XCTAssertTrue(vm.pendingProposals.isEmpty)
+        XCTAssertTrue(vm.chatMessages.isEmpty)
+        XCTAssertNotNil(vm.bannerMessage)
+    }
+
+    func test_useHighlightAsHook_emptyLabelFallsBackToGenericExplanation() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        let row = makeHookableHighlightRow(
+            recordID: record.id, start: 0, end: 5, label: "   "
+        )
+
+        vm.useHighlightAsHook(row)
+        XCTAssertEqual(vm.pendingProposals.count, 1)
+        let explanation = vm.pendingProposals[0].batch.explanation
+        XCTAssertTrue(explanation.contains("Add opening hook teaser"))
+        XCTAssertFalse(explanation.contains(":"), "No label means no \"Add opening hook: <label>\" form")
+    }
+
+    func test_useHighlightAsHook_labelBakesIntoExplanation() {
+        let vm = MediaCoreViewModel(playbackCore: SpyPlaybackCore())
+        let record = makeRecordWithSnapshot()
+        vm.records = [record]
+        let row = makeHookableHighlightRow(
+            recordID: record.id, start: 0, end: 5, label: "Why most diets fail"
+        )
+
+        vm.useHighlightAsHook(row)
+        XCTAssertEqual(vm.pendingProposals.count, 1)
+        XCTAssertTrue(vm.pendingProposals[0].batch.explanation.contains("Why most diets fail"))
+    }
+
     func test_setSegmentVolume_clampsAndUpdates() {
         let spy = SpyPlaybackCore()
         let vm = MediaCoreViewModel(playbackCore: spy, projectRoot: URL(fileURLWithPath: "/project"))
