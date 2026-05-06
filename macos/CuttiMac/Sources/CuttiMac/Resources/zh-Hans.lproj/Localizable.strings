@@ -688,6 +688,8 @@
 "Analysis already running" = "分析正在进行中";
 "Ask AI or describe an edit…" = "向 AI 提问或描述一次编辑…";
 "Click to fill · ⌥+click to send" = "点击填入 · ⌥+点击直接发送";
+"Click to run · ⌥+click to edit first" = "点击直接执行 · ⌥+点击先编辑";
+"Edit before sending" = "编辑后再发送";
 "Click to open full size · right-click for Save / Show in Finder" = "点击查看大图 · 右键可保存 / 在访达中显示";
 "Click to rename speaker" = "点击重命名说话人";
 "Close" = "关闭";

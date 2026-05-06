@@ -9914,6 +9914,15 @@ final class MediaCoreViewModel: ObservableObject {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        // Reentry guard. Workflow-preset plain-clicks now auto-send
+        // (rather than fill the composer), so a quick double-click on
+        // a preset row — or an accidental ⌘⇧2/⌘⇧3 double-press —
+        // could otherwise spawn parallel agent loops sharing the same
+        // viewmodel state. The manual chat composer's `sendMessage`
+        // path doesn't have a built-in gate either, so this also
+        // hardens that flow.
+        guard !isChatProcessing else { return }
+
         // Always echo the user's own prompt into the chat log first —
         // before any guards — so the user sees their message appear
         // even on the "timeline still empty, kick off analysis first"

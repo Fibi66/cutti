@@ -88,6 +88,9 @@ struct ContentView: View {
             onSend: { text in
                 Task { await viewModel.handleAIPrompt(text) }
             },
+            onAutoSendPrompt: { prompt, displayLabel in
+                Task { await viewModel.handleAIPrompt(prompt, displayAs: displayLabel) }
+            },
             agentMode: viewModel.agentMode,
             onSetAgentMode: { viewModel.setAgentMode($0) },
             resolveProposal: { viewModel.proposal(id: $0) },

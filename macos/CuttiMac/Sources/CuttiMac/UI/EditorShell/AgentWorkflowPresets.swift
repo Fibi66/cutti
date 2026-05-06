@@ -46,9 +46,19 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
         /// Open the freeform "Generate AI image" sheet (FLUX). The
         /// sheet owns the prompt + size UI; this preset just opens it.
         case openImageGen
-        /// Seed the chat composer with a canonical prompt. If
-        /// `autoSend` is true, Option-click / shortcut will fire it
-        /// immediately; plain click still fills the composer.
+        /// Run a canonical prompt against the agent loop. Plain click /
+        /// shortcut auto-sends the prompt and the chat history bubble
+        /// displays the preset's `title` instead of the verbose
+        /// instruction (the LLM still receives the full text via
+        /// `EditorChatMessage.content`). The escape hatch for users who
+        /// want to peek or tweak the prompt before it goes out is
+        /// Option-click / context-menu "Edit before sending", which
+        /// fills the composer instead.
+        ///
+        /// Presets whose prompt contains a `<fill in ...>` placeholder
+        /// must opt out of the auto-send default by setting
+        /// `requiresInputBeforeSubmit: true` on the preset — those
+        /// always fill the composer regardless of how they're invoked.
         case seedPrompt(String)
     }
 
@@ -61,6 +71,13 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
     /// Optional keyboard shortcut label (e.g. "⌘⇧1"). Informational —
     /// the actual binding lives in the menu's `.keyboardShortcut`.
     let shortcutLabel: String?
+    /// `true` for seedPrompt presets whose canonical text contains a
+    /// `<fill in ...>` placeholder the user must edit before sending
+    /// (e.g. "mute every line spoken by <fill in which speaker>").
+    /// Plain click on these always fills the composer rather than
+    /// auto-sending — anything else would ship the literal placeholder
+    /// to the LLM.
+    let requiresInputBeforeSubmit: Bool
 
     init(
         id: String,
@@ -69,7 +86,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
         systemImage: String,
         group: Group,
         action: Action,
-        shortcutLabel: String? = nil
+        shortcutLabel: String? = nil,
+        requiresInputBeforeSubmit: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -78,6 +96,7 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
         self.group = group
         self.action = action
         self.shortcutLabel = shortcutLabel
+        self.requiresInputBeforeSubmit = requiresInputBeforeSubmit
     }
 
     enum Group: String, CaseIterable {
@@ -181,7 +200,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             action: .seedPrompt(
                 L("Identify each speaker in the video, then mute every line "
                 + "spoken by <fill in which speaker>.")
-            )
+            ),
+            requiresInputBeforeSubmit: true
         ),
         .init(
             id: "speaker.list",
@@ -192,7 +212,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             action: .seedPrompt(
                 L("Identify each speaker in the video, then list every line "
                 + "spoken by <fill in which speaker>.")
-            )
+            ),
+            requiresInputBeforeSubmit: true
         ),
 
         // MARK: Vision
@@ -333,7 +354,8 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
             subtitle: "Fill in the target language, then send",
             systemImage: "globe",
             group: .subtitles,
-            action: .seedPrompt(SubtitlePrompts.translateToCustom)
+            action: .seedPrompt(SubtitlePrompts.translateToCustom),
+            requiresInputBeforeSubmit: true
         ),
         ]
     }
@@ -366,5 +388,48 @@ struct AgentWorkflowPreset: Identifiable, Hashable {
         return Group.allCases.map { g in
             (g, visible.filter { $0.group == g })
         }
+    }
+}
+
+extension AgentWorkflowPreset {
+    /// How a `.seedPrompt` preset should be triggered. `nil` for
+    /// non-prompt actions (those have dedicated `onRun*` callbacks).
+    enum SeedPromptTrigger: Equatable {
+        /// Fill the chat composer with the prompt and let the user
+        /// edit before they hit Enter. Used for placeholder presets
+        /// (`requiresInputBeforeSubmit == true`) and for the explicit
+        /// "Edit before sending" escape hatch (Option-click / context
+        /// menu).
+        case fillComposer(prompt: String)
+        /// Send the prompt straight to the agent loop. The chat
+        /// history bubble shows `displayLabel` (the preset's
+        /// localized title) instead of the verbose internal prompt;
+        /// the LLM still receives the full prompt as the user
+        /// message's `content`.
+        case autoSend(prompt: String, displayLabel: String)
+    }
+
+    /// Decide how this preset should fire when the user invokes it.
+    ///
+    /// Policy (single source of truth so plain-click / shortcut /
+    /// context-menu paths can't drift):
+    ///   • Non-`.seedPrompt` actions → returns `nil`. Pipeline presets
+    ///     and the image-generation sheet are dispatched through their
+    ///     own callbacks, not the prompt path.
+    ///   • `requiresInputBeforeSubmit == true` → always
+    ///     `.fillComposer`. These prompts contain `<fill in ...>` /
+    ///     `<填入...>` placeholders and would be useless to auto-send.
+    ///   • `forceFillComposer == true` (Option-click / "Edit before
+    ///     sending") → `.fillComposer`. Lets the user peek or tweak a
+    ///     normally auto-sending prompt.
+    ///   • Otherwise → `.autoSend` with the localized preset title as
+    ///     the chat display label. The chat history shows a clean
+    ///     action chip instead of the raw scaffolded prompt.
+    func seedPromptTrigger(forceFillComposer: Bool = false) -> SeedPromptTrigger? {
+        guard case .seedPrompt(let text) = action else { return nil }
+        if forceFillComposer || requiresInputBeforeSubmit {
+            return .fillComposer(prompt: text)
+        }
+        return .autoSend(prompt: text, displayLabel: L(title))
     }
 }

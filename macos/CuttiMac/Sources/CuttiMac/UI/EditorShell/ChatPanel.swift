@@ -8,6 +8,13 @@ struct ChatPanel: View {
     let isProcessing: Bool
     @Binding var inputText: String
     let onSend: (String) -> Void
+    /// Auto-send a workflow-preset prompt directly to the agent loop,
+    /// bypassing the composer. The chat-history bubble shows
+    /// `displayLabel` (the preset's localized title) instead of the
+    /// verbose internal prompt; the LLM still receives the full
+    /// prompt as the user message's `content`. Nil ⇒ workflow
+    /// presets fall back to the fill-composer path only.
+    var onAutoSendPrompt: ((_ prompt: String, _ displayLabel: String) -> Void)? = nil
     /// Current Agent mode. Manual shows Apply/Reject cards; Auto
     /// applies immediately. Toggle lives in the header.
     let agentMode: AgentMode
@@ -411,13 +418,12 @@ struct ChatPanel: View {
 
             HStack(spacing: 8) {
                 WorkflowPresetButton(
-                    onSeedPrompt: { text, autoSend in
+                    onSeedPromptIntoComposer: { text in
                         inputText = text
-                        if autoSend {
-                            sendMessage()
-                        } else {
-                            composerFocused = true
-                        }
+                        composerFocused = true
+                    },
+                    onAutoSendPrompt: { prompt, displayLabel in
+                        onAutoSendPrompt?(prompt, displayLabel)
                     },
                     onRunFullAnalysis: onStartAnalysis,
                     onRunTrimPauses: onRunTrimPauses,

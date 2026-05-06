@@ -1,12 +1,21 @@
+import AppKit
 import SwiftUI
 
 /// Composer bolt button + popover that lists the built-in AI workflow
-/// presets. Click a preset to either seed the composer or kick off the
-/// full-analysis pipeline. Option-click (⌥) on a prompt preset auto-sends.
+/// presets. Click a preset to either auto-send a canned prompt
+/// (rendering a clean action chip in the chat history) or kick off a
+/// deterministic pipeline. Option-click on a prompt preset, or the
+/// context-menu "Edit before sending", drops the prompt into the
+/// composer for tweaking instead.
 struct WorkflowPresetButton: View {
-    /// Prefill the composer with a canonical prompt. Caller decides
-    /// whether to auto-send based on `autoSend`.
-    let onSeedPrompt: (String, _ autoSend: Bool) -> Void
+    /// Drop the prompt into the chat composer so the user can edit it
+    /// before sending. Used for placeholder presets and for the
+    /// "Edit before sending" escape hatch on canned presets.
+    let onSeedPromptIntoComposer: (String) -> Void
+    /// Auto-send a canned prompt. The chat-history bubble displays
+    /// `displayLabel` (the preset's localized title); the LLM still
+    /// receives the full `prompt` as the user message's `content`.
+    let onAutoSendPrompt: (_ prompt: String, _ displayLabel: String) -> Void
     /// Kick off the deterministic full-analysis pipeline.
     let onRunFullAnalysis: () -> Void
     /// Run the local-only trim-pauses pipeline (no LLM, no credits).
@@ -72,9 +81,8 @@ struct WorkflowPresetButton: View {
         .background(
             // ⌘⇧2 → Remove filler words
             Button {
-                if let preset = AgentWorkflowPreset.all.first(where: { $0.id == "smart.fillers" }),
-                   case let .seedPrompt(text) = preset.action {
-                    onSeedPrompt(text, false)
+                if let preset = AgentWorkflowPreset.all.first(where: { $0.id == "smart.fillers" }) {
+                    invoke(preset, forceFillComposer: false)
                 }
             } label: { T("Seed filler prompt shortcut") }
             .keyboardShortcut("2", modifiers: [.command, .shift])
@@ -84,9 +92,8 @@ struct WorkflowPresetButton: View {
         .background(
             // ⌘⇧3 → Pick an opening hook
             Button {
-                if let preset = AgentWorkflowPreset.all.first(where: { $0.id == "gen.hook" }),
-                   case let .seedPrompt(text) = preset.action {
-                    onSeedPrompt(text, false)
+                if let preset = AgentWorkflowPreset.all.first(where: { $0.id == "gen.hook" }) {
+                    invoke(preset, forceFillComposer: false)
                 }
             } label: { T("Seed opening hook prompt shortcut") }
             .keyboardShortcut("3", modifiers: [.command, .shift])
@@ -133,7 +140,7 @@ struct WorkflowPresetButton: View {
             HStack(spacing: 6) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 9))
-                T("Click to fill · ⌥+click to send")
+                T("Click to run · ⌥+click to edit first")
                     .font(.system(size: 10))
             }
             .foregroundStyle(EditorShellStyle.textTertiary)
@@ -192,9 +199,16 @@ struct WorkflowPresetButton: View {
     @ViewBuilder
     private func presetRow(_ preset: AgentWorkflowPreset) -> some View {
         let disabled = isFullAnalysis(preset) && (!canStartAnalysis || isAnalyzing)
+        // Single source of truth for plain click. Reading
+        // NSEvent.modifierFlags inside the Button action — instead of
+        // pairing the Button with a `simultaneousGesture`-based
+        // option-click handler — guarantees Option-click resolves to
+        // exactly one route. The previous dual-handler shape would
+        // fire both paths for a single Option-click, which became a
+        // problem once plain click started auto-sending.
         Button {
-            // Plain click = fill composer (or run pipeline for full analysis).
-            invoke(preset, autoSend: false)
+            let optionHeld = NSEvent.modifierFlags.contains(.option)
+            invoke(preset, forceFillComposer: optionHeld)
         } label: {
             rowBody(preset)
                 .opacity(disabled ? 0.4 : 1)
@@ -206,18 +220,16 @@ struct WorkflowPresetButton: View {
                              : L("All clips have already been analyzed"))
               : "")
         .contextMenu {
-            if case .seedPrompt = preset.action {
-                Button { invoke(preset, autoSend: true) } label: { T("Send now") }
+            // Only canned (auto-sending) seedPrompt presets get the
+            // explicit "Edit before sending" item — placeholder
+            // presets already fill the composer on plain click.
+            if case .seedPrompt = preset.action,
+               !preset.requiresInputBeforeSubmit {
+                Button { invoke(preset, forceFillComposer: true) } label: {
+                    T("Edit before sending")
+                }
             }
         }
-        // Option-click triggers autosend for seed prompts. SwiftUI
-        // buttons collapse modifier state, so we catch it via a
-        // simultaneous gesture that reads the current event modifiers.
-        .simultaneousGesture(
-            TapGesture().modifiers(.option).onEnded {
-                invoke(preset, autoSend: true)
-            }
-        )
     }
 
     @ViewBuilder
@@ -264,7 +276,7 @@ struct WorkflowPresetButton: View {
         return false
     }
 
-    private func invoke(_ preset: AgentWorkflowPreset, autoSend: Bool) {
+    private func invoke(_ preset: AgentWorkflowPreset, forceFillComposer: Bool) {
         isPresented = false
         switch preset.action {
         case .runFullAnalysis:
@@ -281,8 +293,20 @@ struct WorkflowPresetButton: View {
             onRunAutoPiP()
         case .openImageGen:
             onOpenImageGen()
-        case .seedPrompt(let text):
-            onSeedPrompt(text, autoSend)
+        case .seedPrompt:
+            // Centralized routing: presetTrigger picks fillComposer
+            // vs autoSend based on `requiresInputBeforeSubmit` and
+            // the `forceFillComposer` flag (Option-click / "Edit
+            // before sending"). Single source of truth so plain
+            // click, ⌘⇧2/⌘⇧3, and the context menu can't drift.
+            switch preset.seedPromptTrigger(forceFillComposer: forceFillComposer) {
+            case .fillComposer(let prompt):
+                onSeedPromptIntoComposer(prompt)
+            case .autoSend(let prompt, let displayLabel):
+                onAutoSendPrompt(prompt, displayLabel)
+            case .none:
+                break
+            }
         }
     }
 }

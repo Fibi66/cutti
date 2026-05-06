@@ -688,6 +688,8 @@
 "Analysis already running" = "Analysis already running";
 "Ask AI or describe an edit…" = "Ask AI or describe an edit…";
 "Click to fill · ⌥+click to send" = "Click to fill · ⌥+click to send";
+"Click to run · ⌥+click to edit first" = "Click to run · ⌥+click to edit first";
+"Edit before sending" = "Edit before sending";
 "Click to open full size · right-click for Save / Show in Finder" = "Click to open full size · right-click for Save / Show in Finder";
 "Click to rename speaker" = "Click to rename speaker";
 "Close" = "Close";
