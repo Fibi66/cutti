@@ -43,6 +43,13 @@
   <string>Cutti uses the camera to record clips you can edit.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Cutti uses the microphone to capture audio for clips and AI voice prompts.</string>
+  <!-- macOS hard-aborts (SIGABRT via TCC) the first time `SFSpeechRecognizer`
+       is used without this key, so it must stay present even though the
+       primary ASR engine is the on-device Qwen3-ASR sidecar — SFSpeech is
+       the fallback path when the sidecar isn't installed (Intel/MAS hosts,
+       or first launch before the model has been downloaded). -->
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Cutti uses Apple's speech recognition to transcribe your video and audio clips when the local Qwen3-ASR sidecar isn't installed. All transcription happens on-device.</string>
 
   <!-- Sparkle auto-update.
        SUFeedURL points at GitHub's "always redirects to the latest
