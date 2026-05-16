@@ -53,8 +53,9 @@ who is driving it. Maintainers hold themselves to the same standard.
   Do not commit real user-recorded video, audio, or transcripts —
   even short clips, even "just for debugging."
 - Do not weaken existing on-device-by-default behaviour (e.g. routing
-  something currently handled by WhisperKit locally to a remote
-  service) without an explicit, deliberate decision.
+  something currently handled by the local Qwen3-ASR sidecar to a
+  remote transcription service) without an explicit, deliberate
+  decision.
 
 ---
 
@@ -122,7 +123,6 @@ explicitly asks for the change:
 - Anything currently `.gitignore`d, including but not limited to:
   - generated `*.xcodeproj` (re-run `xcodegen generate` instead),
   - `macos/CuttiMac/Vendor/*.xcframework/`,
-  - `macos/CuttiMac/Models/` (downloaded model weights),
   - `.build/`, `.build-device/`, `.build-simulator/`, `DerivedData/`.
 
 ## B4. Dependencies

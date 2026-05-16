@@ -35,7 +35,7 @@ Close-to-hot but not strictly per-frame:
 |---|---|---|---|
 | `exportProgress` | 58 | ~10 Hz during export | Only while `isExporting`; progress bar + cancel button. |
 | `analysisProgress` | 54 | ~1–5 Hz during analysis | Only while `isAnalyzing`; analysis sheet. |
-| `whisperModelState` | 78 | ~1–5 Hz during download | Only during first-run model fetch. |
+
 
 ### (B) Per-user-action (click / drag / keystroke cadence)
 
@@ -141,7 +141,7 @@ Reads:
 Reads:
 - `records`, `selectedRecordID`, `importingFiles`, `projectRoot`
 - `isImporting`, `isAnalyzing`, `analysisProgress`, `isExporting`, `exportProgress`, `isCancellingExport`
-- `whisperModelState`, `autosaveStatus`, `bannerMessage`, `pipSuggestions`
+- `autosaveStatus`, `bannerMessage`, `pipSuggestions`
 - `revisions` (history panel)
 
 ### Agent trace / free transform / overlay inspector
@@ -184,7 +184,7 @@ Risk: Attachments need `records` for the chip thumbnails; pass them as a separat
 
 ### 3.4 `EditorPipelineStatusStore` (long-running / async status)
 
-Move: `isImporting`, `importingFiles`, `isAnalyzing`, `analysisProgress`, `isExporting`, `exportProgress`, `isCancellingExport`, `whisperModelState`, `autosaveStatus`, `autoPiPStatus`, `pipSuggestions`, `isGeneratingChapters`, `isLoadingVisualMarkers`, `overlaysRendering`, `bannerMessage`.
+Move: `isImporting`, `importingFiles`, `isAnalyzing`, `analysisProgress`, `isExporting`, `exportProgress`, `isCancellingExport`, `autosaveStatus`, `autoPiPStatus`, `pipSuggestions`, `isGeneratingChapters`, `isLoadingVisualMarkers`, `overlaysRendering`, `bannerMessage`.
 
 Subscribers: top toolbar, status footer, media list overlays, PiP suggestion banner.
 Payoff: the 10 Hz `exportProgress` stream during render no longer re-evaluates `ContentView.body` — only the toolbar/progress sheet subtree re-renders.

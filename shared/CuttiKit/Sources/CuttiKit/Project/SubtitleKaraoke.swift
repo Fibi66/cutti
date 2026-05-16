@@ -9,12 +9,12 @@ import Foundation
 /// re-keys into composed-timeline absolute time at compose time.
 ///
 /// The `text` slice carries the exact UTF-16 substring the timing
-/// refers to (as emitted by Whisper / Apple Speech). Karaoke rendering
-/// uses the cumulative position of these slices to locate the word's
-/// UTF-16 range in the cue's plain text — no fuzzy matching, because
-/// the slices are guaranteed by construction to concatenate to the
-/// cue text (minus trimmed leading whitespace inserted by Whisper,
-/// which the composer tolerates).
+/// refers to (as emitted by the active ASR backend — Qwen3-ASR or
+/// Apple Speech). Karaoke rendering uses the cumulative position of
+/// these slices to locate the word's UTF-16 range in the cue's plain
+/// text — no fuzzy matching, because the slices are guaranteed by
+/// construction to concatenate to the cue text (minus trimmed leading
+/// whitespace inserted by the ASR, which the composer tolerates).
 public struct WordTiming: Codable, Equatable, Hashable, Sendable {
     /// The word / token text as emitted by the transcriber. May carry
     /// leading whitespace (e.g. " hello") — the composer handles both.
@@ -95,7 +95,7 @@ public struct SubtitleKaraokeComposer {
     ///     the last, or in a gap between words)
     ///
     /// The range is computed by accumulating UTF-16 lengths of each
-    /// timing's `text` in order. We tolerate Whisper's habit of
+    /// timing's `text` in order. We tolerate the ASR's habit of
     /// emitting a leading space on subsequent words (" hello") by
     /// trimming the leading whitespace from the range (the space is
     /// counted in the cursor so offsets stay aligned, but the
@@ -119,7 +119,7 @@ public struct SubtitleKaraokeComposer {
             let sliceLen = slice.length
             guard sliceLen > 0 else { continue }
 
-            // Find where this slice starts in the cue text. Whisper
+            // Find where this slice starts in the cue text. The ASR
             // can emit leading whitespace on tokens (" hello"); the
             // concatenation should still match when we walk cursor by
             // the raw slice length. If the cursor-relative slice

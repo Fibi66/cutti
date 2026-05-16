@@ -111,7 +111,9 @@ public struct AICopilotSnapshot: Codable, Equatable, Sendable {
     public var keptAlternativesPerRange: [[AlternativeTake]]?
     /// Sentence-level transcript (resegmented from words).
     public var transcript: [TranscriptSegment]?
-    /// Raw word-level transcript with accurate start/end times (from Whisper).
+    /// Raw word-level transcript with accurate start/end times (from
+    /// the active ASR backend — Qwen3-ASR's forced aligner when
+    /// available, otherwise Apple Speech's word timings).
     /// Used by the editing Agent for precise intent-based operations.
     public var wordTranscript: [TranscriptSegment]?
     public var editLog: String?
@@ -699,11 +701,11 @@ public struct SubtitleEntry: Identifiable, Equatable, Sendable {
     /// Per-word timestamps for karaoke-mode rendering. Times are
     /// **entry-relative** (seconds from `relativeStart`). Nil means
     /// "no word timing available" — typically true for cues authored
-    /// before WhisperKit word-timestamp wiring, or for manually-edited
+    /// before word-timestamp wiring landed, or for manually-edited
     /// cues whose text no longer matches the original audio window.
     /// When present, the cumulative UTF-16 lengths of each timing's
     /// `text` should align with positions in `text`; the karaoke
-    /// composer tolerates Whisper's leading-whitespace habit but will
+    /// composer tolerates the ASR's leading-whitespace habit but will
     /// skip timings whose text can't be located.
     public var wordTimings: [WordTiming]? = nil
     /// Per-cue visual override layered on top of the project-wide

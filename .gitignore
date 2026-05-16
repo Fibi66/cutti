@@ -32,6 +32,3 @@ xcuserdata/
 Thumbs.db
 local_storage/
 node_modules/
-
-# Whisper model weights (downloaded by user, ~1.5GB)
-macos/CuttiMac/Models/

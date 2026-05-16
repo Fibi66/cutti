@@ -16,16 +16,22 @@ suggestions.
 
 ## Minimum requirements (macOS)
 
-To run the local AI features (Whisper transcription, speaker diarization,
-on-device scene analysis):
+To run the local AI features (Qwen3-ASR transcription, speaker
+diarization, on-device scene analysis):
 
 - **Apple Silicon Mac** (M1 or later) — Intel / Rosetta is not supported
 - **macOS 14** Sonoma or later
-- **8 GB RAM** (16 GB recommended)
-- **~2 GB free disk** for downloaded model weights (Whisper ~1.5 GB,
-  sherpa-onnx ~47 MB)
-- Internet connection on first launch to download model weights; offline
-  afterwards
+- **16 GB RAM** recommended (Qwen3-ASR runs on the Apple Silicon GPU
+  via MPS; 8 GB works but leaves little headroom alongside the editor)
+- **~8 GB free disk** for the local ASR sidecar: a private Python
+  runtime + venv (~2 GB, torch / transformers / etc.), the
+  `Qwen/Qwen3-ASR-1.7B` weights (~3.5 GB), the
+  `Qwen/Qwen3-ForcedAligner-0.6B` weights (~1.2 GB), plus the
+  sherpa-onnx diarization model (~47 MB)
+- Internet connection on first launch to download the sidecar and
+  model weights; offline afterwards. If the sidecar isn't installed
+  (e.g. you skipped the prompt), cutti falls back to Apple's built-in
+  `SFSpeech` recognizer for transcription.
 
 ## Setup
 
@@ -44,9 +50,13 @@ swift run
 
 On first build, SwiftPM auto-downloads the vendored `sherpa-onnx` and
 `onnxruntime` xcframeworks (~45 MB total) from this repo's GitHub
-release into the SwiftPM cache. WhisperKit model weights (~1.5 GB) are
-downloaded automatically on first **launch** into
-`macos/CuttiMac/Models/` (gitignored).
+release into the SwiftPM cache. The Qwen3-ASR sidecar (private Python
+runtime + model weights, ~7 GB) is **not** fetched at build time —
+it's installed on demand from the in-app prompt the first time you
+transcribe, into `~/Library/Application Support/cutti/qwen-asr/`
+(runtime + venv) and `~/Library/Caches/cutti/qwen-asr/huggingface/`
+(model weights). Both directories are removed when you uninstall
+the sidecar from Settings.
 
 ### 2. Build iOS (contributors only — UI is incomplete)
 

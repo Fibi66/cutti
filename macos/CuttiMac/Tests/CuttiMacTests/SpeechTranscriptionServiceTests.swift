@@ -108,7 +108,7 @@ final class SpeechTranscriptionServiceTests: XCTestCase {
     // here ensures the helpers stay correct as the surrounding
     // pipeline evolves.
 
-    func test_cleanTranscriptText_removesWhisperStyleControlTokens() {
+    func test_cleanTranscriptText_removesAsrControlTokens() {
         let raw = "<|startoftranscript|><|zh|><|transcribe|><|0.00|>反问面试官问题呢<|6.96|> <|6.96|>也是面试环节中的很大一个<|9.48|>"
 
         let cleaned = SpeechTranscriptionService.cleanTranscriptText(raw)
