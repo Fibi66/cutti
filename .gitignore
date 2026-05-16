@@ -32,3 +32,5 @@ xcuserdata/
 Thumbs.db
 local_storage/
 node_modules/
+# Local SwiftPM artifact cache (resolved binary xcframeworks)
+macos/CuttiMac/Vendor/
