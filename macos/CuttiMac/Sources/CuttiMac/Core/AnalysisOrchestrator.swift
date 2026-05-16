@@ -34,6 +34,14 @@ struct AnalysisOrchestrator: Sendable {
         let durSec = analysis.durationSeconds
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64) ?? -1
         print("⏱️  analyze() start  file=\(sourceURL.lastPathComponent) duration=\(String(format: "%.1f", durSec))s size=\(fileSize) bytes")
+        // [diag-2026-05-16] Dump caller stack so we can tell which UI
+        // path triggered the analyze (one-click first cut vs
+        // transcribeForDiarization vs analyzeAllRecords vs an LLM tool
+        // call). We're chasing a bug where Apple Speech text appears
+        // mid-flight — need to confirm whether a second analyze() was
+        // kicked off without the timeline appearing to change.
+        let callerStack = Thread.callStackSymbols.dropFirst().prefix(12).joined(separator: "\n     ")
+        print("⏱️  analyze() callerStack:\n     \(callerStack)")
 
         // Run all three analyses concurrently. Each task is wrapped in
         // its own wall-clock measurement so the log shows where time

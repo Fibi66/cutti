@@ -9562,6 +9562,16 @@ final class MediaCoreViewModel: ObservableObject {
     private func updateAnalysisChatBubble(_ progress: AnalysisProgress) {
         guard analysisChatActive else { return }
 
+        // [diag-2026-05-16] Whenever an "Apple Speech" string flows
+        // into the chat bubble, dump the source — we're chasing a bug
+        // where this appears mid-flight while the Qwen sidecar is
+        // still healthy. Catches the path regardless of which view-
+        // model entry point produced the progress event.
+        if progress.detail.contains("Apple Speech") {
+            let stack = Thread.callStackSymbols.dropFirst().prefix(20).joined(separator: "\n     ")
+            print("💬 [chat.bubble.APPLE_SPEECH] phase=\(progress.phase) detail=\(progress.detail) STACK:\n     \(stack)")
+        }
+
         let (label, kickoffIcon) = Self.phaseLabelAndIcon(for: progress.phase)
         let detail = progress.detail.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -9709,6 +9719,16 @@ final class MediaCoreViewModel: ObservableObject {
             resolveStaleWorkingLines(persist: persist)
         }
 
+        // [diag-2026-05-16] Same diagnostic as mutateAssistantBubble —
+        // catch any *newly-appended* bubble that contains "Apple
+        // Speech" so we know whether the mid-flight surprise comes
+        // from a fresh append (different sub-bug) or an in-place
+        // rewrite of an existing transcribe bubble.
+        if content.contains("Apple Speech") {
+            let stack = Thread.callStackSymbols.dropFirst().prefix(20).joined(separator: "\n     ")
+            print("💬 [bubble.append.APPLE_SPEECH] content=\(content) STACK:\n     \(stack)")
+        }
+
         let msg = EditorChatMessage(
             role: .assistant,
             content: content,
@@ -9737,6 +9757,15 @@ final class MediaCoreViewModel: ObservableObject {
         tone: EditorChatMessage.IconTone?
     ) {
         guard let idx = chatMessages.firstIndex(where: { $0.id == id }) else { return }
+        // [diag-2026-05-16] If a bubble ever gets rewritten to contain
+        // "Apple Speech" text, log the source — this is the lowest-
+        // level mutation point, so catching it here means we see
+        // EVERY path that produces this string (including paths that
+        // bypass updateAnalysisChatBubble entirely).
+        if let content, content.contains("Apple Speech") {
+            let stack = Thread.callStackSymbols.dropFirst().prefix(20).joined(separator: "\n     ")
+            print("💬 [bubble.mutate.APPLE_SPEECH] id=\(id) content=\(content) STACK:\n     \(stack)")
+        }
         if let content { chatMessages[idx].content = content }
         if let icon { chatMessages[idx].iconSystemName = icon }
         if let tone { chatMessages[idx].iconTone = tone }

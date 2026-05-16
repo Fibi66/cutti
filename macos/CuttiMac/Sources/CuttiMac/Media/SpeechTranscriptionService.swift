@@ -54,15 +54,38 @@ struct SpeechTranscriptionService: Sendable {
         var lastError: Error?
         var didFallBackFromQwen = false
 
+        // [diag-2026-05-16] Tag every transcribe call with a short ID
+        // so we can correlate progress emissions / backend-switch logs
+        // with the originating call, and dump a Swift backtrace of who
+        // called us. We're chasing a bug where the chat bubble flips
+        // to "Transcribing with Apple Speech…" mid-flight while the
+        // Qwen sidecar is still healthy — need to confirm whether a
+        // second transcribe() call is firing or whether the bubble
+        // text is mutated through some other code path.
+        let callID = String(UUID().uuidString.prefix(8))
+        let callerStack = Thread.callStackSymbols.dropFirst().prefix(8).joined(separator: "\n     ")
+        print("🎙️ [SST.enter] callID=\(callID) url=\(url.lastPathComponent) chain=[\(profile.backendChain.map { String(describing: $0) }.joined(separator: ","))]")
+        print("🎙️ [SST.enter] callID=\(callID) callerStack:\n     \(callerStack)")
+
+        // Wrap onProgress so we see the exact strings emitted up to
+        // the UI, in the same order they were produced.
+        let underlyingOnProgress = onProgress
+        let wrappedOnProgress: (@Sendable (String) -> Void)? = underlyingOnProgress == nil ? nil : { @Sendable msg in
+            print("🎙️ [SST.progress] callID=\(callID) msg=\(msg)")
+            underlyingOnProgress?(msg)
+        }
+
         let chain = profile.backendChain
         for (index, backend) in chain.enumerated() {
+            print("🎙️ [SST.try] callID=\(callID) step=\(index + 1)/\(chain.count) backend=\(backend)")
             do {
                 let result = try await transcribe(
                     url: url,
                     with: backend,
                     profile: profile,
-                    onProgress: onProgress
+                    onProgress: wrappedOnProgress
                 )
+                print("🎙️ [SST.result] callID=\(callID) backend=\(backend) display=\(result.displaySegments.count) words=\(result.wordSegments.count)")
                 if !result.displaySegments.isEmpty || !result.wordSegments.isEmpty {
                     if didFallBackFromQwen, backend == .appleSpeech {
                         // The user asked for the higher-quality local
@@ -100,6 +123,15 @@ struct SpeechTranscriptionService: Sendable {
     ) async throws -> Result {
         switch backend {
         case .appleSpeech:
+            // [diag-2026-05-16] If we EVER hit this branch, dump a
+            // full backtrace. The user reported the chat bubble
+            // flipping to "Transcribing with Apple Speech…" mid-flight
+            // without Qwen actually failing — this stack will tell us
+            // who called transcribe() with .appleSpeech (either a
+            // direct call, or a fallthrough from the chain loop after
+            // a Qwen .noResult / throw).
+            let stack = Thread.callStackSymbols.prefix(25).joined(separator: "\n     ")
+            print("🎙️ [SST.appleSpeech.DISPATCH] url=\(url.lastPathComponent) STACK:\n     \(stack)")
             onProgress?(L("Transcribing with Apple Speech…"))
             let segments = try await transcribeWithSFSpeech(url: url, locale: profile.locale)
             return Result(displaySegments: segments, wordSegments: segments)
