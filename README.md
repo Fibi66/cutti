@@ -91,6 +91,35 @@ cd shared/CuttiKit
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
+## Known issues / future improvements
+
+These are known limitations that we intend to fix in future releases.
+None of them block normal use — they just mean some workflows are
+rougher than they should be:
+
+- **One-click first cut can't be paused or resumed.** Once the
+  pipeline starts (transcribe → scene analysis → audio quality → LLM
+  edit), the only way to stop it is to quit the app or wait it out.
+  Re-opening the project re-runs the analysis from scratch instead of
+  picking up where it left off.
+- **No mid-flight cancel for transcription.** A long clip (e.g. a
+  24-minute lecture) can take 10–15 minutes to transcribe locally with
+  Qwen3-ASR. Closing the analysis chat panel doesn't actually cancel
+  the in-flight request; the sidecar keeps working until it finishes.
+- **No background / "headless" analysis.** Closing the app stops the
+  local sidecar, which means transcribing a long clip requires
+  keeping the app in the foreground for the full duration.
+- **No per-segment re-analysis.** If a single clip's auto-cut comes
+  out wrong, you have to re-run the analysis on the whole project,
+  not just that clip.
+- **Limited language coverage for the local model.** Qwen3-ASR
+  currently ships with Chinese, Cantonese, and English aligners.
+  Other languages fall back to Apple Speech and won't get per-word
+  timing.
+
+If you hit something else that feels broken or missing, please open
+an issue at <https://github.com/Fibi66/cutti/issues>.
+
 ## License
 
 [AGPL-3.0](LICENSE).
