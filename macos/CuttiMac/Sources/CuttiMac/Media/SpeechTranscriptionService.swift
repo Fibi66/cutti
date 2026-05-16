@@ -225,12 +225,19 @@ struct SpeechTranscriptionService: Sendable {
                     let stageLabel = Self.humanizeAsrStage(snap.stage)
                     let line: String
                     if snap.chunkTotal > 0 {
-                        // Chunk progress is self-explanatory and the
-                        // analysis bubble's label already says
-                        // "Transcribing speech" — no need to repeat a
-                        // model/stage name here.
-                        line = String(format: L("chunk %d/%d (%@ elapsed)"),
-                                      snap.chunkIndex, snap.chunkTotal, elapsedStr)
+                        // After ASR finishes its 8/8 chunks the forced
+                        // aligner kicks in with its OWN chunk loop
+                        // (often "0/1" → "1/1"). Without a stage-aware
+                        // prefix the UI looks like "片段 8/8" → "片段
+                        // 0/1" which reads as the progress regressing.
+                        // Use the human-readable stage label as the
+                        // prefix when one exists; fall back to the
+                        // generic "chunk" word for the ASR phase
+                        // (whose humanize maps to empty string by
+                        // design).
+                        let prefix = stageLabel.isEmpty ? L("chunk") : stageLabel
+                        line = String(format: L("%@ %d/%d (%@ elapsed)"),
+                                      prefix, snap.chunkIndex, snap.chunkTotal, elapsedStr)
                     } else if stageLabel.isEmpty {
                         line = "(\(elapsedStr) " + L("elapsed") + ")"
                     } else {

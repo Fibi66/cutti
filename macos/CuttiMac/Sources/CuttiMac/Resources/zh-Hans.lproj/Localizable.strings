@@ -155,6 +155,8 @@
 "Finalising transcript" = "整理字幕";
 "Transcription error" = "转写出错";
 "chunk %d/%d (%@ elapsed)" = "片段 %1$d/%2$d（已用 %3$@）";
+"chunk" = "片段";
+"%@ %d/%d (%@ elapsed)" = "%1$@ %2$d/%3$d（已用 %4$@）";
 
 /* ContentView — media panel */
 "MEDIA" = "素材";
