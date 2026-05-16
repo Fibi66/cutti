@@ -76,7 +76,6 @@ actor QwenAsrSidecarClient {
         }
 
         let decoded = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-        await QwenAsrSidecarManager.shared.recordActivity()
 
         return Self.mapResponse(decoded)
     }

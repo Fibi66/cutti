@@ -54,9 +54,6 @@ final class QwenAsrSidecarManager: ObservableObject {
     private var startTask: Task<Void, Error>?
     private var installTask: Task<Void, Never>?
 
-    private var lastUsedAt: Date = .distantPast
-    private var idleTimer: Timer?
-
     private var consecutiveBootFailures: Int = 0
     private var willTerminateObserver: NSObjectProtocol?
 
@@ -276,8 +273,6 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// reap the python child before the user's session goes away.
     func stopSynchronously() {
         print("🎤 qwen-asr: stopSynchronously() called (state=\(describe(runState)), pid=\(process?.processIdentifier.description ?? "nil")).")
-        idleTimer?.invalidate()
-        idleTimer = nil
         // Also terminate any in-flight installer subprocess (pip,
         // huggingface-cli, tar, venv) so we don't leave a multi-GB
         // download running orphaned after the user clicks Quit.
@@ -302,8 +297,6 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// server" UI button.
     func stop() async {
         print("🎤 qwen-asr: stop() called (state=\(describe(runState)), pid=\(process?.processIdentifier.description ?? "nil")).")
-        idleTimer?.invalidate()
-        idleTimer = nil
         guard let proc = process else {
             runState = .stopped
             return
@@ -329,13 +322,6 @@ final class QwenAsrSidecarManager: ObservableObject {
         process = nil
         runState = .stopped
         authToken = nil
-    }
-
-    /// Called by the HTTP client on every successful round-trip.
-    /// Resets the idle countdown so an active session keeps the
-    /// sidecar alive.
-    func recordActivity() {
-        lastUsedAt = Date()
     }
 
     // MARK: - Internals
@@ -445,8 +431,6 @@ final class QwenAsrSidecarManager: ObservableObject {
 
         let port = try await waitForBoot(token: token)
         runState = .running(port: port)
-        lastUsedAt = Date()
-        startIdleTimer()
     }
 
     /// Polls `port.txt` for the bound port, then GET / for HTTP 200,
@@ -537,8 +521,6 @@ final class QwenAsrSidecarManager: ObservableObject {
         print("🎤 qwen-asr: handleProcessExit pid=\(pidStr) status=\(status) state-was=\(describe(runState)).")
         process = nil
         authToken = nil
-        idleTimer?.invalidate()
-        idleTimer = nil
         switch runState {
         case .running, .starting:
             // Unexpected exit while we still thought it was up.
@@ -547,20 +529,6 @@ final class QwenAsrSidecarManager: ObservableObject {
             // Already torn down or marked broken — keep the existing
             // state so we don't clobber a more informative error.
             break
-        }
-    }
-
-    private func startIdleTimer() {
-        idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let elapsed = Date().timeIntervalSince(self.lastUsedAt)
-                guard elapsed >= QwenAsrSidecar.idleStop else { return }
-                guard case .running = self.runState else { return }
-                print("🎤 qwen-asr: idle \(Int(elapsed))s, stopping to free memory.")
-                await self.stop()
-            }
         }
     }
 

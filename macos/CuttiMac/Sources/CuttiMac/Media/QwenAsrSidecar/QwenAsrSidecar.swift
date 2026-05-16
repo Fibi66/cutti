@@ -47,13 +47,6 @@ enum QwenAsrSidecar {
         static let alignerRepo = "Qwen/Qwen3-ForcedAligner-0.6B"
     }
 
-    /// Idle window before we tear down the running sidecar to free its
-    /// ~5GB of resident memory. 15 min is short enough that "I forgot
-    /// I had cutti open" doesn't keep RAM hostage, long enough that
-    /// users who go grab coffee between cuts don't pay the 10s reload
-    /// every time. Reset on every successful /transcribe.
-    static let idleStop: TimeInterval = 15 * 60
-
     /// Three consecutive boot failures within a single app session
     /// trip the circuit breaker. The setting is not persisted — a
     /// restart re-enables Qwen so a transient OS issue doesn't lock
