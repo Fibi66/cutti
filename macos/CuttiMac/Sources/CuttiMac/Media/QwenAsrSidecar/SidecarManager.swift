@@ -165,6 +165,15 @@ final class QwenAsrSidecarManager: ObservableObject {
                     m.overallProgress = 1.0
                     if let manifest = QwenAsrSidecarInstaller.loadManifest() {
                         m.installState = .installed(manifest)
+                        // Auto-prewarm right after a fresh install so the
+                        // user's first transcribe doesn't pay the full
+                        // cold-import + model-load tax (which on a fresh
+                        // venv — no .pyc cache, no MPS warmup — can blow
+                        // past the boot deadlines, especially when the
+                        // user immediately kicks off "One-click first
+                        // cut" and scene-analysis ffmpeg is also
+                        // hammering the CPU/disk).
+                        m.prewarmIfReady()
                     } else {
                         m.installState = .failed("Install completed but manifest is missing.")
                     }
@@ -197,7 +206,23 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// / install missing / boot timeout.
     func ensureRunning() async throws -> (port: Int, token: String) {
         if case .running(let port) = runState, let token = authToken {
-            return (port, token)
+            // Liveness check: the cached `.running` state can be stale if
+            // the python child died and the terminationHandler hasn't
+            // been delivered to the main actor yet (or never fires, e.g.
+            // a deinit-on-quit race). Verify the Process is actually up
+            // before handing out its port; if it's gone, fall through
+            // to a fresh boot so the user doesn't see a confusing
+            // "connection refused" later in the request path.
+            if let proc = process, proc.isRunning {
+                print("🎤 qwen-asr: ensureRunning() → cached running on port \(port) (pid=\(proc.processIdentifier)).")
+                return (port, token)
+            }
+            print("🎤 qwen-asr: ensureRunning() → cached state was .running but process is gone; rebooting.")
+            // Force a re-boot below. handleProcessExit will (eventually)
+            // run on the main actor, but it's idempotent so it's fine.
+            process = nil
+            authToken = nil
+            runState = .failed("Sidecar exited but terminationHandler hadn't fired yet.")
         }
         if case .sessionDisabled = runState {
             throw QwenAsrSidecarError.circuitBreakerOpen
@@ -205,6 +230,7 @@ final class QwenAsrSidecarManager: ObservableObject {
         guard case .installed = installState else {
             throw QwenAsrSidecarError.notInstalled
         }
+        print("🎤 qwen-asr: ensureRunning() → state=\(describe(runState)); booting.")
 
         // Coalesce concurrent ensureRunning() callers onto a single
         // boot attempt — without this, two subtitle-generation jobs
@@ -249,6 +275,7 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// Terminate` (where async suspension isn't available) so we can
     /// reap the python child before the user's session goes away.
     func stopSynchronously() {
+        print("🎤 qwen-asr: stopSynchronously() called (state=\(describe(runState)), pid=\(process?.processIdentifier.description ?? "nil")).")
         idleTimer?.invalidate()
         idleTimer = nil
         // Also terminate any in-flight installer subprocess (pip,
@@ -274,6 +301,7 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// Cooperative async stop. Used by uninstall / explicit "Stop
     /// server" UI button.
     func stop() async {
+        print("🎤 qwen-asr: stop() called (state=\(describe(runState)), pid=\(process?.processIdentifier.description ?? "nil")).")
         idleTimer?.invalidate()
         idleTimer = nil
         guard let proc = process else {
@@ -342,6 +370,16 @@ final class QwenAsrSidecarManager: ObservableObject {
     }
 
     private func boot() async throws {
+        // Refresh bundled sidecar text files (server.py, requirements.txt,
+        // VERSION) from the app bundle on every cold start. The Python
+        // runtime + venv are NOT touched — only the small handful of
+        // editable text files. This lets a fresh Cutti binary ship
+        // an updated server.py (e.g. new progress hooks) without
+        // forcing the user through the full ~370 MB reinstall flow,
+        // since the existing venv is still binary-compatible with
+        // the new script as long as the schema version is unchanged.
+        try? QwenAsrSidecarInstaller.refreshBundledSidecarScripts()
+
         // Fresh token per launch — we never reuse the value across
         // process lifetimes, so a leaked auth-token.txt from a
         // previous run can't be used to talk to the new server.
@@ -421,7 +459,15 @@ final class QwenAsrSidecarManager: ObservableObject {
     /// margin without making genuine failures painful.
     private func waitForBoot(token: String) async throws -> Int {
         let bootStart = Date()
-        let portDeadline = bootStart.addingTimeInterval(30)
+        // 90s rather than 30s: a freshly-installed venv has no `.pyc`
+        // cache so the first run pays the full ``compileall`` cost,
+        // and on the same launch we're often racing scene-analysis
+        // ffmpeg + audio-extract for CPU. A 30s budget proved too
+        // tight in the wild — cold imports of torch + qwen_asr alone
+        // can hit 25s on contended hardware before the bind even
+        // happens. We bias toward letting the local model win over
+        // an aggressive fallback to Apple Speech.
+        let portDeadline = bootStart.addingTimeInterval(90)
         var port: Int?
         while Date() < portDeadline {
             // Fail fast if the child has already exited — otherwise
@@ -487,6 +533,8 @@ final class QwenAsrSidecarManager: ObservableObject {
 
     private func handleProcessExit(status: Int32) {
         // Could be triggered by stop() (expected) or a crash.
+        let pidStr = process?.processIdentifier.description ?? "nil"
+        print("🎤 qwen-asr: handleProcessExit pid=\(pidStr) status=\(status) state-was=\(describe(runState)).")
         process = nil
         authToken = nil
         idleTimer?.invalidate()
@@ -513,6 +561,19 @@ final class QwenAsrSidecarManager: ObservableObject {
                 print("🎤 qwen-asr: idle \(Int(elapsed))s, stopping to free memory.")
                 await self.stop()
             }
+        }
+    }
+
+    /// Human-readable RunState for diagnostic logging. Keeps the
+    /// printable form in one place so adding cases to the enum doesn't
+    /// require fixing N call sites.
+    private func describe(_ state: RunState) -> String {
+        switch state {
+        case .stopped: return ".stopped"
+        case .starting: return ".starting"
+        case .running(let port): return ".running(port=\(port))"
+        case .failed(let msg): return ".failed(\(msg))"
+        case .sessionDisabled: return ".sessionDisabled"
         }
     }
 

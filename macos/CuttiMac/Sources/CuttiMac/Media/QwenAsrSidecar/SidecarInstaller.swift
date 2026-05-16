@@ -106,6 +106,26 @@ struct QwenAsrSidecarInstaller {
         try copyOverwrite(from: bundledVersion, to: QwenAsrSidecar.versionFile)
     }
 
+    /// Refresh just the small bundled text files (server.py,
+    /// requirements.txt, VERSION) from the app bundle, leaving the
+    /// Python runtime and venv untouched. Called from the manager's
+    /// `boot()` on every cold start so a new Cutti binary can ship
+    /// an updated server.py without forcing a full reinstall. Safe
+    /// no-op when the install dir is missing (the caller will pick
+    /// that up via `isInstallUpToDate`).
+    static func refreshBundledSidecarScripts() throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: QwenAsrSidecar.installRoot.path) else { return }
+        guard let bundledServer = QwenAsrSidecar.bundledServerPy else { return }
+        if let installed = try? Data(contentsOf: QwenAsrSidecar.serverPy),
+           let bundled = try? Data(contentsOf: bundledServer),
+           installed == bundled {
+            return
+        }
+        try copyOverwrite(from: bundledServer, to: QwenAsrSidecar.serverPy)
+        print("🎤 qwen-asr: refreshed server.py from app bundle")
+    }
+
     static func downloadPythonTarball(progress: @Sendable @escaping (Double) -> Void) async throws -> URL {
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("cutti-qwen-py-\(UUID().uuidString)", isDirectory: true)

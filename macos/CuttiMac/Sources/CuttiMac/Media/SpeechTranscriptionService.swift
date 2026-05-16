@@ -69,7 +69,7 @@ struct SpeechTranscriptionService: Sendable {
                         // engine, didn't get it, and now sees Apple
                         // Speech output. Surface that explicitly so
                         // the perceived quality drop isn't silent.
-                        onProgress?(L("Qwen3-ASR was unavailable — used Apple Speech for this clip."))
+                        onProgress?(L("Local speech model was unavailable — used Apple Speech for this clip."))
                     }
                     return result
                 }
@@ -104,7 +104,7 @@ struct SpeechTranscriptionService: Sendable {
             let segments = try await transcribeWithSFSpeech(url: url, locale: profile.locale)
             return Result(displaySegments: segments, wordSegments: segments)
         case .qwenAsrSidecar:
-            onProgress?(L("Transcribing with Qwen3-ASR (local)…"))
+            onProgress?(L("Transcribing locally…"))
             return try await transcribeWithQwenAsrSidecar(
                 url: url,
                 profile: profile,
@@ -140,13 +140,85 @@ struct SpeechTranscriptionService: Sendable {
             qwenLanguage = nil
         }
 
-        onProgress?(L("Loading Qwen3-ASR model (first run takes ~10s)…"))
+        // Pre-extract the audio track to a small 16 kHz mono WAV
+        // before handing it to the sidecar. The sidecar's
+        // `librosa.load` path uses libsndfile via PySoundFile when
+        // the container is supported and falls back to a
+        // single-threaded `audioread` decode pipeline otherwise.
+        // For video containers (`.mov`, `.mp4`, `.mkv`) the fallback
+        // hits, and on multi-GB sources it dominates runtime —
+        // observed in the wild: a 51 GB / 24 min .mov proxy spent
+        // ~10+ minutes inside librosa before the model ever ran.
+        //
+        // AVAssetReader decodes only the audio track, with
+        // hardware-accelerated AAC / Apple Lossless / ALAC / etc.
+        // decoders, into a ~46 MB WAV that PySoundFile reads natively.
+        // For users on Intel / MAS hosts who don't have the sidecar,
+        // this path is bypassed entirely (SpeechRecognitionService
+        // routes to SFSpeech instead).
+        let extractT0 = Date()
+        let extractedURL: URL
+        do {
+            onProgress?(L("Extracting audio for transcription…"))
+            extractedURL = try await AudioExtraction.extractMono16kWav(from: url)
+            print("⏱️  [transcribe.extract] done in \(String(format: "%.2f", Date().timeIntervalSince(extractT0)))s → \(extractedURL.lastPathComponent)")
+        } catch {
+            print("⏱️  [transcribe.extract] FAILED: \(error.localizedDescription) — falling back to handing the source path to the sidecar (slow librosa fallback expected)")
+            extractedURL = url
+        }
+        defer {
+            if extractedURL != url {
+                try? FileManager.default.removeItem(at: extractedURL)
+            }
+        }
+
+        onProgress?(L("Loading speech model (first run takes ~10s)…"))
+        let asrT0 = Date()
+
+        // Spin up a poller that asks the sidecar what stage it's
+        // in every couple of seconds while the (blocking) transcribe
+        // HTTP call is in flight. Without this the chat panel sees
+        // exactly one event ("Loading speech model…") for the
+        // entire 5–15 minute inference on a long file — the user
+        // can't tell whether the app is alive, let alone which
+        // chunk is being processed.
+        let progressTask = Task { @Sendable in
+            // Initial small delay so quick (≤2s) transcribes don't
+            // flicker an extra status line into the chat.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            while !Task.isCancelled {
+                if let snap = await QwenAsrSidecarClient.shared.fetchProgress() {
+                    let elapsed = Date().timeIntervalSince(asrT0)
+                    let elapsedStr = Self.formatTranscribeElapsed(elapsed)
+                    let stageLabel = Self.humanizeAsrStage(snap.stage)
+                    let line: String
+                    if snap.chunkTotal > 0 {
+                        // Chunk progress is self-explanatory and the
+                        // analysis bubble's label already says
+                        // "Transcribing speech" — no need to repeat a
+                        // model/stage name here.
+                        line = String(format: L("chunk %d/%d (%@ elapsed)"),
+                                      snap.chunkIndex, snap.chunkTotal, elapsedStr)
+                    } else if stageLabel.isEmpty {
+                        line = "(\(elapsedStr) " + L("elapsed") + ")"
+                    } else {
+                        line = "\(stageLabel) (\(elapsedStr) " + L("elapsed") + ")"
+                    }
+                    onProgress?(line)
+                    print("⏱️  [transcribe.asr.progress] \(line)")
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+        defer { progressTask.cancel() }
+
         let response = try await QwenAsrSidecarClient.shared.transcribe(
-            audioPath: url.path,
+            audioPath: extractedURL.path,
             language: qwenLanguage,
             context: nil
         )
-        onProgress?(L("Transcribing with Qwen3-ASR (local)…"))
+        progressTask.cancel()
+        print("⏱️  [transcribe.asr] sidecar call done in \(String(format: "%.2f", Date().timeIntervalSince(asrT0)))s")
 
         print("🎤 Qwen3-ASR: display=\(response.displaySegments.count) timing=\(response.wordSegments.count) rtf=\(response.realTimeFactor.map { String(format: "%.3f", $0) } ?? "?")")
         if let first = response.wordSegments.first {
@@ -494,6 +566,38 @@ struct SpeechTranscriptionService: Sendable {
             return true
         default:
             return false
+        }
+    }
+
+    /// Render an elapsed-time interval as a compact `"42s"` / `"2m 14s"`
+    /// string for the chat panel's per-chunk progress line.
+    fileprivate static func formatTranscribeElapsed(_ seconds: TimeInterval) -> String {
+        if seconds < 60 {
+            return String(format: "%.0fs", seconds)
+        }
+        let minutes = Int(seconds) / 60
+        let remainder = Int(seconds) % 60
+        return "\(minutes)m \(remainder)s"
+    }
+
+    /// Map the sidecar's internal stage tag (e.g. `"asr.inference"`,
+    /// `"align.inference"`, `"load_audio"`) into a user-friendly
+    /// label that fits the existing analysis-chat tone. We
+    /// deliberately avoid leaking model/process names like
+    /// "Qwen3-ASR" or "sidecar" — end users don't care which model
+    /// or subprocess is doing the work, only what step the app is
+    /// on. The asr.inference stage returns an empty label because
+    /// its chunk count (e.g. "chunk 7/41") already conveys progress
+    /// without needing a redundant prefix.
+    fileprivate static func humanizeAsrStage(_ stage: String) -> String {
+        switch stage {
+        case "idle":            return L("Preparing transcription…")
+        case "load_audio":      return L("Loading audio")
+        case "asr.inference":   return ""
+        case "align.inference": return L("Aligning timestamps")
+        case "serializing":     return L("Finalising transcript")
+        case "failed":          return L("Transcription error")
+        default:                return L("Transcribing") + " (\(stage))"
         }
     }
 }

@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -97,10 +98,92 @@ def _load() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _load()
+    _install_progress_hooks()
     yield
 
 
 app = FastAPI(title="qwen-asr-sidecar", lifespan=lifespan)
+
+
+# Tracks the most recent /transcribe call's stage so a parallel
+# /progress poller (Swift parent) can read it without depending on
+# stderr scraping. Keyed by request id (we only run one at a time
+# given max_inference_batch_size=1, but a key keeps state cleanable).
+_progress_state: dict = {
+    "stage": "idle",
+    "chunk_index": 0,
+    "chunk_total": 0,
+    "started_at": 0.0,
+}
+
+
+def _set_stage(stage: str, *, chunk_index: int = 0, chunk_total: int = 0) -> None:
+    """Update the shared progress snapshot AND mirror it to stderr so
+    the parent process sees it in real time (parent pipes our stderr
+    into its own log)."""
+    _progress_state["stage"] = stage
+    _progress_state["chunk_index"] = chunk_index
+    _progress_state["chunk_total"] = chunk_total
+    suffix = f" ({chunk_index}/{chunk_total})" if chunk_total > 0 else ""
+    print(f"🎤 [asr.stage] {stage}{suffix}", file=sys.stderr, flush=True)
+
+
+def _install_progress_hooks() -> None:
+    """Monkey-patch the model's chunk-level inference + aligner so we
+    can emit per-chunk progress. The library exposes a single
+    `transcribe` entry point that processes 30s chunks one at a time
+    (because we set `max_inference_batch_size=1`) but has no built-in
+    callback — without this hook, a 24-minute audio clip = 1 silent
+    10-minute call from the parent's perspective."""
+    state = _state
+    model = state.get("model")
+    if model is None:
+        return
+
+    # ASR chunk inference: each call processes one 30s chunk on
+    # transformers backend because batch_size=1.
+    if hasattr(model, "_infer_asr_transformers"):
+        original_infer = model._infer_asr_transformers
+        def logging_infer(contexts, wavs, languages):  # type: ignore[no-redef]
+            n = len(wavs)
+            _set_stage("asr.inference", chunk_index=0, chunk_total=n)
+            outs: list = []
+            for i in range(n):
+                t0 = time.time()
+                out = original_infer([contexts[i]], [wavs[i]], [languages[i]])
+                elapsed = time.time() - t0
+                _set_stage("asr.inference", chunk_index=i + 1, chunk_total=n)
+                print(
+                    f"🎤 [asr.chunk] {i + 1}/{n} done in {elapsed:.1f}s",
+                    file=sys.stderr, flush=True,
+                )
+                outs.extend(out)
+            return outs
+        model._infer_asr_transformers = logging_infer
+
+    # Forced aligner: same idea, one call per chunk under
+    # max_inference_batch_size=1.
+    aligner = getattr(model, "forced_aligner", None)
+    if aligner is not None and hasattr(aligner, "align"):
+        original_align = aligner.align
+        def logging_align(audio, text, language):  # type: ignore[no-redef]
+            n = len(audio)
+            _set_stage("align.inference", chunk_index=0, chunk_total=n)
+            results: list = []
+            for i in range(n):
+                t0 = time.time()
+                r = original_align(
+                    audio=[audio[i]], text=[text[i]], language=[language[i]],
+                )
+                elapsed = time.time() - t0
+                _set_stage("align.inference", chunk_index=i + 1, chunk_total=n)
+                print(
+                    f"🎤 [align.chunk] {i + 1}/{n} done in {elapsed:.1f}s",
+                    file=sys.stderr, flush=True,
+                )
+                results.extend(r)
+            return results
+        aligner.align = logging_align
 
 
 class TranscribeReq(BaseModel):
@@ -167,6 +250,27 @@ def root():
     }
 
 
+@app.get("/progress")
+def progress(authorization: Optional[str] = Header(default=None)):
+    """Return the current /transcribe call's stage snapshot.
+
+    Polled by the Swift parent while the long-running /transcribe
+    call is in flight so the chat panel can show a live status
+    ("ASR chunk 7/41 — 4m 12s elapsed") instead of a frozen spinner.
+    Auth is required to keep the localhost endpoint from leaking
+    stage info to other local processes.
+    """
+    _check_auth(authorization)
+    started_at = _progress_state.get("started_at") or 0.0
+    elapsed = max(0.0, time.time() - started_at) if started_at else 0.0
+    return {
+        "stage": _progress_state.get("stage", "idle"),
+        "chunk_index": _progress_state.get("chunk_index", 0),
+        "chunk_total": _progress_state.get("chunk_total", 0),
+        "elapsed_sec": round(elapsed, 1),
+    }
+
+
 def _read_version() -> str:
     try:
         return (Path(__file__).parent / "VERSION").read_text().strip()
@@ -192,23 +296,41 @@ def transcribe(req: TranscribeReq, authorization: Optional[str] = Header(default
 
     duration = _probe_duration(str(src))
 
+    _progress_state["started_at"] = time.time()
+    _set_stage("load_audio")
+    print(
+        f"🎤 [transcribe.req] path={src.name} duration={duration:.1f}s want_ts={want_ts}"
+        if duration else
+        f"🎤 [transcribe.req] path={src.name} duration=? want_ts={want_ts}",
+        file=sys.stderr, flush=True,
+    )
+
     t0 = time.time()
     try:
+        # The two heavy stages (`asr.inference` and `align.inference`)
+        # are reported per-chunk by the monkey-patched callbacks
+        # installed in `_install_progress_hooks`. We only need to
+        # mark the wrapping book-end stages here.
         results = model.transcribe(
             audio=str(src),
             language=req.language,
             context=req.context or "",
             return_time_stamps=want_ts,
         )
+        _set_stage("serializing")
     except Exception as e:
+        _set_stage("failed")
         raise HTTPException(status_code=500, detail=f"transcription failed: {type(e).__name__}: {e}")
     elapsed = time.time() - t0
+    print(f"🎤 [transcribe.done] {elapsed:.1f}s", file=sys.stderr, flush=True)
 
     if not results:
+        _set_stage("failed")
         raise HTTPException(status_code=500, detail="empty transcription result")
     r = results[0]
 
     items = _serialize_timestamps(r.time_stamps) if want_ts else []
+    _set_stage("idle")
 
     return {
         "text": r.text,
@@ -222,6 +344,68 @@ def transcribe(req: TranscribeReq, authorization: Optional[str] = Header(default
         "device": DEVICE,
         "dtype": DTYPE_STR,
     }
+
+
+def _install_signal_logger() -> None:
+    """Print a noisy log line on every catchable termination signal.
+
+    Why: when the sidecar shuts down "for no reason" the standard
+    uvicorn ``INFO: Shutting down`` line tells us a clean shutdown
+    happened but not WHO triggered it. By logging the actual signal
+    number we can tell whether it was the Swift parent calling
+    ``proc.terminate()`` (SIGTERM), an interactive Ctrl+C (SIGINT),
+    a sleep/hangup transition (SIGHUP), etc.
+
+    The trick: uvicorn installs its OWN SIGTERM/SIGINT handlers
+    inside ``server.run``. If we just call ``signal.signal`` from
+    here, our handler gets clobbered by uvicorn. So we monkey-patch
+    ``signal.signal`` itself: every subsequent install wraps the
+    target handler in a logger. That way uvicorn's graceful-shutdown
+    handler still runs, and we just get a print line before it.
+    """
+    _real_signal_signal = signal.signal
+    _watched = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT}
+
+    def _wrap(target):  # type: ignore[no-untyped-def]
+        def _log_and_call(signum: int, frame) -> None:  # type: ignore[no-untyped-def]
+            try:
+                name = signal.Signals(signum).name
+            except ValueError:
+                name = f"sig{signum}"
+            ppid = -1
+            try:
+                ppid = os.getppid()
+            except OSError:
+                pass
+            print(
+                f"🎤 [sidecar.signal] received {name} ({signum}); ppid={ppid}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if callable(target):
+                target(signum, frame)
+            elif target == signal.SIG_DFL:
+                _real_signal_signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
+            # SIG_IGN → swallow.
+
+        return _log_and_call
+
+    def _patched_signal(signum, handler):  # type: ignore[no-untyped-def]
+        if signum in _watched and (callable(handler) or handler == signal.SIG_DFL):
+            return _real_signal_signal(signum, _wrap(handler))
+        return _real_signal_signal(signum, handler)
+
+    signal.signal = _patched_signal  # type: ignore[assignment]
+
+    # Install initial wrappers so a signal received before uvicorn
+    # gets to ``run`` is also logged.
+    for s in _watched:
+        try:
+            prev = signal.getsignal(s)
+            _patched_signal(s, prev if callable(prev) else signal.SIG_DFL)
+        except (OSError, ValueError):
+            pass
 
 
 def _bind_free_port() -> tuple[socket.socket, int]:
@@ -289,6 +473,7 @@ def main() -> int:
               file=sys.stderr, flush=True)
         return 65
 
+    _install_signal_logger()
     _start_parent_death_watchdog()
 
     sock, port = _bind_free_port()

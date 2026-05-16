@@ -81,6 +81,46 @@ actor QwenAsrSidecarClient {
         return Self.mapResponse(decoded)
     }
 
+    /// Snapshot of the sidecar's current /transcribe stage. Returned
+    /// by `/progress`; `nil` if the sidecar isn't reachable or the
+    /// poll fails (the caller treats absence as "no update").
+    struct ProgressSnapshot: Sendable, Decodable {
+        let stage: String
+        let chunkIndex: Int
+        let chunkTotal: Int
+        let elapsedSec: Double
+
+        enum CodingKeys: String, CodingKey {
+            case stage
+            case chunkIndex = "chunk_index"
+            case chunkTotal = "chunk_total"
+            case elapsedSec = "elapsed_sec"
+        }
+    }
+
+    /// Poll the sidecar's /progress endpoint for the current
+    /// transcribe-call stage. Returns `nil` on any failure (sidecar
+    /// not running, network error, decode error) so callers can
+    /// treat it as a best-effort hint rather than an authoritative
+    /// state machine.
+    func fetchProgress() async -> ProgressSnapshot? {
+        guard let (port, token) = try? await QwenAsrSidecarManager.shared.ensureRunning() else {
+            return nil
+        }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/progress") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 2.0
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            return try? JSONDecoder().decode(ProgressSnapshot.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - DTOs
 
     struct Result: Sendable {
