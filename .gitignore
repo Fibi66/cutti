@@ -35,9 +35,3 @@ node_modules/
 
 # Whisper model weights (downloaded by user, ~1.5GB)
 macos/CuttiMac/Models/
-
-# Vendored xcframeworks (private-repo mode). When the repo goes public,
-# Package.swift switches to remote `url:` binaryTargets and these lines
-# can be removed.
-macos/CuttiMac/Vendor/sherpa-onnx.xcframework/
-macos/CuttiMac/Vendor/onnxruntime.xcframework/
