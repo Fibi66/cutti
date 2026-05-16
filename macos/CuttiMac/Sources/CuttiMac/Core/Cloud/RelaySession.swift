@@ -523,11 +523,36 @@ enum RelaySessionError: LocalizedError {
             return s
         case .network:
             return L("Network error. Please check your connection and try again.")
-        case .server:
-            // Don't surface raw HTTP status / upstream body to the
-            // user — those are developer diagnostics.
+        case .server(_, let message):
+            // Auth endpoints (sign-in / sign-up / resend-verification)
+            // return JSON bodies like `{"error":"invalid_credentials"}`
+            // on 4xx. Surface a friendly localised message for known
+            // codes so the user sees "邮箱或密码不正确。" instead of
+            // the generic "服务不可用" fallback when they mistype a
+            // password. Unknown codes / 5xx still get the generic
+            // message — we never leak the raw body or HTTP status.
+            if let mapped = Self.mapKnownErrorCode(in: message) {
+                return mapped
+            }
             return L("Cutti is temporarily unavailable. Please try again in a moment.")
         }
+    }
+
+    /// Substring-matches the raw response body for known relay error
+    /// codes and returns the localised user-facing message. Returns
+    /// `nil` for unknown / non-auth bodies so the caller falls through
+    /// to the generic "temporarily unavailable" message.
+    private static func mapKnownErrorCode(in body: String) -> String? {
+        if body.contains("invalid_credentials") {
+            return L("Email or password is incorrect.")
+        }
+        if body.contains("invalid_email") {
+            return L("Please enter a valid email address.")
+        }
+        if body.contains("invalid_request") {
+            return L("Email and password are required.")
+        }
+        return nil
     }
 }
 
