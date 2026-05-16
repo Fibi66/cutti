@@ -143,9 +143,18 @@
 "Retry" = "重试";
 "Skip for Now" = "暂时跳过";
 "Qwen3-ASR was unavailable — used Apple Speech for this clip." = "Qwen3-ASR 暂不可用 — 本次转写已切换为 Apple Speech。";
+"Local speech model was unavailable — used Apple Speech for this clip." = "本地语音模型暂不可用 — 本次已切换为 Apple Speech。";
 "Transcribing with Apple Speech…" = "正在用 Apple Speech 转写…";
 "Transcribing with Qwen3-ASR (local)…" = "正在用本地 Qwen3-ASR 转写…";
+"Transcribing locally…" = "正在本地转写…";
 "Loading Qwen3-ASR model (first run takes ~10s)…" = "正在加载 Qwen3-ASR 模型（首次运行约 10 秒）…";
+"Loading speech model (first run takes ~10s)…" = "正在加载语音模型（首次运行约 10 秒）…";
+"Preparing transcription…" = "正在准备转写…";
+"Loading audio" = "加载音频";
+"Aligning timestamps" = "对齐时间戳";
+"Finalising transcript" = "整理字幕";
+"Transcription error" = "转写出错";
+"chunk %d/%d (%@ elapsed)" = "片段 %1$d/%2$d（已用 %3$@）";
 
 /* ContentView — media panel */
 "MEDIA" = "素材";
@@ -779,6 +788,8 @@
 "Analyzing audio" = "分析音频";
 "Asking AI to plan cuts" = "AI 正在规划剪辑";
 "Local analysis complete" = "本地分析完成";
+"⏳ This step's duration depends on the video's length and quality." = "⏳ 这一步所需的时间和视频的时长、画质有关。";
+"⏳ This step's duration depends on the video's length." = "⏳ 这一步所需的时间和视频的时长有关。";
 "Identifying speakers" = "识别说话人";
 "Downloading speaker model…" = "正在下载说话人识别模型…";
 "Analysis failed" = "分析失败";

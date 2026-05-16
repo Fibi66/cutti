@@ -20,6 +20,7 @@ struct FullAnalysisPipeline: AnalysisPipelineProtocol {
         analysis: AnalysisSummary,
         onProgress: @escaping @Sendable (AnalysisProgress) -> Void
     ) async throws -> AICopilotSnapshot {
+        let pipelineT0 = Date()
         // Step 1: Run local analysis (transcription + scene + audio)
         let localResult = try await orchestrator.analyze(
             sourceURL: sourceURL,
@@ -42,7 +43,11 @@ struct FullAnalysisPipeline: AnalysisPipelineProtocol {
             let llmEditor = LLMEditorService(client: client)
 
             do {
+                let llmT0 = Date()
+                print("⏱️  [llm-edit] kickoff (\(localResult.transcript.count) sentences)")
                 let editDecision = try await llmEditor.selectSegments(localResult.transcript)
+                let llmElapsed = Date().timeIntervalSince(llmT0)
+                print("⏱️  [llm-edit] done in \(String(format: "%.2f", llmElapsed))s")
 
                 // Log AI edit decisions to terminal
                 print("\n📋 === AI Edit Decision ===")
@@ -63,11 +68,25 @@ struct FullAnalysisPipeline: AnalysisPipelineProtocol {
                 }
                 print("========================\n")
 
+                // Resolve the AI-planning bubble to a ✓ before
+                // emitting `.complete`, so the chat panel shows the
+                // step finishing with an elapsed time instead of a
+                // perpetual spinner that the final-summary sweep
+                // would otherwise have to clean up.
+                onProgress(AnalysisProgress(
+                    phase: .requestingAI,
+                    fractionComplete: 0.95,
+                    detail: "Done in \(AnalysisOrchestrator.formatElapsed(llmElapsed))",
+                    isPhaseComplete: true
+                ))
+
                 onProgress(AnalysisProgress(
                     phase: .complete,
                     fractionComplete: 1.0,
                     detail: "Analysis complete."
                 ))
+
+                print("⏱️  pipeline total: \(String(format: "%.2f", Date().timeIntervalSince(pipelineT0)))s")
 
                 // Chapter generation is intentionally NOT part of the
                 // one-click first cut. Users can run it explicitly from
@@ -82,6 +101,7 @@ struct FullAnalysisPipeline: AnalysisPipelineProtocol {
             } catch {
                 // LLM failure is non-fatal — return local-only snapshot with error info
                 print("⚠️  LLM editor failed: \(error)")
+                print("⏱️  pipeline total: \(String(format: "%.2f", Date().timeIntervalSince(pipelineT0)))s (LLM failed)")
                 onProgress(AnalysisProgress(
                     phase: .complete,
                     fractionComplete: 1.0,
@@ -97,6 +117,7 @@ struct FullAnalysisPipeline: AnalysisPipelineProtocol {
             fractionComplete: 1.0,
             detail: "Analysis complete."
         ))
+        print("⏱️  pipeline total: \(String(format: "%.2f", Date().timeIntervalSince(pipelineT0)))s (no LLM step)")
         return CopilotSnapshotBuilder.fromLocalAnalysis(localResult)
     }
 }

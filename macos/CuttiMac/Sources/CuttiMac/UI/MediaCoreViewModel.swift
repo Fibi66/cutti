@@ -135,6 +135,14 @@ final class MediaCoreViewModel: ObservableObject {
     /// appears during a single analysis run.
     private var analysisChatActive: Bool = false
     private var analysisChatSeenPhases: Set<AnalysisPhase> = []
+    /// UUID of each phase's "in-progress" kickoff bubble so that the
+    /// matching `isPhaseComplete` event can mutate it in place — text
+    /// flips from `"Analyzing audio — Started"` to `"Analyzing audio
+    /// — Done in 10.6s"` and the spinner flips to a checkmark.
+    /// Multiple entries can coexist because transcribe/scene/audio
+    /// run in parallel and each has its own live spinner until its
+    /// own done event arrives.
+    private var analysisChatPhaseBubbleIDs: [AnalysisPhase: UUID] = [:]
     /// Optional hook the chat's live-narration bubble wires into every
     /// analysis phase transition. `handleAIPrompt` sets this just
     /// before calling `analyzeRecord` / `analyzeAllRecords` so each
@@ -8976,10 +8984,14 @@ final class MediaCoreViewModel: ObservableObject {
         // Surface the One-click first cut flow inside the AI chat so
         // users see the transcribe → scene → audio → LLM phases as a
         // live conversation instead of a detached progress box above
-        // the chat.
+        // the chat. We pre-seed the three parallel local phases in
+        // fastest→slowest visual order (audio → scene → transcribe)
+        // so the chat log reads predictably even though the tasks
+        // actually run concurrently and complete in arbitrary order.
         beginAnalysisChatBubble(
             userAction: L("One-click first cut"),
-            userIcon: "bolt.fill"
+            userIcon: "bolt.fill",
+            preseededPhases: [.analyzingAudio, .analyzingScenes, .transcribing]
         )
         if candidates.count > 1 {
             await analyzeAllRecords()
@@ -9449,14 +9461,26 @@ final class MediaCoreViewModel: ObservableObject {
 
     // MARK: - Chat bubbles for analysis progress
 
-    /// Post the user action line and an initial "starting" assistant
-    /// bubble. Each subsequent phase transition appends a *new*
-    /// assistant bubble (a log-style trail) instead of mutating a
-    /// single bubble in place.
-    private func beginAnalysisChatBubble(userAction: String, userIcon: String? = nil) {
+    /// Post the user action line and, when applicable, pre-seed the
+    /// parallel-phase bubbles in a stable visual order. Each subsequent
+    /// phase transition mutates the matching pre-seeded bubble in
+    /// place instead of appending a new one, so the chat log reads
+    /// top→bottom in the order the caller wants (typically
+    /// fastest→slowest) even though the underlying tasks run in
+    /// parallel and complete in any order.
+    ///
+    /// Callers that don't pre-seed phases get the legacy behaviour:
+    /// a generic "Starting AI analysis…" placeholder until the first
+    /// phase event arrives.
+    private func beginAnalysisChatBubble(
+        userAction: String,
+        userIcon: String? = nil,
+        preseededPhases: [AnalysisPhase] = []
+    ) {
         guard !analysisChatActive else { return }
         analysisChatActive = true
         analysisChatSeenPhases = []
+        analysisChatPhaseBubbleIDs = [:]
 
         let userMsg = EditorChatMessage(
             role: .user,
@@ -9468,46 +9492,171 @@ final class MediaCoreViewModel: ObservableObject {
         let store = chatStore
         Task { try? await store?.append(userMsg) }
 
-        appendAnalysisAssistantLine(
-            L("Starting AI analysis…"),
-            icon: "play.circle.fill",
+        if preseededPhases.isEmpty {
+            // Workflows that don't pre-seed phases keep the generic
+            // header so the chat isn't visually empty between the
+            // user action and the first phase event.
+            appendAnalysisAssistantLine(
+                L("Starting AI analysis…"),
+                icon: "play.circle.fill",
+                tone: .working,
+                persist: true
+            )
+        } else {
+            // Pre-seed each phase as a "Queued" bubble in the
+            // caller-requested order. As kickoff/done events arrive
+            // they mutate these bubbles in place — the order on
+            // screen stays fixed regardless of which parallel task
+            // actually finishes first. We deliberately skip the
+            // generic "Starting AI analysis…" header here because
+            // the seeded bubbles already convey "work has begun".
+            for phase in preseededPhases {
+                seedAnalysisPhaseBubble(phase)
+            }
+        }
+    }
+
+    /// Append a placeholder bubble for `phase` in the "Queued" state
+    /// and record it so future kickoff/done events mutate it instead
+    /// of appending a new bubble. Used by `beginAnalysisChatBubble` to
+    /// lock in a stable visual order for parallel phases.
+    private func seedAnalysisPhaseBubble(_ phase: AnalysisPhase) {
+        let (label, icon) = Self.phaseLabelAndIcon(for: phase)
+        let statusLine = "\(label) — \(L("Queued"))"
+        let line = Self.composeWorkingChatLine(statusLine, phase: phase)
+        let bubble = appendAnalysisAssistantBubble(
+            line,
+            icon: icon,
             tone: .working,
             persist: true
         )
+        analysisChatPhaseBubbleIDs[phase] = bubble.id
+        analysisChatSeenPhases.insert(phase)
     }
 
-    /// Append a new assistant bubble the first time each phase appears.
-    /// Subsequent progress ticks inside the same phase are ignored so
-    /// the chat doesn't get spammed with dozens of nearly-identical
-    /// lines.
+    /// Label + SF Symbol icon for each analysis phase. Centralised so
+    /// `seedAnalysisPhaseBubble` (pre-seeding) and
+    /// `updateAnalysisChatBubble` (live updates) render the same
+    /// thing for the same phase.
+    private static func phaseLabelAndIcon(for phase: AnalysisPhase) -> (String, String) {
+        switch phase {
+        case .queued:          return (L("Queued"), "hourglass")
+        case .transcribing:    return (L("Transcribing speech"), "waveform")
+        case .analyzingScenes: return (L("Analyzing scenes"), "film")
+        case .analyzingAudio:  return (L("Analyzing audio"), "speaker.wave.2.fill")
+        case .requestingAI:    return (L("Asking AI to plan cuts"), "sparkles")
+        case .complete:        return (L("Local analysis complete"), "checkmark.seal.fill")
+        case .failed:          return (L("Analysis failed"), "xmark.octagon.fill")
+        }
+    }
+
+    /// Drive the streaming analysis log in the chat panel. Each phase
+    /// gets exactly one bubble: a kickoff event appends it (or
+    /// mutates the pre-seeded one) with a spinner and a `"Phase —
+    /// Started"` label, and the matching `isPhaseComplete` event
+    /// later mutates that same bubble in place (text → `"Phase —
+    /// Done in 10.6s"`, tone → checkmark, or failure-x when the task
+    /// threw). Because transcribe/scene/audio run in parallel,
+    /// multiple spinners can be alive simultaneously — each one
+    /// resolves independently when its own done event arrives.
     private func updateAnalysisChatBubble(_ progress: AnalysisProgress) {
         guard analysisChatActive else { return }
-        guard !analysisChatSeenPhases.contains(progress.phase) else { return }
-        analysisChatSeenPhases.insert(progress.phase)
 
-        let label: String
-        let icon: String
-        let tone: EditorChatMessage.IconTone
-        switch progress.phase {
-        case .queued:
-            label = L("Queued"); icon = "hourglass"; tone = .neutral
-        case .transcribing:
-            label = L("Transcribing speech"); icon = "waveform"; tone = .working
-        case .analyzingScenes:
-            label = L("Analyzing scenes"); icon = "film"; tone = .working
-        case .analyzingAudio:
-            label = L("Analyzing audio"); icon = "speaker.wave.2.fill"; tone = .working
-        case .requestingAI:
-            label = L("Asking AI to plan cuts"); icon = "sparkles"; tone = .working
-        case .complete:
-            label = L("Local analysis complete"); icon = "checkmark.seal.fill"; tone = .success
-        case .failed:
-            label = L("Analysis failed"); icon = "xmark.octagon.fill"; tone = .failure
+        let (label, kickoffIcon) = Self.phaseLabelAndIcon(for: progress.phase)
+        let detail = progress.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if progress.isPhaseComplete {
+            // Resolve this phase's existing spinner bubble in place.
+            // No hint suffix here — "Done in 10m 46s" already tells the
+            // user how long it took.
+            let isFailure = detail.lowercased().hasPrefix("failed")
+            let resolvedIcon = isFailure ? "xmark.octagon.fill" : "checkmark.circle.fill"
+            let resolvedTone: EditorChatMessage.IconTone = isFailure ? .failure : .success
+            let line = detail.isEmpty ? label : "\(label) — \(detail)"
+            if let bubbleID = analysisChatPhaseBubbleIDs[progress.phase] {
+                mutateAssistantBubble(
+                    id: bubbleID,
+                    content: line,
+                    icon: resolvedIcon,
+                    tone: resolvedTone
+                )
+                analysisChatPhaseBubbleIDs.removeValue(forKey: progress.phase)
+                analysisChatSeenPhases.remove(progress.phase)
+            } else {
+                // No prior kickoff (shouldn't happen but be defensive):
+                // append a one-shot resolved bubble so the user still
+                // sees the outcome.
+                appendAnalysisAssistantLine(line, icon: resolvedIcon, tone: resolvedTone, persist: true)
+            }
+            return
         }
 
-        let detail = progress.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let line = detail.isEmpty ? label : "\(label) — \(detail)"
-        appendAnalysisAssistantLine(line, icon: icon, tone: tone, persist: true)
+        // Kickoff or intermediate update for a phase. If the bubble
+        // already exists (either from pre-seeding or a previous
+        // event), mutate it in place; otherwise append a new bubble.
+        if analysisChatSeenPhases.contains(progress.phase) {
+            guard let bubbleID = analysisChatPhaseBubbleIDs[progress.phase] else { return }
+            let statusLine = detail.isEmpty ? label : "\(label) — \(detail)"
+            let line = Self.composeWorkingChatLine(statusLine, phase: progress.phase)
+            mutateAssistantBubble(id: bubbleID, content: line, icon: nil, tone: nil)
+            return
+        }
+        analysisChatSeenPhases.insert(progress.phase)
+
+        let kickoffTone: EditorChatMessage.IconTone
+        switch progress.phase {
+        case .complete: kickoffTone = .success
+        case .failed:   kickoffTone = .failure
+        case .queued:   kickoffTone = .neutral
+        default:        kickoffTone = .working
+        }
+
+        let statusLine = detail.isEmpty ? label : "\(label) — \(detail)"
+        let line = Self.composeWorkingChatLine(statusLine, phase: progress.phase)
+        let bubble = appendAnalysisAssistantBubble(
+            line,
+            icon: kickoffIcon,
+            tone: kickoffTone,
+            persist: true
+        )
+        analysisChatPhaseBubbleIDs[progress.phase] = bubble.id
+    }
+
+    /// Append a phase-specific hint underneath the status line for the
+    /// long-running phases. Transcribe and scene analysis both scale
+    /// with the source video's length **and** quality (resolution,
+    /// codec complexity, audio busyness), so a 60-minute 4K HEVC clip
+    /// can take an order of magnitude longer than a 5-minute 1080p
+    /// one. Surfacing that expectation in the bubble keeps users from
+    /// assuming the app froze when transcribe sits at "chunk 7 / 41"
+    /// for several minutes. The hint is rendered on its own line
+    /// below the status so the dynamic "chunk x / y · m s elapsed"
+    /// updates remain easy to read.
+    private static func composeWorkingChatLine(
+        _ statusLine: String,
+        phase: AnalysisPhase
+    ) -> String {
+        guard let hint = workingPhaseHint(for: phase) else { return statusLine }
+        return "\(statusLine)\n\(hint)"
+    }
+
+    private static func workingPhaseHint(for phase: AnalysisPhase) -> String? {
+        switch phase {
+        case .transcribing:
+            // Transcribe time scales with audio length (which equals
+            // video length for any clip with sound). Video resolution
+            // is irrelevant here — the sidecar only sees the
+            // extracted 16 kHz mono WAV.
+            return L("⏳ This step's duration depends on the video's length.")
+        case .analyzingScenes:
+            // Scene analysis walks the decoded video frames, so
+            // resolution / codec complexity matters as well as
+            // length — a 4K HEVC clip is much slower than a 1080p
+            // ProRes one of the same length.
+            return L("⏳ This step's duration depends on the video's length and quality.")
+        default:
+            return nil
+        }
     }
 
     /// Append the final summary bubble and close out the session.
@@ -9518,7 +9667,16 @@ final class MediaCoreViewModel: ObservableObject {
     ) {
         guard analysisChatActive else { return }
         analysisChatActive = false
+        // Any phase bubble still showing a spinner is now stale —
+        // resolve to a checkmark so the log is in a consistent
+        // post-run state.
+        for bubbleID in analysisChatPhaseBubbleIDs.values {
+            mutateAssistantBubbleIcon(id: bubbleID, icon: "checkmark.circle.fill", tone: .success)
+        }
+        analysisChatPhaseBubbleIDs = [:]
         analysisChatSeenPhases = []
+        // Promote the original "Starting AI analysis…" header too.
+        resolveStaleWorkingLines(persist: true)
         appendAnalysisAssistantLine(content, icon: icon, tone: tone, persist: true)
     }
 
@@ -9528,12 +9686,28 @@ final class MediaCoreViewModel: ObservableObject {
         tone: EditorChatMessage.IconTone? = nil,
         persist: Bool
     ) {
-        // Any previously-appended "working" bubble in this session is
-        // now historical — its phase finished the moment we decided
-        // another line was worth posting. Flip them to the success
-        // checkmark so the user doesn't see a line of perpetual
-        // spinners after the pipeline has actually moved on.
-        resolveStaleWorkingLines(persist: persist)
+        _ = appendAnalysisAssistantBubble(content, icon: icon, tone: tone, persist: persist)
+    }
+
+    /// Append a new assistant bubble and return it so callers can keep
+    /// its id around (used by the analysis log to mutate phase
+    /// bubbles in place when their done event arrives). When an
+    /// analysis is currently active we skip the
+    /// `resolveStaleWorkingLines` sweep — multiple `.working`
+    /// bubbles legitimately coexist while transcribe/scene/audio run
+    /// in parallel, and demoting them on every append would erase
+    /// the live spinners. `finishAnalysisChatBubble` runs the sweep
+    /// once at the end of the run instead.
+    @discardableResult
+    private func appendAnalysisAssistantBubble(
+        _ content: String,
+        icon: String? = nil,
+        tone: EditorChatMessage.IconTone? = nil,
+        persist: Bool
+    ) -> EditorChatMessage {
+        if !analysisChatActive {
+            resolveStaleWorkingLines(persist: persist)
+        }
 
         let msg = EditorChatMessage(
             role: .assistant,
@@ -9546,6 +9720,46 @@ final class MediaCoreViewModel: ObservableObject {
             let store = chatStore
             Task { try? await store?.append(msg) }
         }
+        return msg
+    }
+
+    /// Update an existing assistant bubble's content/icon/tone in
+    /// place. Used by the analysis log to turn `"Analyzing audio —
+    /// Started"` into `"Analyzing audio — Done in 10.6s"` (with a
+    /// checkmark) the moment that phase's done event arrives, rather
+    /// than appending a separate completion line. `nil` for icon or
+    /// tone leaves the existing value untouched (so a heartbeat
+    /// detail refresh keeps the spinner).
+    private func mutateAssistantBubble(
+        id: UUID,
+        content: String?,
+        icon: String?,
+        tone: EditorChatMessage.IconTone?
+    ) {
+        guard let idx = chatMessages.firstIndex(where: { $0.id == id }) else { return }
+        if let content { chatMessages[idx].content = content }
+        if let icon { chatMessages[idx].iconSystemName = icon }
+        if let tone { chatMessages[idx].iconTone = tone }
+        persistChatRewrite()
+    }
+
+    /// Convenience variant for the "stale spinner cleanup" path that
+    /// only needs to flip icon + tone, not the content text.
+    private func mutateAssistantBubbleIcon(
+        id: UUID,
+        icon: String,
+        tone: EditorChatMessage.IconTone
+    ) {
+        mutateAssistantBubble(id: id, content: nil, icon: icon, tone: tone)
+    }
+
+    /// Best-effort rewrite of the persisted chat file so in-place
+    /// mutations (e.g. flipping a phase spinner to a checkmark)
+    /// survive relaunch. Called from `mutateAssistantBubble`.
+    private func persistChatRewrite() {
+        guard let store = chatStore else { return }
+        let snapshot = chatMessages
+        Task { try? await store.replace(with: snapshot) }
     }
 
     /// Demote every lingering `.working` assistant bubble (except the

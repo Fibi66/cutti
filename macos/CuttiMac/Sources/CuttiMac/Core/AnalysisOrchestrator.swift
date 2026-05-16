@@ -30,31 +30,120 @@ struct AnalysisOrchestrator: Sendable {
         analysis: AnalysisSummary,
         onProgress: @escaping @Sendable (AnalysisProgress) -> Void
     ) async throws -> LocalAnalysisResult {
-        onProgress(AnalysisProgress(
-            phase: .transcribing,
-            fractionComplete: 0.1,
-            detail: "Preparing speech recognition…"
-        ))
+        let overallT0 = Date()
+        let durSec = analysis.durationSeconds
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64) ?? -1
+        print("⏱️  analyze() start  file=\(sourceURL.lastPathComponent) duration=\(String(format: "%.1f", durSec))s size=\(fileSize) bytes")
 
-        // Run all three analyses concurrently
-        async let transcriptTask = transcriptionService.transcribe(url: sourceURL) { detail in
+        // Run all three analyses concurrently. Each task is wrapped in
+        // its own wall-clock measurement so the log shows where time
+        // actually goes — typically the longest of these three wins
+        // because they're racing. We also emit per-task kickoff +
+        // completion events to `onProgress` so the chat panel can
+        // render a streaming log-style trail (audio kicked off → audio
+        // done in 10.6s, etc.) instead of a single static status line.
+        async let transcriptTask: SpeechTranscriptionService.Result = {
+            let t0 = Date()
+            print("⏱️  [transcribe] kickoff")
             onProgress(AnalysisProgress(
                 phase: .transcribing,
-                fractionComplete: 0.15,
-                detail: detail
+                fractionComplete: 0.1,
+                detail: "Started"
             ))
-        }
-        async let sceneTask = sceneAnalysisService.analyze(
-            url: sourceURL,
-            durationSeconds: analysis.durationSeconds
-        )
-        async let audioTask = audioQualityService.analyze(url: sourceURL)
-
-        onProgress(AnalysisProgress(
-            phase: .analyzingScenes,
-            fractionComplete: 0.3,
-            detail: "Analyzing scenes and audio…"
-        ))
+            do {
+                let result = try await transcriptionService.transcribe(url: sourceURL) { detail in
+                    onProgress(AnalysisProgress(
+                        phase: .transcribing,
+                        fractionComplete: 0.15,
+                        detail: detail
+                    ))
+                }
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [transcribe] done in \(String(format: "%.2f", elapsed))s")
+                onProgress(AnalysisProgress(
+                    phase: .transcribing,
+                    fractionComplete: 0.6,
+                    detail: "Done in \(Self.formatElapsed(elapsed))",
+                    isPhaseComplete: true
+                ))
+                return result
+            } catch {
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [transcribe] FAILED after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription)")
+                onProgress(AnalysisProgress(
+                    phase: .transcribing,
+                    fractionComplete: 0.6,
+                    detail: "Failed after \(Self.formatElapsed(elapsed)) — \(error.localizedDescription)",
+                    isPhaseComplete: true
+                ))
+                throw error
+            }
+        }()
+        async let sceneTask: SceneAnalysisService.Result = {
+            let t0 = Date()
+            print("⏱️  [scene] kickoff")
+            onProgress(AnalysisProgress(
+                phase: .analyzingScenes,
+                fractionComplete: 0.2,
+                detail: "Started"
+            ))
+            do {
+                let result = try await sceneAnalysisService.analyze(
+                    url: sourceURL,
+                    durationSeconds: analysis.durationSeconds
+                )
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [scene] done in \(String(format: "%.2f", elapsed))s")
+                onProgress(AnalysisProgress(
+                    phase: .analyzingScenes,
+                    fractionComplete: 0.5,
+                    detail: "Done in \(Self.formatElapsed(elapsed))",
+                    isPhaseComplete: true
+                ))
+                return result
+            } catch {
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [scene] FAILED after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription)")
+                onProgress(AnalysisProgress(
+                    phase: .analyzingScenes,
+                    fractionComplete: 0.5,
+                    detail: "Failed after \(Self.formatElapsed(elapsed))",
+                    isPhaseComplete: true
+                ))
+                throw error
+            }
+        }()
+        async let audioTask: AudioQualityService.Result = {
+            let t0 = Date()
+            print("⏱️  [audio] kickoff")
+            onProgress(AnalysisProgress(
+                phase: .analyzingAudio,
+                fractionComplete: 0.2,
+                detail: "Started"
+            ))
+            do {
+                let result = try await audioQualityService.analyze(url: sourceURL)
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [audio] done in \(String(format: "%.2f", elapsed))s")
+                onProgress(AnalysisProgress(
+                    phase: .analyzingAudio,
+                    fractionComplete: 0.5,
+                    detail: "Done in \(Self.formatElapsed(elapsed))",
+                    isPhaseComplete: true
+                ))
+                return result
+            } catch {
+                let elapsed = Date().timeIntervalSince(t0)
+                print("⏱️  [audio] FAILED after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription)")
+                onProgress(AnalysisProgress(
+                    phase: .analyzingAudio,
+                    fractionComplete: 0.5,
+                    detail: "Failed after \(Self.formatElapsed(elapsed))",
+                    isPhaseComplete: true
+                ))
+                throw error
+            }
+        }()
 
         let transcription: SpeechTranscriptionService.Result
         let sceneResult: SceneAnalysisService.Result
@@ -95,11 +184,10 @@ struct AnalysisOrchestrator: Sendable {
             )
         }
 
-        onProgress(AnalysisProgress(
-            phase: .analyzingAudio,
-            fractionComplete: 0.7,
-            detail: "Merging analysis results…"
-        ))
+        // Note: we don't emit an extra `.analyzingAudio` "Merging…"
+        // event here because the three task-level "done" events
+        // already form the complete log-style trail in the chat
+        // panel. The merge step itself is sub-millisecond.
 
         // Merge talking-head tag if applicable
         var tags = sceneResult.semanticTags
@@ -125,6 +213,10 @@ struct AnalysisOrchestrator: Sendable {
                 values: audioResult.windowRMSValues,
                 windowSeconds: audioResult.windowSeconds
             )
+
+        let total = Date().timeIntervalSince(overallT0)
+        let rtf = durSec > 0 ? total / durSec : 0
+        print("⏱️  analyze() done in \(String(format: "%.2f", total))s (RTF=\(String(format: "%.2f", rtf))×) — \(refinedTranscript.count) sentences, \(sceneResult.sceneBoundaries.count) scene boundaries, \(audioResult.silentRanges.count) silent ranges")
 
         return LocalAnalysisResult(
             transcript: refinedTranscript,
@@ -375,5 +467,19 @@ struct AnalysisOrchestrator: Sendable {
     private static func endsClause(_ text: String) -> Bool {
         guard let last = text.last else { return false }
         return "，、；：,;:".contains(last)
+    }
+
+    /// Format an elapsed-seconds duration for display in chat / log
+    /// lines. Sub-minute durations render with one decimal (`"10.6s"`);
+    /// longer ones drop the decimal and add a minutes prefix
+    /// (`"9m 12s"`) so the trail stays readable for long
+    /// transcription passes.
+    static func formatElapsed(_ seconds: TimeInterval) -> String {
+        if seconds < 60 {
+            return String(format: "%.1fs", seconds)
+        }
+        let minutes = Int(seconds) / 60
+        let remainder = Int(seconds) % 60
+        return "\(minutes)m \(remainder)s"
     }
 }

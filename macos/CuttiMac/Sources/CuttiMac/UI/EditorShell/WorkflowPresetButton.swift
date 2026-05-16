@@ -217,7 +217,7 @@ struct WorkflowPresetButton: View {
         .disabled(disabled)
         .help(disabled && isFullAnalysis(preset)
               ? (isAnalyzing ? L("Analysis already running")
-                             : L("All clips have already been analyzed"))
+                             : L("Import a clip first"))
               : "")
         .contextMenu {
             // Only canned (auto-sending) seedPrompt presets get the

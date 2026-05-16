@@ -17,6 +17,24 @@ struct AnalysisProgress: Sendable {
     let phase: AnalysisPhase
     let fractionComplete: Double
     let detail: String
+    /// Set to `true` when the event represents a phase *finishing*
+    /// rather than starting or making intermediate progress. The UI
+    /// uses this to render the entry with a success checkmark and a
+    /// distinct chat bubble, producing a log-style trail rather than
+    /// a single mutating status line.
+    let isPhaseComplete: Bool
+
+    init(
+        phase: AnalysisPhase,
+        fractionComplete: Double,
+        detail: String,
+        isPhaseComplete: Bool = false
+    ) {
+        self.phase = phase
+        self.fractionComplete = fractionComplete
+        self.detail = detail
+        self.isPhaseComplete = isPhaseComplete
+    }
 }
 
 // MARK: - Local analysis result (before LLM)

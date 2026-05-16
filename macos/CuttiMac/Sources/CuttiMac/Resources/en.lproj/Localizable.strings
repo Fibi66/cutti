@@ -143,9 +143,18 @@
 "Retry" = "Retry";
 "Skip for Now" = "Skip for Now";
 "Qwen3-ASR was unavailable — used Apple Speech for this clip." = "Qwen3-ASR was unavailable — used Apple Speech for this clip.";
+"Local speech model was unavailable — used Apple Speech for this clip." = "Local speech model was unavailable — used Apple Speech for this clip.";
 "Transcribing with Apple Speech…" = "Transcribing with Apple Speech…";
 "Transcribing with Qwen3-ASR (local)…" = "Transcribing with Qwen3-ASR (local)…";
+"Transcribing locally…" = "Transcribing locally…";
 "Loading Qwen3-ASR model (first run takes ~10s)…" = "Loading Qwen3-ASR model (first run takes ~10s)…";
+"Loading speech model (first run takes ~10s)…" = "Loading speech model (first run takes ~10s)…";
+"Preparing transcription…" = "Preparing transcription…";
+"Loading audio" = "Loading audio";
+"Aligning timestamps" = "Aligning timestamps";
+"Finalising transcript" = "Finalising transcript";
+"Transcription error" = "Transcription error";
+"chunk %d/%d (%@ elapsed)" = "chunk %1$d/%2$d (%3$@ elapsed)";
 
 /* ContentView — media panel */
 "MEDIA" = "MEDIA";
@@ -779,6 +788,8 @@
 "Analyzing audio" = "Analyzing audio";
 "Asking AI to plan cuts" = "Asking AI to plan cuts";
 "Local analysis complete" = "Local analysis complete";
+"⏳ This step's duration depends on the video's length and quality." = "⏳ This step's duration depends on the video's length and quality.";
+"⏳ This step's duration depends on the video's length." = "⏳ This step's duration depends on the video's length.";
 "Identifying speakers" = "Identifying speakers";
 "Downloading speaker model…" = "Downloading speaker model…";
 "Analysis failed" = "Analysis failed";

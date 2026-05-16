@@ -1340,29 +1340,21 @@ struct ContentView: View {
         .padding(.vertical, 3)
     }
 
-    /// Whether the Start button should be enabled: selected clip is ready and has no complete AI edit decisions.
+    /// Whether the Start button should be enabled. Stays enabled even
+    /// when the selected clip already has copilot data so the user can
+    /// always re-run analysis (e.g. after interrupting a slow pass, or
+    /// to overwrite a stale snapshot with a fresh one). The pipeline
+    /// itself is idempotent — running it again on an analyzed clip
+    /// replaces the previous snapshot in place.
     private var canStartAnalysis: Bool {
         guard !viewModel.isAnalyzing else { return false }
-        // Multi-video: allow if any ready record hasn't been first-cut yet.
-        // The transcribe-only stub written by `识别说话人` (detect_speakers)
-        // sets `copilot.isTranscribeOnly = true` and a placeholder full-source
-        // keptRange — treat that as "still needs a real first cut" so the
-        // button stays enabled after diarization.
-        let hasUnanalyzed = viewModel.records.contains { record in
-            guard record.status == .ready else { return false }
-            guard let cop = record.copilot else { return true }
-            if cop.isTranscribeOnly == true { return true }
-            return cop.keptRanges == nil || cop.keptRanges?.isEmpty == true
-        }
-        if hasUnanalyzed { return true }
-        // Single video fallback
-        guard let record = viewModel.selectedRecord else { return false }
-        guard record.status == .ready else { return false }
-        if let copilot = record.copilot {
-            if copilot.isTranscribeOnly == true { return true }
-            return copilot.keptRanges == nil || copilot.keptRanges?.isEmpty == true
-        }
-        return true
+        // Any ready record qualifies. We used to require at least one
+        // un-analyzed ready clip; that path left users stuck whenever
+        // analysis got interrupted mid-flight (the partial snapshot
+        // — or a previous complete one — would gray the button out
+        // permanently). Allowing re-runs trades a small risk of
+        // accidental overwrite for a clear escape hatch.
+        return viewModel.records.contains { $0.status == .ready }
     }
 
     /// Compute agent status, incorporating real-time analysis/export progress.
