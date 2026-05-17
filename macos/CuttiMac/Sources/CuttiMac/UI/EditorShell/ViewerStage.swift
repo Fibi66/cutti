@@ -18,10 +18,14 @@ struct PlayerView: NSViewRepresentable {
     let player: AVPlayer
     let handle: PlayerViewHandle
 
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
+    func makeNSView(context: Context) -> FlexiblePlayerView {
+        let view = FlexiblePlayerView()
         view.controlsStyle = .none
         view.player = player
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         Task { @MainActor in
             handle.playerView = view
             handle.player = player
@@ -29,7 +33,7 @@ struct PlayerView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+    func updateNSView(_ nsView: FlexiblePlayerView, context: Context) {
         if nsView.player !== player {
             nsView.player = player
         }
@@ -39,6 +43,12 @@ struct PlayerView: NSViewRepresentable {
                 handle.player = player
             }
         }
+    }
+}
+
+final class FlexiblePlayerView: AVPlayerView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 }
 
@@ -269,6 +279,7 @@ struct ViewerStage: View {
                     .padding(24)
                 }
             }
+            .frame(minHeight: 0, maxHeight: .infinity)
 
             ViewerTransportBar(
                 player: player,
@@ -288,6 +299,7 @@ struct ViewerStage: View {
 
             programInfoStrip
         }
+        .frame(minHeight: 0, maxHeight: .infinity)
         .background(EditorShellStyle.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: EditorShellStyle.panelRadius))
         .animation(.easeInOut(duration: 0.15), value: immersiveMode)

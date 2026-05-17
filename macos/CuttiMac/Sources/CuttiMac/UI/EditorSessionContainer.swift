@@ -150,9 +150,14 @@ private struct EditorWithBackButton: View {
                     .fill(EditorShellStyle.borderSubtle)
                     .frame(height: 1)
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
 
             ContentView(viewModel: viewModel, showExportSettings: $showExportSettings)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .clipped()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
 }

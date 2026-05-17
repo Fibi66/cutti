@@ -159,7 +159,7 @@ struct ContentView: View {
             }
         )
         .frame(width: CGFloat(aiEditorPanelWidth))
-        .frame(maxHeight: .infinity)
+        .frame(minHeight: 0, maxHeight: .infinity)
         .background(EditorShellStyle.backgroundPanel)
         .clipShape(RoundedRectangle(cornerRadius: EditorShellStyle.radiusLarge))
         .overlay {
@@ -386,7 +386,7 @@ struct ContentView: View {
                 Spacer(minLength: 0)
             }
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
         .frame(width: CGFloat(rightPanelWidth))
     }
 
@@ -884,7 +884,7 @@ struct ContentView: View {
                     rightPanel
                 }
             }
-            .frame(maxHeight: .infinity)
+            .frame(minHeight: 0, maxHeight: .infinity)
             .onAppear {
                 aiEditorPanelWidth = savedAIEditorPanelWidth
                 rightPanelWidth = savedRightPanelWidth
@@ -1157,6 +1157,8 @@ struct ContentView: View {
             // preserved for when immersive is toggled off.
             .frame(height: fullscreenMode ? 0 : CGFloat(clampedTimelinePaneHeight) * (immersiveMode ? 0.75 : 1.0))
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
         .background(EditorShellStyle.appBackground.ignoresSafeArea())
         .background(
             GeometryReader { proxy in
