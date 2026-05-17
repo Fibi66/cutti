@@ -498,6 +498,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Called by AppKit after every event-loop pass. SwiftUI rebuilds
+    /// `NSApp.mainMenu` whenever a `.commands { ... }` body
+    /// re-evaluates — which happens any time `@FocusedObject` (or any
+    /// other observed value the Commands struct consumes) changes,
+    /// for example when the user clicks from a focusable surface
+    /// (transcript editor, chat composer) to a non-focusable area.
+    /// Each rebuild restores AppKit's CFBundleName-derived default
+    /// titles, flipping the menu bar's bold app name back from the
+    /// localized brand ("小剪") to the bundle name ("Cutti") and
+    /// the standard items back to "About Cutti" / "Hide Cutti" /
+    /// "Quit Cutti".
+    ///
+    /// `applicationDidBecomeActive` doesn't fire on intra-window
+    /// focus changes, so re-applying there is not enough. Hooking
+    /// `applicationDidUpdate` keeps the menu visually stable through
+    /// every SwiftUI command rebuild. The rewrite is idempotent —
+    /// `applyAppDisplayName()` early-exits when the display name
+    /// already matches the process name, and the per-item check
+    /// (`title.contains(old)`) skips items that have already been
+    /// rewritten — so the per-call cost is a couple of microseconds.
+    func applicationDidUpdate(_ notification: Notification) {
+        applyAppDisplayName()
+    }
+
     /// Replace every occurrence of the SwiftPM-derived process name
     /// ("CuttiMac") in the menu bar and window titles with the
     /// localized brand name (English: "Cutti", Simplified Chinese:
