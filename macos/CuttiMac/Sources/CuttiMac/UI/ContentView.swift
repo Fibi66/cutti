@@ -65,6 +65,38 @@ struct ContentView: View {
     @State private var highlightsExpanded: Bool = true
     @State private var aiLogExpanded: Bool = true
 
+    /// Live-measured window content height. Drives a dynamic cap on the
+    /// timeline-pane divider so dragging the divider up can't squash the
+    /// upper area (chat / viewer / right rail) below `minTopAreaHeight` —
+    /// previously dragging the divider near max on a small monitor
+    /// pushed the chat panel's header off the top of the screen.
+    @State private var measuredAvailableHeight: CGFloat = 0
+    /// Minimum height reserved for the upper area (left chat panel +
+    /// viewer + right rail). Chosen so the chat panel header, viewer
+    /// transport bar, and right-rail section headers all stay visible
+    /// at the smallest sensible window size.
+    private let minTopAreaHeight: CGFloat = 320
+    /// Resizer thickness in `VerticalResizer`. Kept in one place so the
+    /// dynamic-cap math below matches the actual hit-area height.
+    private let verticalResizerHeight: CGFloat = 6
+
+    /// Largest value the timeline-pane divider is allowed to take given
+    /// the currently-measured window height. Falls back to the static
+    /// `720` cap until the first layout pass populates
+    /// `measuredAvailableHeight`.
+    private var dynamicMaxTimelineHeight: Double {
+        guard measuredAvailableHeight > 0 else { return 720 }
+        let cap = Double(measuredAvailableHeight - minTopAreaHeight - verticalResizerHeight)
+        return Swift.max(160, Swift.min(720, cap))
+    }
+
+    /// `timelinePaneHeight` clamped to the current dynamic cap so the
+    /// upper area never compresses below its minimum even if the user
+    /// saved a tall divider value on a previously-larger window.
+    private var clampedTimelinePaneHeight: Double {
+        Swift.min(timelinePaneHeight, dynamicMaxTimelineHeight)
+    }
+
     /// Which expanded section should soak up the remaining vertical
     /// space in the right column. Priority: History (middle) → Media
     /// (top) → Highlights → AI Log (bottom). Whoever is expanded and
@@ -863,8 +895,8 @@ struct ContentView: View {
                 VerticalResizer(
                     height: $timelinePaneHeight,
                     min: 160,
-                    max: 720,
-                    onCommit: { savedTimelinePaneHeight = $0 }
+                    max: dynamicMaxTimelineHeight,
+                    onCommit: { savedTimelinePaneHeight = Swift.min($0, dynamicMaxTimelineHeight) }
                 )
             }
 
@@ -1123,9 +1155,18 @@ struct ContentView: View {
             // Shrink the timeline by ~25% in immersive mode so the viewer
             // gets the reclaimed pixels. The user-saved drag height is
             // preserved for when immersive is toggled off.
-            .frame(height: fullscreenMode ? 0 : CGFloat(timelinePaneHeight) * (immersiveMode ? 0.75 : 1.0))
+            .frame(height: fullscreenMode ? 0 : CGFloat(clampedTimelinePaneHeight) * (immersiveMode ? 0.75 : 1.0))
         }
         .background(EditorShellStyle.appBackground.ignoresSafeArea())
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: AvailableHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(AvailableHeightPreferenceKey.self) { newValue in
+            measuredAvailableHeight = newValue
+        }
         .focusedObject(viewModel)
         .onAppear {
             ActiveEditor.shared.setActive(viewModel)
@@ -1920,6 +1961,16 @@ private struct ImportingPlaceholderRow: View {
             }
             return L("Encoding…")
         }
+    }
+}
+
+/// Captures the live height available to `ContentView` so the
+/// timeline-pane divider can dynamically cap its max value and never
+/// squash the upper area (chat / viewer / right rail) past readability.
+private struct AvailableHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
