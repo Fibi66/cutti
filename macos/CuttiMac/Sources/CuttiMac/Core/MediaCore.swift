@@ -118,10 +118,13 @@ struct MediaCore: Sendable {
 
         // Disk-space precheck before we write any record so a doomed
         // import never leaves a zombie `.transcoding` row behind. The
-        // estimator returns 0 if it can't make a useful guess (audio-
-        // only sources, missing dimensions); we skip the check rather
-        // than reject in those degenerate cases.
-        let estimatedBytes = ProxyDiskSpaceEstimator.estimatedProxyBytes(for: analysis)
+        // planner decides whether we passthrough (output ≈ source size)
+        // or re-encode to ProRes 422 (output ≈ width × height × fps).
+        // Returns 0 if it can't make a useful guess (audio-only sources,
+        // missing dimensions); we skip the check rather than reject in
+        // those degenerate cases.
+        let transcodePlan = await ProxyTranscodePlanner.plan(url: url, analysis: analysis)
+        let estimatedBytes = transcodePlan.estimatedOutputBytes
         if estimatedBytes > 0,
            let freeBytes = ProxyDiskSpaceEstimator.freeBytes(forVolumeContaining: store.projectRoot),
            freeBytes < estimatedBytes {

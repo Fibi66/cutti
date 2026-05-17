@@ -17,9 +17,24 @@ struct AVProxyTranscoder: ProxyTranscoding {
     ) async -> TranscodeResult {
         let asset = AVURLAsset(url: sourceURL)
 
+        // Pick the preset based on the source's codec. H.264 / HEVC
+        // sources passthrough (just remux into .mov) — Apple Silicon
+        // hardware-decodes them at full quality, and re-encoding to
+        // ProRes 422 at source resolution would balloon a 400 MB HEVC
+        // 4K file into ~200 GB on disk. Everything else still goes
+        // through the full ProRes 422 LPCM re-encode so timeline
+        // scrubbing stays smooth.
+        let codec = await ProxyTranscodePlanner.detectVideoCodec(url: sourceURL)
+        let presetName: String
+        if let codec, ProxyTranscodePlanner.isAppleSiliconNativePlayback(codec) {
+            presetName = AVAssetExportPresetPassthrough
+        } else {
+            presetName = AppleSiliconProxySettings.exportPreset
+        }
+
         guard let exportSession = AVAssetExportSession(
             asset: asset,
-            presetName: AppleSiliconProxySettings.exportPreset
+            presetName: presetName
         ) else {
             let failureMessage = "Export failed: Unsupported Apple-native export preset"
             if FFmpegProxyFallback.isEligible(primaryFailure: failureMessage) {
