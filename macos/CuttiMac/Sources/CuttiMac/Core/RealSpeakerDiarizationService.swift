@@ -63,7 +63,51 @@ enum RealSpeakerDiarizationService {
         logRawDiarization(url: url, raw: raw, threshold: clusteringThreshold)
         let collapsed = collapseMinorSpeakers(raw)
         logCollapseResult(raw: raw, collapsed: collapsed)
-        return collapsed
+        let densified = densifyByFirstAppearance(collapsed)
+        logDensifyResult(collapsed: collapsed, densified: densified)
+        return densified
+    }
+
+    /// Remap sherpa-onnx cluster IDs (which are arbitrary integers from
+    /// the clustering algorithm — e.g. `{2, 5, 7}` after `collapseMinorSpeakers`
+    /// drops minor clusters) to a dense `0..<N` range ordered by first
+    /// appearance in source time. Without this the UI would show e.g.
+    /// "Speaker 6" as the first detected speaker just because that's the
+    /// cluster ID sherpa-onnx happened to assign.
+    static func densifyByFirstAppearance(
+        _ segments: [SherpaSpeakerSegment]
+    ) -> [SherpaSpeakerSegment] {
+        guard !segments.isEmpty else { return segments }
+        let sorted = segments.sorted { $0.start < $1.start }
+        var remap: [Int: Int] = [:]
+        var next = 0
+        for s in sorted where remap[s.speaker] == nil {
+            remap[s.speaker] = next
+            next += 1
+        }
+        if remap.allSatisfy({ $0.key == $0.value }) {
+            return segments
+        }
+        return segments.map {
+            SherpaSpeakerSegment(
+                start: $0.start,
+                end: $0.end,
+                speaker: remap[$0.speaker] ?? $0.speaker
+            )
+        }
+    }
+
+    private static func logDensifyResult(
+        collapsed: [SherpaSpeakerSegment],
+        densified: [SherpaSpeakerSegment]
+    ) {
+        let beforeIDs = Set(collapsed.map(\.speaker)).sorted()
+        let afterIDs = Set(densified.map(\.speaker)).sorted()
+        guard beforeIDs != afterIDs else {
+            print("🗣 [diarize] densifyByFirstAppearance: no-op, IDs already dense \(beforeIDs)")
+            return
+        }
+        print("🗣 [diarize] densifyByFirstAppearance: \(beforeIDs) → \(afterIDs)")
     }
 
     /// Print a one-line summary of the raw clustering result so we can
